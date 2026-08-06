@@ -6,13 +6,14 @@ import {
   type PostCatchFacts,
   type SimulationConfig,
 } from "./pnr-core.ts";
+import { makeInitialPositionsForCue } from "./pnr-scenarios.ts";
 
 export const G03_DELAYS = Object.freeze(
   Array.from({ length: 21 }, (_, index) => Number((index * 0.03).toFixed(2))),
 );
 
 export const G03_BASE_CONFIG = Object.freeze({
-  cue: "neutral",
+  initialPositions: makeInitialPositionsForCue("neutral"),
   seed: 17,
   maxTime: 7.4,
   d1FrontReactionDelay: 0.12,
@@ -153,7 +154,11 @@ export function makeG03Config(delay: number): SimulationConfig {
   if (!G03_DELAYS.includes(delay)) {
     throw new Error(`G03 delay must be one of the 21 approved samples: ${delay}`);
   }
-  return { ...G03_BASE_CONFIG, d1PostCatchRecoveryDelay: delay };
+  return {
+    ...G03_BASE_CONFIG,
+    initialPositions: makeInitialPositionsForCue("neutral"),
+    d1PostCatchRecoveryDelay: delay,
+  };
 }
 
 export function createG03Replay(delay: number): PnrSimulation {

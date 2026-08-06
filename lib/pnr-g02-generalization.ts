@@ -8,13 +8,14 @@ import {
   type SealFacts,
   type SimulationConfig,
 } from "./pnr-core.ts";
+import { makeInitialPositionsForCue } from "./pnr-scenarios.ts";
 
 export const G02_DELAYS = Object.freeze(
   Array.from({ length: 17 }, (_, index) => Number((index * 0.01).toFixed(2))),
 );
 
 export const G02_BASE_CONFIG = Object.freeze({
-  cue: "neutral",
+  initialPositions: makeInitialPositionsForCue("neutral"),
   seed: 17,
   maxTime: 7.4,
   d1FrontReactionDelay: G02_DELAYS[0],
@@ -104,7 +105,11 @@ export function makeG02Config(delay: number): SimulationConfig {
   if (!G02_DELAYS.includes(delay)) {
     throw new Error(`G02 delay must be one of the 17 approved samples: ${delay}`);
   }
-  return { ...G02_BASE_CONFIG, d1FrontReactionDelay: delay };
+  return {
+    ...G02_BASE_CONFIG,
+    initialPositions: makeInitialPositionsForCue("neutral"),
+    d1FrontReactionDelay: delay,
+  };
 }
 
 export function createG02Replay(delay: number): PnrSimulation {

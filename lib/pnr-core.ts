@@ -12,11 +12,6 @@ export const COURT = {
 export const PLAYER_IDS = ["O1", "O5", "D1", "D5"] as const;
 export type PlayerId = (typeof PLAYER_IDS)[number];
 export type Team = "offense" | "defense";
-export type DefensiveCue =
-  | "neutral"
-  | "overplay_right"
-  | "overplay_hard_right"
-  | "under_gap";
 export type SimulationHorizon =
   | "pnr_resolution"
   | "post_catch_finish"
@@ -52,6 +47,13 @@ export type Branch = "undecided" | "use" | "reject";
 export interface Vec2 {
   x: number;
   y: number;
+}
+
+export interface InitialPlayerPositions {
+  O1: Vec2;
+  O5: Vec2;
+  D1: Vec2;
+  D5: Vec2;
 }
 
 export interface PlayerState {
@@ -246,7 +248,7 @@ export interface PlanningRecord {
 }
 
 export interface SimulationConfig {
-  cue: DefensiveCue;
+  initialPositions: InitialPlayerPositions;
   seed: number;
   maxTime: number;
   d1FrontReactionDelay: number;
@@ -397,7 +399,6 @@ type PassIntent =
 
 const OFFENSE_IDS: PlayerId[] = ["O1", "O5"];
 const DEFENSE_IDS: PlayerId[] = ["D1", "D5"];
-const INITIAL_O1 = { x: 4.35, y: 6.58 };
 const EMPTY_FACTS: ScreenFacts = {
   contact: false,
   routeExposure: false,
@@ -668,41 +669,96 @@ export function evaluateScreenFacts(input: ScreenEvaluationInput): ScreenFacts {
 function makePlayer(
   id: PlayerId,
   team: Team,
-  x: number,
-  y: number,
+  pos: Vec2,
   maxSpeed: number,
 ): PlayerState {
   return {
     id,
     team,
-    pos: v(x, y),
+    pos: { ...pos },
     vel: v(),
-    radius: id === "O5" || id === "D5" ? 0.37 : 0.34,
+    radius: playerRadius(id),
     maxSpeed,
   };
 }
 
+function playerRadius(id: PlayerId): number {
+  return id === "O5" || id === "D5" ? 0.37 : 0.34;
+}
+
+export function copyInitialPlayerPositions(
+  input: InitialPlayerPositions,
+): InitialPlayerPositions {
+  return {
+    O1: { ...input.O1 },
+    O5: { ...input.O5 },
+    D1: { ...input.D1 },
+    D5: { ...input.D5 },
+  };
+}
+
+export function validateInitialPlayerPositions(input: unknown): InitialPlayerPositions {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    throw new Error("initialPositions must be an object containing O1, O5, D1, and D5");
+  }
+
+  const record = input as Partial<Record<PlayerId, unknown>>;
+  const positions = {} as InitialPlayerPositions;
+  for (const id of PLAYER_IDS) {
+    const candidate = record[id];
+    if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) {
+      throw new Error(`initialPositions.${id} is required and must contain finite x/y coordinates`);
+    }
+    const point = candidate as Partial<Vec2>;
+    if (!Number.isFinite(point.x) || !Number.isFinite(point.y)) {
+      throw new Error(`initialPositions.${id}.x and .y must be finite numbers`);
+    }
+    const pos = { x: point.x as number, y: point.y as number };
+    const radius = playerRadius(id);
+    if (
+      pos.x < radius ||
+      pos.x > COURT.width - radius ||
+      pos.y < radius ||
+      pos.y > COURT.height - radius
+    ) {
+      throw new Error(
+        `initialPositions.${id} (${pos.x}, ${pos.y}) places the body outside the court`,
+      );
+    }
+    positions[id] = pos;
+  }
+
+  for (let firstIndex = 0; firstIndex < PLAYER_IDS.length; firstIndex += 1) {
+    for (let secondIndex = firstIndex + 1; secondIndex < PLAYER_IDS.length; secondIndex += 1) {
+      const first = PLAYER_IDS[firstIndex];
+      const second = PLAYER_IDS[secondIndex];
+      const minimumDistance = playerRadius(first) + playerRadius(second);
+      const actualDistance = distance(positions[first], positions[second]);
+      if (actualDistance < minimumDistance - 1e-9) {
+        throw new Error(
+          `initialPositions ${first}/${second} overlap: ${round(actualDistance, 3)}m < ${round(minimumDistance, 3)}m`,
+        );
+      }
+    }
+  }
+
+  return copyInitialPlayerPositions(positions);
+}
+
 function initialWorld(config: SimulationConfig): WorldState {
-  const d1Start =
-    config.cue === "overplay_right"
-      ? v(5.24, 5.86)
-      : config.cue === "overplay_hard_right"
-        ? v(5.8, 5.72)
-        : config.cue === "under_gap"
-          ? v(4.5, 5)
-          : v(4.2, 5.76);
+  const positions = config.initialPositions;
   return {
     tick: 0,
     time: 0,
     players: {
-      O1: makePlayer("O1", "offense", INITIAL_O1.x, INITIAL_O1.y, config.o1MaxSpeed),
-      O5: makePlayer("O5", "offense", 6.62, 5.32, 2.92),
-      D1: makePlayer("D1", "defense", d1Start.x, d1Start.y, 3.64),
-      D5: makePlayer("D5", "defense", 6.25, 4.26, 3.22),
+      O1: makePlayer("O1", "offense", positions.O1, config.o1MaxSpeed),
+      O5: makePlayer("O5", "offense", positions.O5, 2.92),
+      D1: makePlayer("D1", "defense", positions.D1, 3.64),
+      D5: makePlayer("D5", "defense", positions.D5, 3.22),
     },
     ballOwner: "O1",
     ball: {
-      pos: { ...INITIAL_O1 },
+      pos: { ...positions.O1 },
       vel: v(),
       radius: 0.12,
       inFlight: false,
@@ -2360,9 +2416,10 @@ export class PnrSimulation {
   private offenseVersion = 0;
   private defenseVersion = 0;
 
-  constructor(config: Partial<SimulationConfig> = {}) {
+  constructor(config: SimulationConfig) {
+    const initialPositions = validateInitialPlayerPositions(config?.initialPositions);
     this.config = {
-      cue: config.cue ?? "neutral",
+      initialPositions,
       seed: config.seed ?? 17,
       maxTime: config.maxTime ?? 7.4,
       d1FrontReactionDelay: clamp(config.d1FrontReactionDelay ?? 0, 0, 0.5),
@@ -3027,10 +3084,11 @@ export class PnrSimulation {
   private resolveBranch(): Branch {
     if (this.world.branch !== "undecided") return this.world.branch;
     const o1 = this.world.players.O1;
-    if (o1.pos.x <= INITIAL_O1.x - 0.17 && o1.vel.x < -0.5) return "reject";
+    const initialO1 = this.config.initialPositions.O1;
+    if (o1.pos.x <= initialO1.x - 0.17 && o1.vel.x < -0.5) return "reject";
     if (
       this.world.facts.screenLegalPose &&
-      o1.pos.x >= INITIAL_O1.x + 0.3 &&
+      o1.pos.x >= initialO1.x + 0.3 &&
       o1.vel.x > 0.5
     ) {
       return "use";
@@ -3471,7 +3529,11 @@ export class PnrSimulation {
   private computeStateHash(): string {
     return stableHash({
       seed: this.config.seed,
-      cue: this.config.cue,
+      initialPositions: PLAYER_IDS.map((id) => ({
+        id,
+        x: this.config.initialPositions[id].x,
+        y: this.config.initialPositions[id].y,
+      })),
       d1FrontReactionDelay: this.config.d1FrontReactionDelay,
       d1PostCatchRecoveryDelay: this.config.d1PostCatchRecoveryDelay,
       o1MaxSpeed: this.config.o1MaxSpeed,

@@ -47,6 +47,15 @@ import {
   type G03ReplayId,
   type G03ScanRow,
 } from "@/lib/pnr-g03-generalization";
+import {
+  G05_BASE_CONFIG,
+  createG05Replay,
+  scanG05SpatialBoundary,
+  type G05AuditResult,
+  type G05CandidateAudit,
+  type G05ReplayId,
+  type G05SimulatedRow,
+} from "@/lib/pnr-g05-spatial-generalization";
 
 interface UiSnapshot {
   world: WorldState;
@@ -59,7 +68,7 @@ interface UiSnapshot {
 
 type PositionMap = Record<PlayerId, Vec2>;
 type TrailMap = Record<PlayerId, Vec2[]>;
-type LabMode = "scenarios" | "g01" | "g02" | "g03";
+type LabMode = "scenarios" | "g01" | "g02" | "g03" | "g05";
 
 const PLAYER_COLORS: Record<PlayerId, string> = {
   O1: "#ff6b35",
@@ -93,6 +102,7 @@ const PLAN_SHORT: Record<string, string> = {
 const G01_AUDIT = scanG01SpeedBoundary();
 const G02_AUDIT = scanG02FrontReactionBoundary();
 const G03_AUDIT = scanG03PostCatchRecoveryBoundary();
+const G05_AUDIT = scanG05SpatialBoundary();
 
 function clonePlan(plan: TeamPlan): TeamPlan {
   return {
@@ -1261,12 +1271,247 @@ function G03ProbePanel({
   );
 }
 
+function G05CandidateDetail({ candidate }: { candidate: G05CandidateAudit }) {
+  return (
+    <div className={"g05-candidate " + (candidate.feasible ? "is-feasible" : "is-vetoed")}>
+      <span>{candidate.id}</span>
+      <strong>
+        {candidate.feasible && candidate.score !== null
+          ? candidate.score.toFixed(3)
+          : "VETO"}
+      </strong>
+      <small>
+        {candidate.vetoes.length > 0
+          ? candidate.vetoes.join(" · ")
+          : `可行 · ${candidate.evidence.slice(0, 2).join(" · ")}`}
+      </small>
+    </div>
+  );
+}
+
+function G05ProbePanel({
+  audit,
+  activeReplayId,
+  onReplaySelect,
+}: {
+  audit: G05AuditResult;
+  activeReplayId: G05ReplayId;
+  onReplaySelect: (id: G05ReplayId) => void;
+}) {
+  const activeReplay =
+    audit.replays.find((replay) => replay.id === activeReplayId) ?? audit.replays[0];
+  const baseline =
+    audit.simulatedRows.find((row) => row.id === "baseline") ?? audit.simulatedRows[0];
+  const activeRow =
+    audit.simulatedRows.find((row) => row.id === activeReplay?.sampleId) ?? baseline;
+  const offsetLabel =
+    activeRow.id === "baseline"
+      ? "无偏移"
+      : `${activeRow.axis} ${activeRow.offset > 0 ? "+" : ""}${activeRow.offset.toFixed(2)}m`;
+  const terminalDelta = activeRow.terminalTick - baseline.terminalTick;
+  const eventLabel = (row: G05SimulatedRow): string =>
+    [
+      row.switchCompleted ? "switch" : null,
+      row.underCommitted ? "under" : null,
+      row.sealFronted ? "front" : null,
+      row.passLaunched ? "pass" : null,
+      row.actualFirstToucher ? `touch ${row.actualFirstToucher}` : null,
+    ]
+      .filter(Boolean)
+      .join(" → ") || "无专项事件";
+
+  return (
+    <section className="g01-probe g05-probe" aria-label="G04–G05 显式初始位置与局部空间泛化探针">
+      <div className="g01-probe__head">
+        <div>
+          <span className="eyebrow">G04–G05 · SPATIAL PROBE · NOT A SAVED SCENARIO</span>
+          <h2>{audit.label}</h2>
+          <p>
+            neutral baseline · seed {G05_BASE_CONFIG.seed} · O1 {G05_BASE_CONFIG.o1MaxSpeed.toFixed(2)}m/s ·
+            每次只改变一个公开初始坐标，不改变评分或战术
+          </p>
+        </div>
+        <span className={"g01-status " + (audit.passed ? "is-pass" : "is-fail")}>
+          {audit.passed ? "AUDIT PASS" : "AUDIT FAIL"}
+        </span>
+      </div>
+
+      <div className="g05-ledger" role="status">
+        <strong>33 candidates = 31 simulated + 2 expected rejected</strong>
+        <span>两个重叠输入保留在账本中，由 G04 在创建世界前明确拒绝。</span>
+      </div>
+
+      <div className="g01-summary">
+        <div>
+          <span>输入账本</span>
+          <strong>{audit.candidateCount} 个候选</strong>
+          <small>baseline 1 + 8 轴 × 4 非零偏移</small>
+        </div>
+        <div>
+          <span>真实运行</span>
+          <strong>{audit.simulatedCount} × 2 次</strong>
+          <small>{audit.deterministic ? "逐 tick 世界 / 计划 / 角色 / 事件一致" : "发现复现失败"}</small>
+        </div>
+        <div>
+          <span>预期拒绝</span>
+          <strong>{audit.expectedRejectedCount} 个 overlap</strong>
+          <small>O1.y/-0.24 · D1.y/+0.24</small>
+        </div>
+        <div>
+          <span>空间连续性</span>
+          <strong>{audit.monotonic ? "8 轴无回跳" : `${audit.axisFailures.length} 个失败区间`}</strong>
+          <small>{audit.invariantsPassed ? "31/31 核心不变量通过" : "存在核心不变量失败"}</small>
+        </div>
+      </div>
+
+      <div className="g01-replays" aria-label="G05 三个合法代表回放">
+        {audit.replays.map((replay) => (
+          <button
+            aria-pressed={replay.id === activeReplayId}
+            className={replay.id === activeReplayId ? "is-active" : ""}
+            key={replay.id}
+            onClick={() => onReplaySelect(replay.id)}
+            type="button"
+          >
+            <span>{replay.label}</span>
+            <strong>{replay.sampleId}</strong>
+            <small>{replay.note}</small>
+          </button>
+        ))}
+      </div>
+
+      <div className="g01-table-wrap">
+        <table className="g01-table g05-table">
+          <thead>
+            <tr>
+              <th>sample</th>
+              <th>status</th>
+              <th>初始进攻</th>
+              <th>初始防守</th>
+              <th>branch / 事件</th>
+              <th>终止</th>
+              <th>最小净空</th>
+              <th>复现 / 看门狗</th>
+            </tr>
+          </thead>
+          <tbody>
+            {audit.rows.map((row) => (
+              <tr
+                className={
+                  (row.id === activeRow.id ? "is-selected " : "") +
+                  (row.status === "EXPECTED_INVALID_INITIAL_OVERLAP" ? "is-rejected" : "")
+                }
+                key={row.id}
+              >
+                <td>{row.id}</td>
+                <td>
+                  {row.status === "SIMULATED" ? (
+                    <span className="g05-status simulated">SIMULATED</span>
+                  ) : (
+                    <span className="g05-status rejected" title={row.error}>EXPECTED REJECTED</span>
+                  )}
+                </td>
+                {row.status === "SIMULATED" ? (
+                  <>
+                    <td>{row.initialOffense.chosen}</td>
+                    <td>{row.initialDefense.chosen}</td>
+                    <td>{row.branch} · {eventLabel(row)}</td>
+                    <td>t{row.terminalTick} · {row.terminalReason}</td>
+                    <td>{row.minimumBodyGap.toFixed(3)}m</td>
+                    <td>{row.deterministic ? "2 / 2" : "失败"} · WD {row.watchdogReplans}</td>
+                  </>
+                ) : (
+                  <td colSpan={6} title={row.error}>
+                    G04 拒绝 · {row.error}
+                  </td>
+                )}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="g05-current-grid">
+        <div className="g05-current-read">
+          <span className="eyebrow">CURRENT LEGAL SAMPLE · {activeRow.id}</span>
+          <strong>{offsetLabel}</strong>
+          <small>第一帧直接使用以下公开位置；不会先生成旧站位再瞬移。</small>
+          <div className="g05-positions">
+            {PLAYER_IDS.map((id) => {
+              const point = activeRow.initialPositions[id];
+              const base = baseline.initialPositions[id];
+              const dx = point.x - base.x;
+              const dy = point.y - base.y;
+              return (
+                <div key={id}>
+                  <span>{id}</span>
+                  <strong>({point.x.toFixed(2)}, {point.y.toFixed(2)})</strong>
+                  <small>Δ ({dx >= 0 ? "+" : ""}{dx.toFixed(2)}, {dy >= 0 ? "+" : ""}{dy.toFixed(2)})m</small>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="g05-comparison">
+          <span className="eyebrow">BASELINE → CURRENT</span>
+          <p><span>进攻</span><strong>{baseline.initialOffense.chosen} → {activeRow.initialOffense.chosen}</strong></p>
+          <p><span>防守</span><strong>{baseline.initialDefense.chosen} → {activeRow.initialDefense.chosen}</strong></p>
+          <p><span>结果</span><strong>{baseline.terminalReason} → {activeRow.terminalReason}</strong></p>
+          <p>
+            <span>时机</span>
+            <strong>tick {baseline.terminalTick} → {activeRow.terminalTick} ({terminalDelta >= 0 ? "+" : ""}{terminalDelta})</strong>
+          </p>
+          <small>本轮没有 plan / branch 结果边界，因此只展示三个由审计事实选出的代表样本。</small>
+        </div>
+      </div>
+
+      <div className="g05-causal-strip" aria-label="当前样本四层掩护事实">
+        <span className={activeRow.contactSeen ? "is-active" : ""}>contact {activeRow.contactSeen ? "YES" : "NO"}</span>
+        <span className={activeRow.routeExposureSeen ? "is-active" : ""}>route_exposure {activeRow.routeExposureSeen ? "YES" : "NO"}</span>
+        <span className={activeRow.impededSeen ? "is-active" : ""}>impeded {activeRow.impededSeen ? "YES" : "NO"}</span>
+        <span className={activeRow.screenEffectiveSeen ? "is-active" : ""}>screen_effective {activeRow.screenEffectiveSeen ? "YES" : "NO"}</span>
+        <span>replans O {activeRow.offenseReplans} / D {activeRow.defenseReplans}</span>
+        <span>max step {activeRow.maxStepDisplacement.toFixed(3)}m</span>
+      </div>
+
+      <div className="g05-candidate-groups">
+        <div>
+          <h3>首次进攻候选 · chosen {activeRow.initialOffense.chosen}</h3>
+          <div className="g05-candidates">
+            {activeRow.initialOffense.candidates.map((candidate) => (
+              <G05CandidateDetail candidate={candidate} key={candidate.id} />
+            ))}
+          </div>
+        </div>
+        <div>
+          <h3>首次防守候选 · chosen {activeRow.initialDefense.chosen}</h3>
+          <div className="g05-candidates">
+            {activeRow.initialDefense.candidates.map((candidate) => (
+              <G05CandidateDetail candidate={candidate} key={candidate.id} />
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {!audit.passed && (
+        <div className="g01-failures">
+          {[...audit.failureReasons, ...audit.axisFailures.map((failure) => failure.reason)].map((reason) => (
+            <p key={reason}>{reason}</p>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
 export default function PnrLab() {
   const [labMode, setLabMode] = useState<LabMode>("scenarios");
   const [scenarioId, setScenarioId] = useState<ScenarioId>(DEFAULT_SCENARIO_ID);
   const [g01ReplayId, setG01ReplayId] = useState<G01ReplayId>("stable-high");
   const [g02ReplayId, setG02ReplayId] = useState<G02ReplayId>("last-deflection");
   const [g03ReplayId, setG03ReplayId] = useState<G03ReplayId>("last-stay");
+  const [g05ReplayId, setG05ReplayId] = useState<G05ReplayId>("baseline");
   const [initialSimulation] = useState(
     () => new PnrSimulation(makeScenarioConfig(DEFAULT_SCENARIO_ID)),
   );
@@ -1325,6 +1570,12 @@ export default function PnrLab() {
     installSimulation(createG03Replay(replay.delay), shouldPlay);
   }, [installSimulation]);
 
+  const replaceG05Simulation = useCallback((nextReplayId: G05ReplayId, shouldPlay: boolean): void => {
+    const replay = G05_AUDIT.replays.find((candidate) => candidate.id === nextReplayId);
+    if (!replay) throw new Error(`Unknown G05 replay: ${nextReplayId}`);
+    installSimulation(createG05Replay(replay.sampleId), shouldPlay);
+  }, [installSimulation]);
+
   const replaceCurrentSimulation = useCallback((shouldPlay: boolean): void => {
     if (labMode === "g01") {
       replaceG01Simulation(g01ReplayId, shouldPlay);
@@ -1332,6 +1583,8 @@ export default function PnrLab() {
       replaceG02Simulation(g02ReplayId, shouldPlay);
     } else if (labMode === "g03") {
       replaceG03Simulation(g03ReplayId, shouldPlay);
+    } else if (labMode === "g05") {
+      replaceG05Simulation(g05ReplayId, shouldPlay);
     } else {
       replaceSimulation(scenarioId, shouldPlay);
     }
@@ -1339,10 +1592,12 @@ export default function PnrLab() {
     g01ReplayId,
     g02ReplayId,
     g03ReplayId,
+    g05ReplayId,
     labMode,
     replaceG01Simulation,
     replaceG02Simulation,
     replaceG03Simulation,
+    replaceG05Simulation,
     replaceSimulation,
     scenarioId,
   ]);
@@ -1449,6 +1704,8 @@ export default function PnrLab() {
     G02_AUDIT.replays.find((replay) => replay.id === g02ReplayId) ?? G02_AUDIT.replays[0];
   const currentG03Replay =
     G03_AUDIT.replays.find((replay) => replay.id === g03ReplayId) ?? G03_AUDIT.replays[0];
+  const currentG05Replay =
+    G05_AUDIT.replays.find((replay) => replay.id === g05ReplayId) ?? G05_AUDIT.replays[0];
 
   return (
     <main className="lab-shell">
@@ -1466,6 +1723,7 @@ export default function PnrLab() {
           {labMode === "g01" && <span>G01 · O1 {currentG01Replay.speed.toFixed(2)}m/s</span>}
           {labMode === "g02" && <span>G02 · D1 delay {currentG02Replay.delay.toFixed(2)}s</span>}
           {labMode === "g03" && <span>G03 · recovery {currentG03Replay.delay.toFixed(2)}s</span>}
+          {labMode === "g05" && <span>G05 · {currentG05Replay.sampleId}</span>}
           <span>HASH {snapshot.world.stateHash}</span>
         </div>
       </header>
@@ -1515,6 +1773,17 @@ export default function PnrLab() {
         >
           G03 · 接球后恢复边界
         </button>
+        <button
+          aria-pressed={labMode === "g05"}
+          className={labMode === "g05" ? "is-active" : ""}
+          onClick={() => {
+            setLabMode("g05");
+            replaceG05Simulation(g05ReplayId, false);
+          }}
+          type="button"
+        >
+          G04–G05 · 空间探针
+        </button>
       </nav>
 
       {labMode === "scenarios" ? (
@@ -1561,13 +1830,22 @@ export default function PnrLab() {
             replaceG02Simulation(nextReplayId, false);
           }}
         />
-      ) : (
+      ) : labMode === "g03" ? (
         <G03ProbePanel
           activeReplayId={g03ReplayId}
           audit={G03_AUDIT}
           onReplaySelect={(nextReplayId) => {
             setG03ReplayId(nextReplayId);
             replaceG03Simulation(nextReplayId, false);
+          }}
+        />
+      ) : (
+        <G05ProbePanel
+          activeReplayId={g05ReplayId}
+          audit={G05_AUDIT}
+          onReplaySelect={(nextReplayId) => {
+            setG05ReplayId(nextReplayId);
+            replaceG05Simulation(nextReplayId, false);
           }}
         />
       )}

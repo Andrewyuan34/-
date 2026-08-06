@@ -1,5 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import {
   COURT,
   EVENT_ORDER,
@@ -12,6 +14,7 @@ import {
 import {
   DEFAULT_SCENARIO_ID,
   PNR_SCENARIOS,
+  makeInitialPositionsForCue,
   makeScenarioConfig,
 } from "../lib/pnr-scenarios.ts";
 import {
@@ -35,9 +38,27 @@ import {
   makeG03Config,
   scanG03PostCatchRecoveryBoundary,
 } from "../lib/pnr-g03-generalization.ts";
+import {
+  G05_CANDIDATES,
+  createG05Replay,
+  scanG05SpatialBoundary,
+} from "../lib/pnr-g05-spatial-generalization.ts";
+
+function makeTestConfig(cue = "neutral", overrides = {}) {
+  return {
+    initialPositions: makeInitialPositionsForCue(cue),
+    seed: 17,
+    maxTime: 7.4,
+    d1FrontReactionDelay: 0,
+    d1PostCatchRecoveryDelay: 0,
+    o1MaxSpeed: 3.72,
+    horizon: "pnr_resolution",
+    ...overrides,
+  };
+}
 
 function runToStop(cue = "neutral") {
-  const simulation = new PnrSimulation({ cue });
+  const simulation = new PnrSimulation(makeTestConfig(cue));
   for (let i = 0; i < 600 && !simulation.world.terminal; i += 1) {
     simulation.step();
   }
@@ -50,6 +71,47 @@ function runScenarioToStop(scenarioId) {
     simulation.step();
   }
   return simulation;
+}
+
+function behaviorFrame(simulation, newPlanning) {
+  return {
+    tick: simulation.world.tick,
+    time: simulation.world.time,
+    players: PLAYER_IDS.map((id) => {
+      const player = simulation.world.players[id];
+      return [id, player.pos, player.vel, player.radius, player.maxSpeed];
+    }),
+    ballOwner: simulation.world.ballOwner,
+    ball: simulation.world.ball,
+    branch: simulation.world.branch,
+    facts: simulation.world.facts,
+    mismatch: simulation.world.mismatch,
+    seal: simulation.world.seal,
+    postCatch: simulation.world.postCatch,
+    under: simulation.world.under,
+    reject: simulation.world.reject,
+    offensePlan: simulation.offensePlan,
+    defensePlan: simulation.defensePlan,
+    roles: simulation.getRoles(),
+    events: simulation.eventLog.filter((event) => event.tick === simulation.world.tick),
+    planning: newPlanning,
+    terminal: simulation.world.terminal,
+  };
+}
+
+function behaviorTrace(config) {
+  const simulation = new PnrSimulation(config);
+  const trace = [behaviorFrame(simulation, [...simulation.planningLog])];
+  for (let index = 0; index < 600 && !simulation.world.terminal; index += 1) {
+    const planningStart = simulation.planningLog.length;
+    simulation.step();
+    trace.push(behaviorFrame(simulation, simulation.planningLog.slice(planningStart)));
+  }
+  return trace;
+}
+
+function behaviorDigest(value) {
+  return createHash("sha256").update(JSON.stringify(value)).digest("hex");
 }
 
 test("saved scenario presets are unique, deterministic, and contain inputs rather than outcomes", () => {
@@ -72,9 +134,13 @@ test("saved scenario presets are unique, deterministic, and contain inputs rathe
 
   for (const scenario of PNR_SCENARIOS) {
     const publicInputText = JSON.stringify(scenario.publicInput);
-    for (const forbidden of ["terminal", "outcome", "ballOwner", "winner", "plan"]) {
+    for (const forbidden of ["terminal", "outcome", "ballOwner", "winner", "plan", "cue"]) {
       assert.equal(publicInputText.includes(forbidden), false);
     }
+    assert.deepEqual(
+      scenario.publicInput.initialPositions,
+      makeInitialPositionsForCue(scenario.cue),
+    );
 
     const first = runScenarioToStop(scenario.id);
     const replay = runScenarioToStop(scenario.id);
@@ -83,6 +149,185 @@ test("saved scenario presets are unique, deterministic, and contain inputs rathe
     assert.equal(first.world.terminal?.reason, scenario.checkpoint.terminalReason);
     assert.equal(first.world.ballOwner, scenario.checkpoint.ballOwner);
   }
+});
+
+test("G04 requires explicit legal initial positions, deep-copies them, and hashes the real first frame", () => {
+  const externalPositions = makeInitialPositionsForCue("neutral");
+  const externalConfig = makeTestConfig("neutral", { initialPositions: externalPositions });
+  const simulation = new PnrSimulation(externalConfig);
+  const expectedPositions = structuredClone(externalPositions);
+
+  assert.deepEqual(
+    Object.fromEntries(PLAYER_IDS.map((id) => [id, simulation.world.players[id].pos])),
+    expectedPositions,
+  );
+  assert.equal(simulation.world.ballOwner, "O1");
+  assert.deepEqual(simulation.world.ball.pos, expectedPositions.O1);
+  assert.equal(simulation.world.ball.inFlight, false);
+
+  externalPositions.O1.x += 0.24;
+  externalPositions.D1.y -= 0.24;
+  assert.deepEqual(simulation.config.initialPositions, expectedPositions);
+  assert.deepEqual(simulation.world.players.O1.pos, expectedPositions.O1);
+  assert.deepEqual(simulation.world.players.D1.pos, expectedPositions.D1);
+
+  const shiftedPositions = makeInitialPositionsForCue("neutral");
+  shiftedPositions.O1.x += 0.12;
+  const shifted = new PnrSimulation(
+    makeTestConfig("neutral", { initialPositions: shiftedPositions }),
+  );
+  assert.equal(shifted.world.players.O1.pos.x, expectedPositions.O1.x + 0.12);
+  assert.deepEqual(shifted.world.ball.pos, shifted.world.players.O1.pos);
+  assert.notEqual(shifted.world.stateHash, simulation.world.stateHash);
+
+  const firstScenarioConfig = makeScenarioConfig(DEFAULT_SCENARIO_ID);
+  const secondScenarioConfig = makeScenarioConfig(DEFAULT_SCENARIO_ID);
+  firstScenarioConfig.initialPositions.O5.x -= 0.12;
+  assert.notDeepEqual(firstScenarioConfig.initialPositions, secondScenarioConfig.initialPositions);
+  assert.deepEqual(
+    secondScenarioConfig.initialPositions,
+    makeInitialPositionsForCue("neutral"),
+  );
+
+  assert.throws(
+    () => new PnrSimulation({ ...makeTestConfig("neutral"), initialPositions: undefined }),
+    /initialPositions must be an object/,
+  );
+
+  const missingPlayer = makeInitialPositionsForCue("neutral");
+  delete missingPlayer.D5;
+  assert.throws(
+    () => new PnrSimulation(makeTestConfig("neutral", { initialPositions: missingPlayer })),
+    /initialPositions\.D5 is required/,
+  );
+
+  const nonFinite = makeInitialPositionsForCue("neutral");
+  nonFinite.O1.x = Number.NaN;
+  assert.throws(
+    () => new PnrSimulation(makeTestConfig("neutral", { initialPositions: nonFinite })),
+    /initialPositions\.O1\.x and \.y must be finite numbers/,
+  );
+
+  const outsideCourt = makeInitialPositionsForCue("neutral");
+  outsideCourt.O5.x = 0.2;
+  assert.throws(
+    () => new PnrSimulation(makeTestConfig("neutral", { initialPositions: outsideCourt })),
+    /initialPositions\.O5 .* outside the court/,
+  );
+
+  const overlapping = makeInitialPositionsForCue("neutral");
+  overlapping.D1 = { ...overlapping.O1 };
+  assert.throws(
+    () => new PnrSimulation(makeTestConfig("neutral", { initialPositions: overlapping })),
+    /initialPositions O1\/D1 overlap/,
+  );
+});
+
+test("G04 removes cue/scenario position branches from the core and planner runtime", () => {
+  const coreSource = readFileSync(new URL("../lib/pnr-core.ts", import.meta.url), "utf8");
+  assert.equal(/\bcue\b/.test(coreSource), false);
+  assert.equal(/\bscenarioId\b/.test(coreSource), false);
+
+  for (const scenario of PNR_SCENARIOS) {
+    const config = makeScenarioConfig(scenario.id);
+    const simulation = new PnrSimulation(config);
+    const offenseObservation = createPlannerObservation(simulation.world, "offense", []);
+    const defenseObservation = createPlannerObservation(simulation.world, "defense", []);
+    assert.equal(Object.hasOwn(simulation.config, "cue"), false);
+    assert.equal(Object.hasOwn(offenseObservation, "cue"), false);
+    assert.equal(Object.hasOwn(defenseObservation, "cue"), false);
+    assert.equal(Object.hasOwn(offenseObservation, "initialPositions"), false);
+    assert.equal(Object.hasOwn(defenseObservation, "initialPositions"), false);
+    assert.deepEqual(
+      Object.fromEntries(PLAYER_IDS.map((id) => [id, simulation.world.players[id].pos])),
+      config.initialPositions,
+    );
+  }
+});
+
+test("G04 explicit-position refactor preserves every approved S/G behavior trajectory", () => {
+  const scenarioDigests = Object.fromEntries(
+    PNR_SCENARIOS.map((scenario) => [
+      scenario.code,
+      behaviorDigest(behaviorTrace(makeScenarioConfig(scenario.id))),
+    ]),
+  );
+  assert.deepEqual(scenarioDigests, {
+    S01: "f8eec9e79bddfc1aeb0b13240005a6e5c4f6c7e50f465ef4ca5651042cacf4b7",
+    S02: "a523ad5d29716711d08cb94544e34f6b8ed0daaf0c4e90726a228c62bd306f03",
+    S03: "57c93b3be2c5ea9c5619574e1a19c919aab5cd07ae52fdd6f6f9a6fb81618135",
+    S04: "7eabadc212fcfe42c480faf6446693b6616a62cef7147414fde47e208a074440",
+    S05: "dd40668118d4c68e33f84edd13c37bebbac3cf54806619114aa79b5fdc934ba0",
+    S06: "d3f02c807203c4a4ab656829f84241c961e9c9933bb442e25e926e455e21fb13",
+    S07: "a3079918032d205fd15473c9d7590204119b4cf00158e06447d3010c2bfb2bbc",
+    S08: "0f27369978dd535ad3732a51fcf5643255735712fd28463a5542e2c568fc2051",
+  });
+
+  assert.equal(
+    behaviorDigest(G01_SPEEDS.map((speed) => [speed, behaviorTrace(makeG01Config(speed))])),
+    "d21aa0e983c06bc8aaa3789ba10206fab18d3263b7f698a3752c6197573463b5",
+  );
+  assert.equal(
+    behaviorDigest(G02_DELAYS.map((delay) => [delay, behaviorTrace(makeG02Config(delay))])),
+    "547b0f577c7ca9b3b2a720c2f94fd3589187d03d4361f4bbb1d6ba7bf35cfde7",
+  );
+  assert.equal(
+    behaviorDigest(G03_DELAYS.map((delay) => [delay, behaviorTrace(makeG03Config(delay))])),
+    "a3074ad10bfed7ede85aec0836bd6c44d7b765ce62fdfaf29ec3250716b0c97a",
+  );
+});
+
+test("G05 audits 33 candidates as 31 deterministic simulations plus two expected G04 rejections", () => {
+  const audit = scanG05SpatialBoundary();
+
+  assert.equal(G05_CANDIDATES.length, 33);
+  assert.equal(new Set(G05_CANDIDATES.map((sample) => sample.id)).size, 33);
+  assert.equal(audit.candidateCount, 33);
+  assert.equal(audit.simulatedCount, 31);
+  assert.equal(audit.expectedRejectedCount, 2);
+  assert.equal(audit.rows.length, 33);
+  assert.deepEqual(
+    audit.rejectedRows.map(({ id, status, error }) => ({ id, status, error })),
+    [
+      {
+        id: "O1.y/-0.24",
+        status: "EXPECTED_INVALID_INITIAL_OVERLAP",
+        error: "initialPositions O1/D1 overlap: 0.599m < 0.68m",
+      },
+      {
+        id: "D1.y/+0.24",
+        status: "EXPECTED_INVALID_INITIAL_OVERLAP",
+        error: "initialPositions O1/D1 overlap: 0.599m < 0.68m",
+      },
+    ],
+  );
+  assert.throws(
+    () => createG05Replay("O1.y/-0.24"),
+    /initialPositions O1\/D1 overlap: 0\.599m < 0\.68m/,
+  );
+  assert.throws(
+    () => createG05Replay("D1.y/+0.24"),
+    /initialPositions O1\/D1 overlap: 0\.599m < 0\.68m/,
+  );
+
+  assert.equal(audit.deterministic, true);
+  assert.equal(audit.invariantsPassed, true);
+  assert.equal(audit.monotonic, true);
+  assert.equal(audit.passed, true);
+  assert.deepEqual(audit.axisFailures, []);
+  assert.deepEqual(audit.failureReasons, []);
+  assert.equal(audit.simulatedRows.every((row) => row.initialApplied), true);
+  assert.equal(audit.simulatedRows.every((row) => row.deterministic), true);
+  assert.equal(audit.simulatedRows.every((row) => row.invariantFailures.length === 0), true);
+  assert.equal(audit.simulatedRows.every((row) => row.watchdogReplans === 0), true);
+  assert.deepEqual(
+    audit.replays.map(({ id, sampleId }) => ({ id, sampleId })),
+    [
+      { id: "baseline", sampleId: "baseline" },
+      { id: "screen-shift", sampleId: "O5.x/-0.24" },
+      { id: "d1-impact", sampleId: "D1.x/+0.24" },
+    ],
+  );
 });
 
 test("G01 scans 19 speed-only samples twice and finds one deterministic decision boundary", () => {
@@ -1157,7 +1402,7 @@ test("one right-side setup can visibly choose use or reject from public D1 stanc
 });
 
 test("O1 clears O5 on a shoulder arc before O5 rolls, without the old teammate jam", () => {
-  const simulation = new PnrSimulation({ cue: "neutral" });
+  const simulation = new PnrSimulation(makeTestConfig("neutral"));
   let jamTicks = 0;
   let minimumGap = Number.POSITIVE_INFINITY;
   let screenCleared = false;
@@ -1194,7 +1439,7 @@ test("O1 clears O5 on a shoulder arc before O5 rolls, without the old teammate j
 });
 
 test("the switch is an atomic post-clear role exchange, never a pre-read", () => {
-  const simulation = new PnrSimulation({ cue: "neutral" });
+  const simulation = new PnrSimulation(makeTestConfig("neutral"));
   let switchRoles;
   for (let i = 0; i < 600 && !simulation.world.terminal; i += 1) {
     simulation.step();
@@ -1251,7 +1496,7 @@ test("post-switch offense and defense start only after the public exchange event
 });
 
 test("O5 establishes the small-on-big seal while O1 creates an entry angle", () => {
-  const simulation = new PnrSimulation({ cue: "neutral" });
+  const simulation = new PnrSimulation(makeTestConfig("neutral"));
   let observedFeedPlan = false;
   let minimumTeammateGap = Number.POSITIVE_INFINITY;
   let o5YAtFeedStart = null;
@@ -1279,7 +1524,7 @@ test("O5 establishes the small-on-big seal while O1 creates an entry angle", () 
 });
 
 test("the lob entry waits for a public window, then D1 can win the touch race", () => {
-  const simulation = new PnrSimulation({ cue: "neutral" });
+  const simulation = new PnrSimulation(makeTestConfig("neutral"));
   let previousBall = { ...simulation.world.ball.pos };
   let maxBallStep = 0;
   let sawFlight = false;
@@ -1326,7 +1571,7 @@ test("the lob entry waits for a public window, then D1 can win the touch race", 
 });
 
 test("planner observations contain public facts but never the opponent hidden plan", () => {
-  const simulation = new PnrSimulation();
+  const simulation = new PnrSimulation(makeTestConfig("neutral"));
   const offenseView = createPlannerObservation(simulation.world, "offense");
   const defenseView = createPlannerObservation(simulation.world, "defense");
   const offenseText = JSON.stringify(offenseView);
@@ -1417,7 +1662,7 @@ test("events use a fixed order and only reach planners at a later boundary", () 
 });
 
 test("no contact and no route exposure can never create remote impediment", () => {
-  const simulation = new PnrSimulation();
+  const simulation = new PnrSimulation(makeTestConfig("neutral"));
   const d1 = simulation.world.players.D1;
   const o5 = simulation.world.players.O5;
   d1.pos = { x: 1.2, y: 4.5 };

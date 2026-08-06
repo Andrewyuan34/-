@@ -5,13 +5,14 @@ import {
   type PlanningRecord,
   type SimulationConfig,
 } from "./pnr-core.ts";
+import { makeInitialPositionsForCue } from "./pnr-scenarios.ts";
 
 export const G01_SPEEDS = Object.freeze(
   Array.from({ length: 19 }, (_, index) => Number((3.72 + index * 0.02).toFixed(2))),
 );
 
 export const G01_BASE_CONFIG = Object.freeze({
-  cue: "neutral",
+  initialPositions: makeInitialPositionsForCue("neutral"),
   seed: 17,
   maxTime: 7.4,
   d1FrontReactionDelay: 0.12,
@@ -85,7 +86,11 @@ export function makeG01Config(speed: number): SimulationConfig {
   if (!G01_SPEEDS.includes(speed)) {
     throw new Error(`G01 speed must be one of the 19 approved samples: ${speed}`);
   }
-  return { ...G01_BASE_CONFIG, o1MaxSpeed: speed };
+  return {
+    ...G01_BASE_CONFIG,
+    initialPositions: makeInitialPositionsForCue("neutral"),
+    o1MaxSpeed: speed,
+  };
 }
 
 export function createG01Replay(speed: number): PnrSimulation {
