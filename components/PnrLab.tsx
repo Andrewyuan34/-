@@ -6,10 +6,12 @@ import {
   FIXED_DT,
   PLAYER_IDS,
   PnrSimulation,
+  mirrorPointAcrossCenterline,
   type CandidateEvaluation,
   type PlayerId,
   type PlanningRecord,
   type RoleAssignment,
+  type ScreenSide,
   type TeamPlan,
   type Vec2,
   type WorldEvent,
@@ -56,6 +58,19 @@ import {
   type G05ReplayId,
   type G05SimulatedRow,
 } from "@/lib/pnr-g05-spatial-generalization";
+import {
+  createG06Replay,
+  scanG06Combinations,
+  type G06AuditResult,
+  type G06Row,
+} from "@/lib/pnr-g06-combinations";
+import {
+  createG07Replay,
+  makeG07Config,
+  scanG07Mirrors,
+  type G07AuditResult,
+  type G07ReplayId,
+} from "@/lib/pnr-g07-mirroring";
 
 interface UiSnapshot {
   world: WorldState;
@@ -68,7 +83,7 @@ interface UiSnapshot {
 
 type PositionMap = Record<PlayerId, Vec2>;
 type TrailMap = Record<PlayerId, Vec2[]>;
-type LabMode = "scenarios" | "g01" | "g02" | "g03" | "g05";
+type LabMode = "scenarios" | "g01" | "g02" | "g03" | "g05" | "g06" | "g07";
 
 const PLAYER_COLORS: Record<PlayerId, string> = {
   O1: "#ff6b35",
@@ -103,6 +118,22 @@ const G01_AUDIT = scanG01SpeedBoundary();
 const G02_AUDIT = scanG02FrontReactionBoundary();
 const G03_AUDIT = scanG03PostCatchRecoveryBoundary();
 const G05_AUDIT = scanG05SpatialBoundary();
+const G06_AUDIT = scanG06Combinations();
+const G07_AUDIT = scanG07Mirrors();
+
+function planShort(id: string, side: ScreenSide): string {
+  if (side === "left" && id === "USE_RIGHT_SCREEN") return "USE · 左侧使用";
+  if (side === "left" && id === "REJECT_LEFT") return "REJECT · 右侧拒绝";
+  return PLAN_SHORT[id] ?? id;
+}
+
+function sideText(value: string, side: ScreenSide): string {
+  if (side === "right") return value;
+  return value
+    .replaceAll("右", "\uE000")
+    .replaceAll("左", "右")
+    .replaceAll("\uE000", "左");
+}
 
 function clonePlan(plan: TeamPlan): TeamPlan {
   return {
@@ -224,6 +255,10 @@ function drawCourt(
     x: ox + value.x * scale,
     y: oy + value.y * scale,
   });
+  const sidePoint = (value: Vec2): Vec2 =>
+    simulation.world.screenSide === "right"
+      ? value
+      : mirrorPointAcrossCenterline(value);
 
   context.save();
   context.shadowColor = "rgba(19, 15, 11, 0.34)";
@@ -291,7 +326,7 @@ function drawCourt(
   context.arc(hoop.x, hoop.y, 4.72 * scale, 0.18 * Math.PI, 0.82 * Math.PI);
   context.stroke();
 
-  const screenSpot = point(COURT.screenSpot);
+  const screenSpot = point(sidePoint(COURT.screenSpot));
   context.save();
   context.setLineDash([5, 6]);
   context.lineWidth = 1.2;
@@ -319,31 +354,36 @@ function drawCourt(
 
   const o1Now = current.O1;
   const o5Now = current.O5;
+  const tacticalO1 = sidePoint(o1Now);
+  const tacticalO5 = sidePoint(o5Now);
   const shoulderRadius =
     simulation.world.players.O1.radius + simulation.world.players.O5.radius + 0.085;
   const shoulderPoint = (degrees: number): Vec2 => {
     const radians = (degrees * Math.PI) / 180;
     return {
-      x: o5Now.x + Math.cos(radians) * shoulderRadius,
-      y: o5Now.y + Math.sin(radians) * shoulderRadius,
+      x: tacticalO5.x + Math.cos(radians) * shoulderRadius,
+      y: tacticalO5.y + Math.sin(radians) * shoulderRadius,
     };
   };
-  const relative = { x: o1Now.x - o5Now.x, y: o1Now.y - o5Now.y };
+  const relative = {
+    x: tacticalO1.x - tacticalO5.x,
+    y: tacticalO1.y - tacticalO5.y,
+  };
   let shoulderAngle = Math.atan2(relative.y, relative.x);
   if (shoulderAngle < 0) shoulderAngle += Math.PI * 2;
   const remainingArc: Vec2[] = [];
   if (!simulation.world.facts.ballHandlerClearedScreen) {
     if (shoulderAngle > (105 * Math.PI) / 180 && shoulderAngle < (330 * Math.PI) / 180) {
-      remainingArc.push(shoulderPoint(90));
+      remainingArc.push(sidePoint(shoulderPoint(90)));
     }
     if (shoulderAngle > (75 * Math.PI) / 180 && shoulderAngle < (330 * Math.PI) / 180) {
-      remainingArc.push(shoulderPoint(60));
+      remainingArc.push(sidePoint(shoulderPoint(60)));
     }
     if (shoulderAngle > (45 * Math.PI) / 180 && shoulderAngle < (330 * Math.PI) / 180) {
-      remainingArc.push(shoulderPoint(30));
+      remainingArc.push(sidePoint(shoulderPoint(30)));
     }
     if (shoulderAngle > (15 * Math.PI) / 180 && shoulderAngle < (330 * Math.PI) / 180) {
-      remainingArc.push(shoulderPoint(0));
+      remainingArc.push(sidePoint(shoulderPoint(0)));
     }
   }
   if (
@@ -386,8 +426,8 @@ function drawCourt(
       simulation.offensePlan.id === "REJECT_LEFT"
         ? simulation.offensePlan.primaryTarget
           ? [o1Now, simulation.offensePlan.primaryTarget]
-          : [o1Now, COURT.rejectGate, { x: 4.46, y: 1.08 }]
-        : [o1Now, ...remainingArc, COURT.useGate, { x: 5.72, y: 1.05 }],
+          : [o1Now, sidePoint(COURT.rejectGate), sidePoint({ x: 4.46, y: 1.08 })]
+        : [o1Now, ...remainingArc, sidePoint(COURT.useGate), sidePoint({ x: 5.72, y: 1.05 })],
       "#fff3df",
     );
   }
@@ -399,7 +439,10 @@ function drawCourt(
     drawPlanPath(
       [
         current.D5,
-        { x: current.O5.x - 0.58, y: current.O5.y + 0.78 },
+        {
+          x: current.O5.x + (simulation.world.screenSide === "right" ? -0.58 : 0.58),
+          y: current.O5.y + 0.78,
+        },
         simulation.defensePlan.primaryTarget ?? current.O1,
       ],
       "rgba(46, 91, 181, 0.78)",
@@ -638,16 +681,24 @@ function drawCourt(
   context.restore();
 }
 
-function PlanCard({ plan, side }: { plan: TeamPlan; side: TeamPlan["team"] }) {
+function PlanCard({
+  plan,
+  team,
+  screenSide,
+}: {
+  plan: TeamPlan;
+  team: TeamPlan["team"];
+  screenSide: ScreenSide;
+}) {
   const remaining = Math.max(0, plan.commitUntil - plan.startedAt);
   return (
-    <article className={"plan-card " + side}>
+    <article className={"plan-card " + team}>
       <div className="plan-card__top">
-        <span className="eyebrow">{side === "offense" ? "进攻队级规划器" : "防守队级规划器"}</span>
+        <span className="eyebrow">{team === "offense" ? "进攻队级规划器" : "防守队级规划器"}</span>
         <span className="version">v{plan.version}</span>
       </div>
-      <h3>{PLAN_SHORT[plan.id]}</h3>
-      <p>{plan.rationale}</p>
+      <h3>{planShort(plan.id, screenSide)}</h3>
+      <p>{sideText(plan.rationale, screenSide)}</p>
       <div className="plan-card__meta">
         <span>短推演 {plan.chosenScore.toFixed(2)}</span>
         <span>最短承诺 {remaining.toFixed(2)}s</span>
@@ -656,37 +707,52 @@ function PlanCard({ plan, side }: { plan: TeamPlan; side: TeamPlan["team"] }) {
   );
 }
 
-function RoleRow({ role }: { role: RoleAssignment }) {
+function RoleRow({ role, screenSide }: { role: RoleAssignment; screenSide: ScreenSide }) {
   return (
     <div className="role-row">
       <span className={"player-token " + (role.playerId.startsWith("O") ? "offense" : "defense")}>
         {role.playerId}
       </span>
       <span className="role-row__copy">
-        <strong>{role.roleLabel}</strong>
-        <small>{role.intent}</small>
+        <strong>{sideText(role.roleLabel, screenSide)}</strong>
+        <small>{sideText(role.intent, screenSide)}</small>
       </span>
       <span className="owner-mark">{role.owner === "offense-planner" ? "O·OWNER" : "D·OWNER"}</span>
     </div>
   );
 }
 
-function CandidateRow({ candidate }: { candidate: CandidateEvaluation }) {
+function CandidateRow({
+  candidate,
+  screenSide,
+}: {
+  candidate: CandidateEvaluation;
+  screenSide: ScreenSide;
+}) {
+  const label = sideText(candidate.label, screenSide);
   return (
     <div className={"candidate " + (candidate.feasible ? "" : "is-vetoed")}>
       <div>
-        <span>{candidate.label}</span>
+        <span>{label}</span>
         <strong>{candidate.feasible && candidate.score !== null ? candidate.score.toFixed(2) : "VETO"}</strong>
       </div>
       <p>
-        {candidate.vetoes[0] ??
-          candidate.evidence.slice(1, 3).join(" · ")}
+        {sideText(
+          candidate.vetoes[0] ?? candidate.evidence.slice(1, 3).join(" · "),
+          screenSide,
+        )}
       </p>
     </div>
   );
 }
 
-function DecisionTrace({ record }: { record?: PlanningRecord }) {
+function DecisionTrace({
+  record,
+  screenSide,
+}: {
+  record?: PlanningRecord;
+  screenSide: ScreenSide;
+}) {
   if (!record) return null;
   return (
     <div className="decision-trace">
@@ -699,7 +765,7 @@ function DecisionTrace({ record }: { record?: PlanningRecord }) {
       </div>
       <div className="candidate-list">
         {record.candidates.map((candidate) => (
-          <CandidateRow candidate={candidate} key={candidate.id} />
+          <CandidateRow candidate={candidate} key={candidate.id} screenSide={screenSide} />
         ))}
       </div>
       <p className="boundary-note">{record.observationBoundary}</p>
@@ -707,13 +773,13 @@ function DecisionTrace({ record }: { record?: PlanningRecord }) {
   );
 }
 
-function EventItem({ event }: { event: WorldEvent }) {
+function EventItem({ event, screenSide }: { event: WorldEvent; screenSide: ScreenSide }) {
   return (
     <li>
       <time>{event.at.toFixed(2)}</time>
       <span>
-        <strong>{event.label}</strong>
-        <small>{event.detail}</small>
+        <strong>{sideText(event.label, screenSide)}</strong>
+        <small>{sideText(event.detail, screenSide)}</small>
       </span>
     </li>
   );
@@ -1505,6 +1571,330 @@ function G05ProbePanel({
   );
 }
 
+function G06ProbePanel({
+  audit,
+  activeReplayId,
+  onReplaySelect,
+}: {
+  audit: G06AuditResult;
+  activeReplayId: string;
+  onReplaySelect: (id: string) => void;
+}) {
+  const activeReplay =
+    audit.replays.find((replay) => replay.id === activeReplayId) ?? audit.replays[0];
+  const activeRow =
+    audit.rows.find((row) => row.id === activeReplay?.sampleId) ?? audit.rows[0];
+  const plans = (row: G06Row): string =>
+    row.planning.map((record) => `t${record.tick} ${record.team[0].toUpperCase()}:${record.chosen}`).join(" → ");
+
+  return (
+    <section className="g01-probe g06-probe" aria-label="G06 有限参数交叉组合审计">
+      <div className="g01-probe__head">
+        <div>
+          <span className="eyebrow">G06 · CROSS-PARAMETER AUDIT · EXISTING ALGORITHM ONLY</span>
+          <h2>{audit.label}</h2>
+          <p>只组合已经通过单轴审计的速度、反应时间与三个人眼验收位置；不增加方案、权重或结果补丁。</p>
+        </div>
+        <span className={"g01-status " + (audit.passed ? "is-pass" : "is-fail")}>
+          {audit.passed ? "G06 GATE PASS" : "G06 GATE FAIL"}
+        </span>
+      </div>
+
+      <div className="g01-summary">
+        <div>
+          <span>Matrix A</span>
+          <strong>{audit.matrixA.length} 组合 × 2</strong>
+          <small>速度 2 × 绕前 2 × 位置 3</small>
+        </div>
+        <div>
+          <span>Matrix B</span>
+          <strong>{audit.matrixB.length} 组合 × 2</strong>
+          <small>恢复 3 × 位置 3</small>
+        </div>
+        <div>
+          <span>阶段因果</span>
+          <strong>{audit.stageCausalityPassed ? "共同前缀保持" : "提前泄漏"}</strong>
+          <small>未进入阶段的参数不改此前运动与计划</small>
+        </div>
+        <div>
+          <span>合法性</span>
+          <strong>{audit.deterministic && audit.invariantsPassed ? "21 / 21 PASS" : "发现失败"}</strong>
+          <small>ATTACK_BIG 无高吊时绕前参数不改球的结果</small>
+        </div>
+      </div>
+
+      <div className="g01-replays" aria-label="G06 三个代表组合回放">
+        {audit.replays.map((replay) => (
+          <button
+            aria-pressed={replay.id === activeReplayId}
+            className={replay.id === activeReplayId ? "is-active" : ""}
+            key={replay.id}
+            onClick={() => onReplaySelect(replay.id)}
+            type="button"
+          >
+            <span>{replay.label}</span>
+            <strong>{replay.sampleId}</strong>
+            <small>{replay.note}</small>
+          </button>
+        ))}
+      </div>
+
+      <div className="g01-table-wrap">
+        <table className="g01-table g06-table">
+          <thead>
+            <tr>
+              <th>matrix / position</th>
+              <th>speed</th>
+              <th>front / recovery</th>
+              <th>阶段计划</th>
+              <th>结果</th>
+              <th>tick</th>
+              <th>净空</th>
+              <th>复现 / 因果</th>
+            </tr>
+          </thead>
+          <tbody>
+            {audit.rows.map((row) => (
+              <tr className={row.id === activeRow.id ? "is-selected" : ""} key={row.id}>
+                <td>{row.matrix} · {row.positionId}</td>
+                <td>{row.o1MaxSpeed.toFixed(2)}m/s</td>
+                <td>
+                  {row.matrix === "A"
+                    ? `front ${row.d1FrontReactionDelay.toFixed(2)}s`
+                    : `recovery ${row.d1PostCatchRecoveryDelay.toFixed(2)}s`}
+                </td>
+                <td>{row.firstMismatchOffense ?? row.firstPostCatchDefense ?? "—"}</td>
+                <td>{row.terminalReason}</td>
+                <td>{row.terminalTick}</td>
+                <td>{row.minimumBodyGap.toFixed(4)}m</td>
+                <td>{row.deterministic && row.invariantFailures.length === 0 ? "2 / 2 · PASS" : "FAIL"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="g05-current-grid">
+        <div className="g05-current-read">
+          <span className="eyebrow">CURRENT COMBINATION · {activeRow.id}</span>
+          <strong>
+            {activeRow.positionId} · O1 {activeRow.o1MaxSpeed.toFixed(2)}m/s · front {activeRow.d1FrontReactionDelay.toFixed(2)}s · recovery {activeRow.d1PostCatchRecoveryDelay.toFixed(2)}s
+          </strong>
+          <small title={plans(activeRow)}>{plans(activeRow)}</small>
+          <div className="g06-event-line">
+            {activeRow.events.map((event) => (
+              <span key={`${event.type}-${event.tick}`}>{event.type}@{event.tick}</span>
+            ))}
+          </div>
+        </div>
+        <div className="g05-comparison">
+          <span className="eyebrow">OUTCOME / CHECKS</span>
+          <p><span>结果</span><strong>{activeRow.terminalReason}</strong></p>
+          <p><span>球权</span><strong>{activeRow.ballOwner ?? "飞行中"} · {activeRow.ballOutcome}</strong></p>
+          <p><span>触球</span><strong>{activeRow.actualTouchers.join(" → ") || "无传球"}</strong></p>
+          <p><span>重规划</span><strong>O {activeRow.offenseReplans} / D {activeRow.defenseReplans} / WD {activeRow.watchdogReplans}</strong></p>
+          <small>{activeRow.explainable ? "每次选择均有可行候选、分数与公开几何证据。" : "存在无法解释的计划。"}</small>
+        </div>
+      </div>
+
+      <div className="g05-candidate-groups">
+        <div>
+          <h3>首次进攻候选 · {activeRow.initialOffense.chosen}</h3>
+          <div className="g05-candidates">
+            {activeRow.initialOffense.candidates.map((candidate) => (
+              <G05CandidateDetail candidate={candidate} key={candidate.id} />
+            ))}
+          </div>
+        </div>
+        <div>
+          <h3>首次防守候选 · {activeRow.initialDefense.chosen}</h3>
+          <div className="g05-candidates">
+            {activeRow.initialDefense.candidates.map((candidate) => (
+              <G05CandidateDetail candidate={candidate} key={candidate.id} />
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {!audit.passed && (
+        <div className="g01-failures">
+          {audit.failureReasons.map((reason) => <p key={reason}>{reason}</p>)}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function G07ProbePanel({
+  audit,
+  activeReplayId,
+  side,
+  sideLocked,
+  onReplaySelect,
+  onSideChange,
+}: {
+  audit: G07AuditResult;
+  activeReplayId: G07ReplayId;
+  side: ScreenSide;
+  sideLocked: boolean;
+  onReplaySelect: (id: G07ReplayId) => void;
+  onSideChange: (side: ScreenSide) => void;
+}) {
+  const activeReplay =
+    audit.replays.find((replay) => replay.id === activeReplayId) ?? audit.replays[0];
+  const activeRow =
+    audit.rows.find((row) => row.id === activeReplay?.specId) ?? audit.rows[0];
+  const config = makeG07Config(activeRow.id, side);
+
+  return (
+    <section className="g01-probe g07-probe" aria-label="G07 左右镜像与相对战术坐标审计">
+      <div className="g01-probe__head">
+        <div>
+          <span className="eyebrow">G07 · REAL LEFT WORLD · SHARED TACTICAL FRAME</span>
+          <h2>{audit.label}</h2>
+          <p>左右两侧共享候选、评分、阈值、角色和事件解析；左侧播放的是真实世界坐标，不是 Canvas 翻转。</p>
+        </div>
+        <span className={"g01-status " + (audit.passed ? "is-pass" : "is-fail")}>
+          {audit.passed ? "MIRROR GATE PASS" : "MIRROR GATE FAIL"}
+        </span>
+      </div>
+
+      <div className="g01-summary">
+        <div>
+          <span>镜像输入</span>
+          <strong>{audit.pairCount} 对 × 双侧 × 2</strong>
+          <small>S01–S08 8 对 + G06 21 对</small>
+        </div>
+        <div>
+          <span>最大数值误差</span>
+          <strong>{audit.maxMirrorError.toExponential(2)}m</strong>
+          <small>明确容差 {audit.tolerance.toExponential(0)}m</small>
+        </div>
+        <div>
+          <span>计划 / 事件</span>
+          <strong>{audit.mirrorPassed ? "逐 tick 等价" : "存在分叉"}</strong>
+          <small>候选、角色、事件 tick 与终止一致</small>
+        </div>
+        <div>
+          <span>世界 / 边界</span>
+          <strong>{audit.invariantsPassed && audit.informationBoundaryPassed ? "29 / 29 PASS" : "发现失败"}</strong>
+          <small>真实左侧同样无远程阻挡与非法球权</small>
+        </div>
+      </div>
+
+      <div className="g07-side-row">
+        <div className="g07-side-switch" aria-label="选择真实运行侧">
+          {(["right", "left"] as const).map((option) => (
+            <button
+              aria-pressed={side === option}
+              className={side === option ? "is-active" : ""}
+              disabled={sideLocked}
+              key={option}
+              onClick={() => onSideChange(option)}
+              type="button"
+            >
+              {option === "right" ? "RIGHT · 右侧世界" : "LEFT · 左侧世界"}
+            </button>
+          ))}
+        </div>
+        <small>{sideLocked ? "运行已开始：side 锁定；重置到 tick 0 后可切换。" : "side 在开始前可切换，运行后锁定。"}</small>
+      </div>
+
+      <div className="g01-replays" aria-label="G07 三个镜像代表对">
+        {audit.replays.map((replay) => (
+          <button
+            aria-pressed={replay.id === activeReplayId}
+            className={replay.id === activeReplayId ? "is-active" : ""}
+            key={replay.id}
+            onClick={() => onReplaySelect(replay.id)}
+            type="button"
+          >
+            <span>{replay.label}</span>
+            <strong>{replay.specId}</strong>
+            <small>{replay.note}</small>
+          </button>
+        ))}
+      </div>
+
+      <div className="g07-current">
+        <div>
+          <span className="eyebrow">CURRENT REAL WORLD · {side.toUpperCase()}</span>
+          <strong>{activeRow.label}</strong>
+          <small>
+            {side === "right"
+              ? "O5 在 O1 右侧设掩护；使用走右肩，拒绝攻左缝。"
+              : "O5 在 O1 左侧设掩护；使用走左肩，拒绝攻右缝。"}
+          </small>
+        </div>
+        <div className="g05-positions">
+          {PLAYER_IDS.map((id) => (
+            <div key={id}>
+              <span>{id}</span>
+              <strong>({config.initialPositions[id].x.toFixed(2)}, {config.initialPositions[id].y.toFixed(2)})</strong>
+              <small>真实 {side} 起手</small>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="g03-layer-strip" aria-label="当前镜像对的等价证据">
+        <div className="g03-layer is-active">
+          <span>RIGHT</span>
+          <strong>{activeRow.rightTerminalReason} · tick {activeRow.terminalTick}</strong>
+          <small>{activeRow.rightEventSummary.slice(-5).join(" → ")}</small>
+        </div>
+        <i>↔</i>
+        <div className="g03-layer is-active">
+          <span>MIRROR ERROR</span>
+          <strong>{activeRow.maxMirrorError.toExponential(2)}m</strong>
+          <small>位置、速度、球路、运动目标与标量事实均在容差内</small>
+        </div>
+        <i>↔</i>
+        <div className="g03-layer is-active">
+          <span>LEFT</span>
+          <strong>{activeRow.leftTerminalReason} · tick {activeRow.terminalTick}</strong>
+          <small>{activeRow.leftEventSummary.slice(-5).join(" → ")}</small>
+        </div>
+      </div>
+
+      <div className="g01-table-wrap">
+        <table className="g01-table g07-table">
+          <thead>
+            <tr>
+              <th>pair</th>
+              <th>结果 / tick</th>
+              <th>max error</th>
+              <th>计划 / 候选</th>
+              <th>事件 / facts</th>
+              <th>双侧复现</th>
+              <th>左侧不变量</th>
+            </tr>
+          </thead>
+          <tbody>
+            {audit.rows.map((row) => (
+              <tr className={row.id === activeRow.id ? "is-selected" : ""} key={row.id}>
+                <td>{row.id}</td>
+                <td>{row.rightTerminalReason} · {row.terminalTick}</td>
+                <td>{row.maxMirrorError.toExponential(1)}m</td>
+                <td>{row.plansAndRolesEquivalent && row.candidatesEquivalent ? "MATCH" : "FAIL"}</td>
+                <td>{row.eventsEquivalent && row.factsEquivalent ? "MATCH" : "FAIL"}</td>
+                <td>{row.rightDeterministic && row.leftDeterministic ? "2 / 2 + 2 / 2" : "FAIL"}</td>
+                <td>{row.leftInvariantFailures.length === 0 ? "PASS" : row.leftInvariantFailures.join(" · ")}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {!audit.passed && (
+        <div className="g01-failures">
+          {audit.failureReasons.map((reason) => <p key={reason}>{reason}</p>)}
+        </div>
+      )}
+    </section>
+  );
+}
+
 export default function PnrLab() {
   const [labMode, setLabMode] = useState<LabMode>("scenarios");
   const [scenarioId, setScenarioId] = useState<ScenarioId>(DEFAULT_SCENARIO_ID);
@@ -1512,6 +1902,9 @@ export default function PnrLab() {
   const [g02ReplayId, setG02ReplayId] = useState<G02ReplayId>("last-deflection");
   const [g03ReplayId, setG03ReplayId] = useState<G03ReplayId>("last-stay");
   const [g05ReplayId, setG05ReplayId] = useState<G05ReplayId>("baseline");
+  const [g06ReplayId, setG06ReplayId] = useState("real-deflection");
+  const [g07ReplayId, setG07ReplayId] = useState<G07ReplayId>("switch");
+  const [g07Side, setG07Side] = useState<ScreenSide>("right");
   const [initialSimulation] = useState(
     () => new PnrSimulation(makeScenarioConfig(DEFAULT_SCENARIO_ID)),
   );
@@ -1576,6 +1969,22 @@ export default function PnrLab() {
     installSimulation(createG05Replay(replay.sampleId), shouldPlay);
   }, [installSimulation]);
 
+  const replaceG06Simulation = useCallback((nextReplayId: string, shouldPlay: boolean): void => {
+    const replay = G06_AUDIT.replays.find((candidate) => candidate.id === nextReplayId);
+    if (!replay) throw new Error(`Unknown G06 replay: ${nextReplayId}`);
+    installSimulation(createG06Replay(replay.sampleId), shouldPlay);
+  }, [installSimulation]);
+
+  const replaceG07Simulation = useCallback((
+    nextReplayId: G07ReplayId,
+    nextSide: ScreenSide,
+    shouldPlay: boolean,
+  ): void => {
+    const replay = G07_AUDIT.replays.find((candidate) => candidate.id === nextReplayId);
+    if (!replay) throw new Error(`Unknown G07 replay: ${nextReplayId}`);
+    installSimulation(createG07Replay(replay.specId, nextSide), shouldPlay);
+  }, [installSimulation]);
+
   const replaceCurrentSimulation = useCallback((shouldPlay: boolean): void => {
     if (labMode === "g01") {
       replaceG01Simulation(g01ReplayId, shouldPlay);
@@ -1585,6 +1994,10 @@ export default function PnrLab() {
       replaceG03Simulation(g03ReplayId, shouldPlay);
     } else if (labMode === "g05") {
       replaceG05Simulation(g05ReplayId, shouldPlay);
+    } else if (labMode === "g06") {
+      replaceG06Simulation(g06ReplayId, shouldPlay);
+    } else if (labMode === "g07") {
+      replaceG07Simulation(g07ReplayId, g07Side, shouldPlay);
     } else {
       replaceSimulation(scenarioId, shouldPlay);
     }
@@ -1593,11 +2006,16 @@ export default function PnrLab() {
     g02ReplayId,
     g03ReplayId,
     g05ReplayId,
+    g06ReplayId,
+    g07ReplayId,
+    g07Side,
     labMode,
     replaceG01Simulation,
     replaceG02Simulation,
     replaceG03Simulation,
     replaceG05Simulation,
+    replaceG06Simulation,
+    replaceG07Simulation,
     replaceSimulation,
     scenarioId,
   ]);
@@ -1706,6 +2124,10 @@ export default function PnrLab() {
     G03_AUDIT.replays.find((replay) => replay.id === g03ReplayId) ?? G03_AUDIT.replays[0];
   const currentG05Replay =
     G05_AUDIT.replays.find((replay) => replay.id === g05ReplayId) ?? G05_AUDIT.replays[0];
+  const currentG06Replay =
+    G06_AUDIT.replays.find((replay) => replay.id === g06ReplayId) ?? G06_AUDIT.replays[0];
+  const currentG07Replay =
+    G07_AUDIT.replays.find((replay) => replay.id === g07ReplayId) ?? G07_AUDIT.replays[0];
 
   return (
     <main className="lab-shell">
@@ -1713,7 +2135,7 @@ export default function PnrLab() {
         <div className="brand-block">
           <span className="brand-mark">2×2</span>
           <div>
-            <p className="kicker">RIGHT-SIDE READ · MINIMAL LOOP</p>
+            <p className="kicker">{snapshot.world.screenSide.toUpperCase()}-SIDE READ · MINIMAL LOOP</p>
             <h1>挡拆因果实验台</h1>
           </div>
         </div>
@@ -1724,6 +2146,8 @@ export default function PnrLab() {
           {labMode === "g02" && <span>G02 · D1 delay {currentG02Replay.delay.toFixed(2)}s</span>}
           {labMode === "g03" && <span>G03 · recovery {currentG03Replay.delay.toFixed(2)}s</span>}
           {labMode === "g05" && <span>G05 · {currentG05Replay.sampleId}</span>}
+          {labMode === "g06" && <span>G06 · {currentG06Replay.sampleId}</span>}
+          {labMode === "g07" && <span>G07 · {g07Side.toUpperCase()} · {currentG07Replay.specId}</span>}
           <span>HASH {snapshot.world.stateHash}</span>
         </div>
       </header>
@@ -1784,6 +2208,28 @@ export default function PnrLab() {
         >
           G04–G05 · 空间探针
         </button>
+        <button
+          aria-pressed={labMode === "g06"}
+          className={labMode === "g06" ? "is-active" : ""}
+          onClick={() => {
+            setLabMode("g06");
+            replaceG06Simulation(g06ReplayId, false);
+          }}
+          type="button"
+        >
+          G06 · 参数交叉
+        </button>
+        <button
+          aria-pressed={labMode === "g07"}
+          className={labMode === "g07" ? "is-active" : ""}
+          onClick={() => {
+            setLabMode("g07");
+            replaceG07Simulation(g07ReplayId, g07Side, false);
+          }}
+          type="button"
+        >
+          G07 · 左右镜像
+        </button>
       </nav>
 
       {labMode === "scenarios" ? (
@@ -1839,7 +2285,7 @@ export default function PnrLab() {
             replaceG03Simulation(nextReplayId, false);
           }}
         />
-      ) : (
+      ) : labMode === "g05" ? (
         <G05ProbePanel
           activeReplayId={g05ReplayId}
           audit={G05_AUDIT}
@@ -1848,14 +2294,38 @@ export default function PnrLab() {
             replaceG05Simulation(nextReplayId, false);
           }}
         />
+      ) : labMode === "g06" ? (
+        <G06ProbePanel
+          activeReplayId={g06ReplayId}
+          audit={G06_AUDIT}
+          onReplaySelect={(nextReplayId) => {
+            setG06ReplayId(nextReplayId);
+            replaceG06Simulation(nextReplayId, false);
+          }}
+        />
+      ) : (
+        <G07ProbePanel
+          activeReplayId={g07ReplayId}
+          audit={G07_AUDIT}
+          onReplaySelect={(nextReplayId) => {
+            setG07ReplayId(nextReplayId);
+            replaceG07Simulation(nextReplayId, g07Side, false);
+          }}
+          onSideChange={(nextSide) => {
+            setG07Side(nextSide);
+            replaceG07Simulation(g07ReplayId, nextSide, false);
+          }}
+          side={g07Side}
+          sideLocked={playing || snapshot.world.tick > 0}
+        />
       )}
 
       <div className="workspace-grid">
         <section className="court-panel">
           <div className="court-panel__head">
             <div className="plan-pills">
-              <span className="plan-pill offense">{PLAN_SHORT[snapshot.offensePlan.id]}</span>
-              <span className="plan-pill defense">{PLAN_SHORT[snapshot.defensePlan.id]}</span>
+              <span className="plan-pill offense">{planShort(snapshot.offensePlan.id, snapshot.world.screenSide)}</span>
+              <span className="plan-pill defense">{planShort(snapshot.defensePlan.id, snapshot.world.screenSide)}</span>
             </div>
             <div className="timecode">
               <span>T+{snapshot.world.time.toFixed(2)}</span>
@@ -1864,7 +2334,10 @@ export default function PnrLab() {
           </div>
 
           <div className="court-wrap">
-            <canvas ref={canvasRef} aria-label="2v2 右侧挡拆连续运动画面" />
+            <canvas
+              ref={canvasRef}
+              aria-label={`2v2 ${snapshot.world.screenSide === "right" ? "右侧" : "左侧"}挡拆连续运动画面`}
+            />
             <div className="court-legend" aria-hidden="true">
               <span><i className="legend-dot offense" /> 进攻</span>
               <span><i className="legend-dot defense" /> 防守</span>
@@ -1873,7 +2346,7 @@ export default function PnrLab() {
             {snapshot.world.terminal && (
               <div className="terminal-card">
                 <span className="eyebrow">LOOP CLOSED · {snapshot.world.time.toFixed(2)}s</span>
-                <strong>{snapshot.world.terminal.label}</strong>
+                <strong>{sideText(snapshot.world.terminal.label, snapshot.world.screenSide)}</strong>
                 <p>世界已冻结在第一个判断点；重放可验证相同输入是否复现。</p>
                 <button onClick={() => replaceCurrentSimulation(true)} type="button">从头重放</button>
               </div>
@@ -2064,7 +2537,10 @@ export default function PnrLab() {
             </strong>
             <p>
               {reject.active
-                ? `强踩右资格 ${reject.helpEligible ? "是" : "否"} · D5–O1 ${reject.d5O1Distance.toFixed(2)}m · D5–O5 ${reject.d5O5Distance.toFixed(2)}m · 净空 ${reject.passLaneClearance.toFixed(2)}m`
+                ? sideText(
+                    `强踩右资格 ${reject.helpEligible ? "是" : "否"} · D5–O1 ${reject.d5O1Distance.toFixed(2)}m · D5–O5 ${reject.d5O5Distance.toFixed(2)}m · 净空 ${reject.passLaneClearance.toFixed(2)}m`,
+                    snapshot.world.screenSide,
+                  )
                 : under.active || snapshot.defensePlan.id === "UNDER"
                   ? `D1–O1 ${under.d1O1Distance.toFixed(2)}m · D5–O5 ${under.d5O5Distance.toFixed(2)}m · 原子换防 ${facts.matchupExchange ? "是" : "否"}`
                   : "覆盖判断只读取公开起手深度、局部距离、速度与已解析事件。"}
@@ -2199,8 +2675,8 @@ export default function PnrLab() {
                 {planCommitRemaining > 0 ? "承诺中 " + planCommitRemaining.toFixed(2) + "s" : "事件可重评"}
               </span>
             </div>
-            <PlanCard plan={snapshot.offensePlan} side="offense" />
-            <PlanCard plan={snapshot.defensePlan} side="defense" />
+            <PlanCard plan={snapshot.offensePlan} screenSide={snapshot.world.screenSide} team="offense" />
+            <PlanCard plan={snapshot.defensePlan} screenSide={snapshot.world.screenSide} team="defense" />
           </div>
 
           <div className="inspector__section">
@@ -2212,7 +2688,9 @@ export default function PnrLab() {
               <span className="verified-mark">4 / 4 唯一</span>
             </div>
             <div className="role-list">
-              {snapshot.roles.map((role) => <RoleRow key={role.playerId} role={role} />)}
+              {snapshot.roles.map((role) => (
+                <RoleRow key={role.playerId} role={role} screenSide={snapshot.world.screenSide} />
+              ))}
             </div>
           </div>
 
@@ -2223,8 +2701,8 @@ export default function PnrLab() {
                 <h2>选择与否决</h2>
               </div>
             </div>
-            <DecisionTrace record={latestOffense} />
-            <DecisionTrace record={latestDefense} />
+            <DecisionTrace record={latestOffense} screenSide={snapshot.world.screenSide} />
+            <DecisionTrace record={latestDefense} screenSide={snapshot.world.screenSide} />
           </div>
 
           <div className="inspector__section event-section">
@@ -2239,7 +2717,9 @@ export default function PnrLab() {
               <p className="empty-events">等待世界解析第一项关键事实。</p>
             ) : (
               <ol className="event-list">
-                {[...snapshot.events].reverse().map((event) => <EventItem event={event} key={event.id} />)}
+                {[...snapshot.events].reverse().map((event) => (
+                  <EventItem event={event} key={event.id} screenSide={snapshot.world.screenSide} />
+                ))}
               </ol>
             )}
           </div>

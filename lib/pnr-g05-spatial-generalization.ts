@@ -198,6 +198,7 @@ export const G05_CANDIDATES = Object.freeze([
 
 export const G05_BASE_CONFIG = Object.freeze({
   initialPositions: makeInitialPositionsForCue("neutral"),
+  screenSide: "right",
   seed: 17,
   maxTime: 7.4,
   d1FrontReactionDelay: 0.12,

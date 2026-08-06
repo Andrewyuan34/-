@@ -1,8 +1,10 @@
 import {
   copyInitialPlayerPositions,
+  mirrorInitialPlayerPositions,
   type Branch,
   type InitialPlayerPositions,
   type PlayerId,
+  type ScreenSide,
   type SimulationConfig,
   type TerminalState,
 } from "./pnr-core.ts";
@@ -60,6 +62,7 @@ export const PNR_SCENARIOS = [
     expected: "预期观察：O1 使用掩护，防守换防，D1 绕前并先触球。",
     publicInput: {
       initialPositions: makeInitialPositionsForCue("neutral"),
+      screenSide: "right",
       seed: 17,
       maxTime: 7.4,
       d1FrontReactionDelay: 0,
@@ -82,6 +85,7 @@ export const PNR_SCENARIOS = [
     expected: "预期观察：O1 向左拒绝，D1、D5 保持原对位，不发生换防。",
     publicInput: {
       initialPositions: makeInitialPositionsForCue("overplay_right"),
+      screenSide: "right",
       seed: 17,
       maxTime: 7.4,
       d1FrontReactionDelay: 0,
@@ -104,6 +108,7 @@ export const PNR_SCENARIOS = [
     expected: "预期观察：FRONT 被时间硬约束否决，D1 留在身后干扰，O5 先触球。",
     publicInput: {
       initialPositions: makeInitialPositionsForCue("neutral"),
+      screenSide: "right",
       seed: 17,
       maxTime: 7.4,
       d1FrontReactionDelay: 0.12,
@@ -126,6 +131,7 @@ export const PNR_SCENARIOS = [
     expected: "预期观察：接球事件触发重规划，D5 留守 O1，O1 外移，O5 转身推进后停止。",
     publicInput: {
       initialPositions: makeInitialPositionsForCue("neutral"),
+      screenSide: "right",
       seed: 17,
       maxTime: 7.4,
       d1FrontReactionDelay: 0.12,
@@ -148,6 +154,7 @@ export const PNR_SCENARIOS = [
     expected: "预期观察：O5 先准备转身；D5 进入局部协防半径后，回传窗公开成立，O5 分球并由 O1 合法接住。",
     publicInput: {
       initialPositions: makeInitialPositionsForCue("neutral"),
+      screenSide: "right",
       seed: 17,
       maxTime: 7.4,
       d1FrontReactionDelay: 0.12,
@@ -170,6 +177,7 @@ export const PNR_SCENARIOS = [
     expected: "预期观察：换防完成后 ATTACK_BIG 击败 FEED_SEAL；O5 清空，D5 遏制，O1 过髋后形成近筐窗口。",
     publicInput: {
       initialPositions: makeInitialPositionsForCue("neutral"),
+      screenSide: "right",
       seed: 17,
       maxTime: 7.4,
       d1FrontReactionDelay: 0.12,
@@ -192,6 +200,7 @@ export const PNR_SCENARIOS = [
     expected: "预期观察：UNDER 从公开起手深度胜出；没有换防，D1 合法绕下方，D5 短收 O5，O1 在追回前获得处理窗。",
     publicInput: {
       initialPositions: makeInitialPositionsForCue("under_gap"),
+      screenSide: "right",
       seed: 17,
       maxTime: 7.4,
       d1FrontReactionDelay: 0,
@@ -214,6 +223,7 @@ export const PNR_SCENARIOS = [
     expected: "预期观察：拒绝分支不换防；D1 落后后 D5 局部协防，O5 顺下，传球窗成立后由 O5 合法接球。",
     publicInput: {
       initialPositions: makeInitialPositionsForCue("overplay_hard_right"),
+      screenSide: "right",
       seed: 17,
       maxTime: 7.4,
       d1FrontReactionDelay: 0,
@@ -240,10 +250,16 @@ export function getPnrScenario(id: string): PnrScenario {
   return scenario;
 }
 
-export function makeScenarioConfig(id: ScenarioId): SimulationConfig {
+export function makeScenarioConfig(
+  id: ScenarioId,
+  screenSide: ScreenSide = "right",
+): SimulationConfig {
   const input = getPnrScenario(id).publicInput;
+  const rightPositions = copyInitialPlayerPositions(input.initialPositions);
   return {
     ...input,
-    initialPositions: copyInitialPlayerPositions(input.initialPositions),
+    screenSide,
+    initialPositions:
+      screenSide === "right" ? rightPositions : mirrorInitialPlayerPositions(rightPositions),
   };
 }

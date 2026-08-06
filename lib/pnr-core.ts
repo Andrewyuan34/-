@@ -3,6 +3,7 @@ export const FIXED_DT = 1 / 60;
 export const COURT = {
   width: 10,
   height: 8,
+  centerlineX: 5,
   hoop: { x: 5, y: 0.68 },
   screenSpot: { x: 5.62, y: 5.62 },
   useGate: { x: 6.38, y: 4.72 },
@@ -12,6 +13,7 @@ export const COURT = {
 export const PLAYER_IDS = ["O1", "O5", "D1", "D5"] as const;
 export type PlayerId = (typeof PLAYER_IDS)[number];
 export type Team = "offense" | "defense";
+export type ScreenSide = "right" | "left";
 export type SimulationHorizon =
   | "pnr_resolution"
   | "post_catch_finish"
@@ -185,6 +187,7 @@ export interface TerminalState {
 export interface WorldState {
   tick: number;
   time: number;
+  screenSide: ScreenSide;
   players: Record<PlayerId, PlayerState>;
   ballOwner: PlayerId | null;
   ball: BallState;
@@ -249,6 +252,7 @@ export interface PlanningRecord {
 
 export interface SimulationConfig {
   initialPositions: InitialPlayerPositions;
+  screenSide: ScreenSide;
   seed: number;
   maxTime: number;
   d1FrontReactionDelay: number;
@@ -261,6 +265,7 @@ export interface PublicObservation {
   tick: number;
   time: number;
   team: Team;
+  screenSide: ScreenSide;
   ownPlayerIds: PlayerId[];
   opponentPlayerIds: PlayerId[];
   players: Record<PlayerId, { pos: Vec2; vel: Vec2; radius: number; maxSpeed: number }>;
@@ -513,6 +518,88 @@ export function distance(a: Vec2, b: Vec2): number {
   return length(sub(a, b));
 }
 
+export function mirrorPointAcrossCenterline(point: Vec2): Vec2 {
+  return {
+    x: COURT.centerlineX * 2 - point.x,
+    y: point.y,
+  };
+}
+
+export function mirrorVectorAcrossCenterline(vector: Vec2): Vec2 {
+  return { x: -vector.x, y: vector.y };
+}
+
+export function mirrorInitialPlayerPositions(
+  positions: Readonly<InitialPlayerPositions>,
+): InitialPlayerPositions {
+  return Object.fromEntries(
+    PLAYER_IDS.map((id) => [id, mirrorPointAcrossCenterline(positions[id])]),
+  ) as unknown as InitialPlayerPositions;
+}
+
+function toTacticalPoint(point: Vec2, side: ScreenSide): Vec2 {
+  return side === "right" ? point : mirrorPointAcrossCenterline(point);
+}
+
+function toTacticalVector(vector: Vec2, side: ScreenSide): Vec2 {
+  return side === "right" ? vector : mirrorVectorAcrossCenterline(vector);
+}
+
+function transformPlanFrame(plan: TeamPlan, side: ScreenSide): TeamPlan {
+  if (side === "right") return plan;
+  return {
+    ...plan,
+    primaryTarget: plan.primaryTarget
+      ? mirrorPointAcrossCenterline(plan.primaryTarget)
+      : undefined,
+    secondaryTarget: plan.secondaryTarget
+      ? mirrorPointAcrossCenterline(plan.secondaryTarget)
+      : undefined,
+  };
+}
+
+function transformIntentFrame<T extends PlayerId>(
+  intents: Record<T, MotionIntent>,
+  side: ScreenSide,
+): Record<T, MotionIntent> {
+  if (side === "right") return intents;
+  return Object.fromEntries(
+    Object.entries(intents).map(([id, intent]) => [
+      id,
+      {
+        ...(intent as MotionIntent),
+        target: mirrorPointAcrossCenterline((intent as MotionIntent).target),
+      },
+    ]),
+  ) as Record<T, MotionIntent>;
+}
+
+function toTacticalWorld(world: WorldState): WorldState {
+  if (world.screenSide === "right") return world;
+  const players = {} as Record<PlayerId, PlayerState>;
+  for (const id of PLAYER_IDS) {
+    const player = world.players[id];
+    players[id] = {
+      ...player,
+      pos: mirrorPointAcrossCenterline(player.pos),
+      vel: mirrorVectorAcrossCenterline(player.vel),
+    };
+  }
+  return {
+    ...world,
+    screenSide: "right",
+    players,
+    ball: {
+      ...world.ball,
+      pos: mirrorPointAcrossCenterline(world.ball.pos),
+      vel: mirrorVectorAcrossCenterline(world.ball.vel),
+      target: world.ball.target
+        ? mirrorPointAcrossCenterline(world.ball.target)
+        : null,
+    },
+  };
+}
+
 function lowSideDigPoint(o5: Vec2, o1: Vec2, offset = 0.82): Vec2 {
   const passDirection = normalize(sub(o1, o5));
   const sideA = v(passDirection.y, -passDirection.x);
@@ -750,6 +837,7 @@ function initialWorld(config: SimulationConfig): WorldState {
   return {
     tick: 0,
     time: 0,
+    screenSide: config.screenSide,
     players: {
       O1: makePlayer("O1", "offense", positions.O1, config.o1MaxSpeed),
       O5: makePlayer("O5", "offense", positions.O5, 2.92),
@@ -807,6 +895,7 @@ export function createPlannerObservation(
     tick: world.tick,
     time: world.time,
     team,
+    screenSide: world.screenSide,
     ownPlayerIds: [...(team === "offense" ? OFFENSE_IDS : DEFENSE_IDS)],
     opponentPlayerIds: [...(team === "offense" ? DEFENSE_IDS : OFFENSE_IDS)],
     players,
@@ -2368,7 +2457,8 @@ function accelerationLimited(current: Vec2, target: Vec2, maxDelta: number): Vec
 
 function screenPose(world: WorldState): boolean {
   const o5 = world.players.O5;
-  return distance(o5.pos, COURT.screenSpot) <= 0.16 && length(o5.vel) <= 0.42;
+  const tacticalO5 = toTacticalPoint(o5.pos, world.screenSide);
+  return distance(tacticalO5, COURT.screenSpot) <= 0.16 && length(o5.vel) <= 0.42;
 }
 
 function makeEvent(
@@ -2418,8 +2508,13 @@ export class PnrSimulation {
 
   constructor(config: SimulationConfig) {
     const initialPositions = validateInitialPlayerPositions(config?.initialPositions);
+    const screenSide = config?.screenSide;
+    if (screenSide !== "right" && screenSide !== "left") {
+      throw new Error(`screenSide must be "right" or "left"; received ${String(screenSide)}`);
+    }
     this.config = {
       initialPositions,
+      screenSide,
       seed: config.seed ?? 17,
       maxTime: config.maxTime ?? 7.4,
       d1FrontReactionDelay: clamp(config.d1FrontReactionDelay ?? 0, 0, 0.5),
@@ -2434,12 +2529,16 @@ export class PnrSimulation {
   }
 
   private replanOffense(trigger: string, triggerEvents: WorldEvent[]): TeamPlan {
-    const observation = createPlannerObservation(this.world, "offense", triggerEvents);
-    const current = this.offenseVersion > 0 ? this.offensePlan : null;
+    const tacticalWorld = toTacticalWorld(this.world);
+    const observation = createPlannerObservation(tacticalWorld, "offense", triggerEvents);
+    const current = this.offenseVersion > 0
+      ? transformPlanFrame(this.offensePlan, this.config.screenSide)
+      : null;
     const candidates = evaluateOffenseCandidates(observation, current);
     const chosen = chooseCandidate(candidates);
     this.offenseVersion += 1;
-    const plan = makeOffensePlan(chosen, this.world, this.offenseVersion);
+    const tacticalPlan = makeOffensePlan(chosen, tacticalWorld, this.offenseVersion);
+    const plan = transformPlanFrame(tacticalPlan, this.config.screenSide);
     this.planningLog.push({
       tick: this.world.tick,
       at: this.world.time,
@@ -2455,12 +2554,16 @@ export class PnrSimulation {
   }
 
   private replanDefense(trigger: string, triggerEvents: WorldEvent[]): TeamPlan {
-    const observation = createPlannerObservation(this.world, "defense", triggerEvents);
-    const current = this.defenseVersion > 0 ? this.defensePlan : null;
+    const tacticalWorld = toTacticalWorld(this.world);
+    const observation = createPlannerObservation(tacticalWorld, "defense", triggerEvents);
+    const current = this.defenseVersion > 0
+      ? transformPlanFrame(this.defensePlan, this.config.screenSide)
+      : null;
     const candidates = evaluateDefenseCandidates(observation, current);
     const chosen = chooseCandidate(candidates);
     this.defenseVersion += 1;
-    const plan = makeDefensePlan(chosen, this.world, this.defenseVersion);
+    const tacticalPlan = makeDefensePlan(chosen, tacticalWorld, this.defenseVersion);
+    const plan = transformPlanFrame(tacticalPlan, this.config.screenSide);
     this.planningLog.push({
       tick: this.world.tick,
       at: this.world.time,
@@ -2553,22 +2656,27 @@ export class PnrSimulation {
     }
 
     const legalPoseBefore = screenPose(this.world);
+    const tacticalWorld = toTacticalWorld(this.world);
+    const tacticalDesiredD1 = toTacticalVector(rawDesired.D1, this.world.screenSide);
     const geometryBefore = screenGeometry({
-      d1: this.world.players.D1,
-      o5: this.world.players.O5,
-      desiredD1Velocity: rawDesired.D1,
+      d1: tacticalWorld.players.D1,
+      o5: tacticalWorld.players.O5,
+      desiredD1Velocity: tacticalDesiredD1,
       screenLegalPose: legalPoseBefore,
     });
     const adjusted = { ...rawDesired, D1: { ...rawDesired.D1 } };
 
     if (geometryBefore.routeExposure && intents.D1.screenNavigation !== "none") {
-      const forward = normalize(rawDesired.D1);
+      const forward = normalize(tacticalDesiredD1);
       const left = v(-forward.y, forward.x);
       const overDirection = left.y <= 0 ? left : scale(left, -1);
       const tangent = intents.D1.screenNavigation === "under" ? scale(overDirection, -1) : overDirection;
-      adjusted.D1 = add(scale(rawDesired.D1, 0.67), scale(tangent, 1.42));
+      let tacticalAdjusted = add(scale(tacticalDesiredD1, 0.67), scale(tangent, 1.42));
       const max = this.world.players.D1.maxSpeed;
-      if (length(adjusted.D1) > max) adjusted.D1 = scale(normalize(adjusted.D1), max);
+      if (length(tacticalAdjusted) > max) {
+        tacticalAdjusted = scale(normalize(tacticalAdjusted), max);
+      }
+      adjusted.D1 = toTacticalVector(tacticalAdjusted, this.world.screenSide);
     }
 
     for (const id of PLAYER_IDS) {
@@ -2630,10 +2738,12 @@ export class PnrSimulation {
   }
 
   private resolveFacts(rawDesiredD1: Vec2, progressLoss: number): ScreenFacts {
-    const o1 = this.world.players.O1;
-    const o5 = this.world.players.O5;
-    const d1 = this.world.players.D1;
-    const d5 = this.world.players.D5;
+    const tacticalWorld = toTacticalWorld(this.world);
+    const o1 = tacticalWorld.players.O1;
+    const o5 = tacticalWorld.players.O5;
+    const d1 = tacticalWorld.players.D1;
+    const d5 = tacticalWorld.players.D5;
+    const tacticalDesiredD1 = toTacticalVector(rawDesiredD1, this.world.screenSide);
     const legalPose = screenPose(this.world);
     const teammateBodyDistance = o1.radius + o5.radius;
     const relativeToScreen = sub(o1.pos, o5.pos);
@@ -2661,7 +2771,7 @@ export class PnrSimulation {
     return evaluateScreenFacts({
       d1,
       o5,
-      desiredD1Velocity: rawDesiredD1,
+      desiredD1Velocity: tacticalDesiredD1,
       screenLegalPose: legalPose,
       progressLoss,
       priorDelay: this.world.facts.accumulatedDelay,
@@ -2921,7 +3031,8 @@ export class PnrSimulation {
       previous.d5HelpCommitted ||
       (previous.active && d5O5Distance <= 1.12 && d5O1Distance >= 1.28);
     const o1Spacing = distance(o1.pos, o5.pos);
-    const o1Relocated = o1Spacing >= 2.62 && o1.pos.x >= 7.55;
+    const tacticalO1 = toTacticalPoint(o1.pos, this.world.screenSide);
+    const o1Relocated = o1Spacing >= 2.62 && tacticalO1.x >= 7.55;
     const kickoutClearances = (["D1", "D5"] as const).map((id) => {
       const defender = this.world.players[id];
       const lane = pointSegmentDistance(defender.pos, o5.pos, o1.pos);
@@ -3027,14 +3138,16 @@ export class PnrSimulation {
     const o5 = this.world.players.O5;
     const d1 = this.world.players.D1;
     const d5 = this.world.players.D5;
+    const tacticalO1 = toTacticalPoint(o1.pos, this.world.screenSide);
+    const tacticalD1 = toTacticalPoint(d1.pos, this.world.screenSide);
     const helpEligible = previous.active
       ? previous.helpEligible
-      : d1.pos.x - o1.pos.x >= 1.08;
+      : tacticalD1.x - tacticalO1.x >= 1.08;
     const d1BeatenNow =
       o1.pos.y <= 4.78 &&
       distance(o1.pos, d1.pos) >= 0.8 &&
       (distance(d1.pos, COURT.hoop) >= distance(o1.pos, COURT.hoop) + 0.08 ||
-        d1.pos.x >= o1.pos.x + 0.34);
+        tacticalD1.x >= tacticalO1.x + 0.34);
     const d1Beaten = previous.d1Beaten || d1BeatenNow;
     const d5O1Distance = distance(d5.pos, o1.pos);
     const d5O5Distance = distance(d5.pos, o5.pos);
@@ -3084,12 +3197,14 @@ export class PnrSimulation {
   private resolveBranch(): Branch {
     if (this.world.branch !== "undecided") return this.world.branch;
     const o1 = this.world.players.O1;
-    const initialO1 = this.config.initialPositions.O1;
-    if (o1.pos.x <= initialO1.x - 0.17 && o1.vel.x < -0.5) return "reject";
+    const tacticalO1 = toTacticalPoint(o1.pos, this.world.screenSide);
+    const tacticalVelocity = toTacticalVector(o1.vel, this.world.screenSide);
+    const initialO1 = toTacticalPoint(this.config.initialPositions.O1, this.world.screenSide);
+    if (tacticalO1.x <= initialO1.x - 0.17 && tacticalVelocity.x < -0.5) return "reject";
     if (
       this.world.facts.screenLegalPose &&
-      o1.pos.x >= initialO1.x + 0.3 &&
-      o1.vel.x > 0.5
+      tacticalO1.x >= initialO1.x + 0.3 &&
+      tacticalVelocity.x > 0.5
     ) {
       return "use";
     }
@@ -3529,6 +3644,7 @@ export class PnrSimulation {
   private computeStateHash(): string {
     return stableHash({
       seed: this.config.seed,
+      screenSide: this.config.screenSide,
       initialPositions: PLAYER_IDS.map((id) => ({
         id,
         x: this.config.initialPositions[id].x,
@@ -3574,9 +3690,24 @@ export class PnrSimulation {
       this.deliverEvents();
       this.maybeReplan();
 
-      const offense = offensiveIntents(this.offensePlan, this.world);
+      const tacticalWorld = toTacticalWorld(this.world);
+      const tacticalOffensePlan = transformPlanFrame(
+        this.offensePlan,
+        this.config.screenSide,
+      );
+      const tacticalDefensePlan = transformPlanFrame(
+        this.defensePlan,
+        this.config.screenSide,
+      );
+      const offense = transformIntentFrame(
+        offensiveIntents(tacticalOffensePlan, tacticalWorld),
+        this.config.screenSide,
+      );
       const passIntent = offensivePassIntent(this.offensePlan, this.world);
-      const defense = defensiveIntents(this.defensePlan, this.world);
+      const defense = transformIntentFrame(
+        defensiveIntents(tacticalDefensePlan, tacticalWorld),
+        this.config.screenSide,
+      );
       const intents: Record<PlayerId, MotionIntent> = { ...offense, ...defense };
       const previousFacts = { ...this.world.facts };
       const previousMismatch = { ...this.world.mismatch };

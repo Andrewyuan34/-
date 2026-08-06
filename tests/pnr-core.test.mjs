@@ -41,12 +41,29 @@ import {
 import {
   G05_CANDIDATES,
   createG05Replay,
+  makeG05Config,
   scanG05SpatialBoundary,
 } from "../lib/pnr-g05-spatial-generalization.ts";
+import {
+  G06_MATRIX_A_FRONT_DELAYS,
+  G06_MATRIX_A_SPEEDS,
+  G06_MATRIX_B_RECOVERY_DELAYS,
+  G06_POSITION_IDS,
+  G06_SPECS,
+  makeG06Config,
+  scanG06Combinations,
+} from "../lib/pnr-g06-combinations.ts";
+import {
+  G07_REPLAY_PAIRS,
+  G07_SPECS,
+  makeG07Config,
+  scanG07Mirrors,
+} from "../lib/pnr-g07-mirroring.ts";
 
 function makeTestConfig(cue = "neutral", overrides = {}) {
   return {
     initialPositions: makeInitialPositionsForCue(cue),
+    screenSide: "right",
     seed: 17,
     maxTime: 7.4,
     d1FrontReactionDelay: 0,
@@ -327,6 +344,131 @@ test("G05 audits 33 candidates as 31 deterministic simulations plus two expected
       { id: "screen-shift", sampleId: "O5.x/-0.24" },
       { id: "d1-impact", sampleId: "D1.x/+0.24" },
     ],
+  );
+});
+
+test("G06 audits 12 switch/front combinations and 9 post-catch combinations without causal leakage", () => {
+  const audit = scanG06Combinations();
+
+  assert.deepEqual(G06_MATRIX_A_SPEEDS, [3.98, 4]);
+  assert.deepEqual(G06_MATRIX_A_FRONT_DELAYS, [0.01, 0.02]);
+  assert.deepEqual(G06_MATRIX_B_RECOVERY_DELAYS, [0.18, 0.21, 0.36]);
+  assert.deepEqual(G06_POSITION_IDS, ["baseline", "O5.x/-0.24", "D1.x/+0.24"]);
+  assert.equal(G06_SPECS.length, 21);
+  assert.equal(new Set(G06_SPECS.map((spec) => spec.id)).size, 21);
+  assert.equal(audit.matrixA.length, 12);
+  assert.equal(audit.matrixB.length, 9);
+  assert.equal(audit.sampleCount, 21);
+  assert.equal(audit.deterministic, true);
+  assert.equal(audit.invariantsPassed, true);
+  assert.equal(audit.stageCausalityPassed, true);
+  assert.equal(audit.attackNoLobPassed, true);
+  assert.equal(audit.explainable, true);
+  assert.equal(audit.passed, true);
+  assert.deepEqual(audit.failureReasons, []);
+
+  assert.equal(audit.rows.every((row) => row.deterministic), true);
+  assert.equal(audit.rows.every((row) => row.explainable), true);
+  assert.equal(audit.rows.every((row) => row.invariantFailures.length === 0), true);
+  assert.equal(
+    audit.rows.every(
+      (row) =>
+        row.publicInput.seed === 17 &&
+        row.publicInput.screenSide === "right" &&
+        row.publicInput.o1MaxSpeed === row.o1MaxSpeed &&
+        row.publicInput.d1FrontReactionDelay === row.d1FrontReactionDelay &&
+        row.publicInput.d1PostCatchRecoveryDelay === row.d1PostCatchRecoveryDelay &&
+        row.publicInput.horizon === row.horizon &&
+        PLAYER_IDS.every(
+          (id) =>
+            row.publicInput.initialPositions[id].x === row.initialPositions[id].x &&
+            row.publicInput.initialPositions[id].y === row.initialPositions[id].y,
+        ),
+    ),
+    true,
+  );
+  assert.equal(audit.rows.every((row) => row.minimumBodyGap >= -0.01), true);
+  assert.equal(
+    audit.matrixA
+      .filter((row) => row.firstMismatchOffense === "ATTACK_BIG")
+      .every((row) => !row.passLaunched && row.ballOwner === "O1"),
+    true,
+  );
+  assert.ok(new Set(audit.rows.map((row) => row.terminalReason)).size >= 4);
+  assert.equal(audit.replays.length, 3);
+});
+
+test("G07 tactical frame keeps every approved right-side G05/G06 trajectory unchanged", () => {
+  const legalG05Candidates = G05_CANDIDATES.filter(
+    ({ id }) => id !== "O1.y/-0.24" && id !== "D1.y/+0.24",
+  );
+  assert.equal(
+    behaviorDigest(
+      legalG05Candidates.map((candidate) => [
+        candidate.id,
+        behaviorTrace(makeG05Config(candidate.id)),
+      ]),
+    ),
+    "c1e0280ccd72046cf2416c1ba445dc733c762ec2866852afc1e5e66a26c337fd",
+  );
+  assert.equal(
+    behaviorDigest(G06_SPECS.map((spec) => [spec.id, behaviorTrace(makeG06Config(spec.id))])),
+    "4fb1c36a9f27c5a4da56088e18059e8bd1d874c60d1272186ae36301bf5f61b0",
+  );
+  assert.equal(scanG05SpatialBoundary().passed, true);
+  assert.equal(scanG06Combinations().passed, true);
+  assert.equal(PNR_SCENARIOS.every((scenario) => scenario.publicInput.screenSide === "right"), true);
+});
+
+test("G07 runs real left worlds for all S01-S08 and G06 inputs with deterministic tick mirrors", () => {
+  const audit = scanG07Mirrors();
+
+  assert.equal(G07_SPECS.length, 29);
+  assert.equal(new Set(G07_SPECS.map((spec) => spec.id)).size, 29);
+  assert.equal(audit.pairCount, 29);
+  assert.equal(audit.scenarioPairs.length, 8);
+  assert.equal(audit.g06Pairs.length, 21);
+  assert.equal(audit.deterministic, true);
+  assert.equal(audit.mirrorPassed, true);
+  assert.equal(audit.invariantsPassed, true);
+  assert.equal(audit.informationBoundaryPassed, true);
+  assert.equal(audit.passed, true);
+  assert.deepEqual(audit.failureReasons, []);
+  assert.ok(audit.maxMirrorError <= audit.tolerance);
+  assert.ok(audit.maxMirrorError < 1e-12);
+  assert.equal(
+    audit.rows.every(
+      (row) =>
+        row.initialMirrorExact &&
+        row.rightDeterministic &&
+        row.leftDeterministic &&
+        row.worldMirrorPassed &&
+        row.plansAndRolesEquivalent &&
+        row.candidatesEquivalent &&
+        row.eventsEquivalent &&
+        row.factsEquivalent &&
+        row.terminalEquivalent &&
+        row.rightInvariantFailures.length === 0 &&
+        row.leftInvariantFailures.length === 0,
+    ),
+    true,
+  );
+  assert.deepEqual(
+    G07_REPLAY_PAIRS.map(({ id, specId }) => ({ id, specId })),
+    [
+      { id: "switch", specId: "scenario/S03" },
+      { id: "reject-slip", specId: "scenario/S08" },
+      { id: "post-kickout", specId: "scenario/S05" },
+    ],
+  );
+
+  const left = new PnrSimulation(makeG07Config("scenario/S03", "left"));
+  assert.equal(left.world.screenSide, "left");
+  assert.equal(left.config.screenSide, "left");
+  assert.equal(createPlannerObservation(left.world, "offense").screenSide, "left");
+  assert.throws(
+    () => new PnrSimulation({ ...makeG07Config("scenario/S03", "right"), screenSide: undefined }),
+    /screenSide must be "right" or "left"/,
   );
 });
 

@@ -16,6 +16,7 @@ export const G02_DELAYS = Object.freeze(
 
 export const G02_BASE_CONFIG = Object.freeze({
   initialPositions: makeInitialPositionsForCue("neutral"),
+  screenSide: "right",
   seed: 17,
   maxTime: 7.4,
   d1FrontReactionDelay: G02_DELAYS[0],
