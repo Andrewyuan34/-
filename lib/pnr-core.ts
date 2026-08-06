@@ -13,18 +13,27 @@ export const PLAYER_IDS = ["O1", "O5", "D1", "D5"] as const;
 export type PlayerId = (typeof PLAYER_IDS)[number];
 export type Team = "offense" | "defense";
 export type DefensiveCue = "neutral" | "overplay_right";
+export type SimulationHorizon =
+  | "pnr_resolution"
+  | "post_catch_finish"
+  | "post_catch_kickout";
 export type OffensePlanId =
   | "USE_RIGHT_SCREEN"
   | "REJECT_LEFT"
   | "ATTACK_BIG"
   | "FEED_SEAL"
-  | "RESET_MISMATCH";
+  | "RESET_MISMATCH"
+  | "POST_FINISH"
+  | "KICK_OUT";
 export type DefensePlanId =
   | "SWITCH_READY"
   | "SWITCH"
   | "STAY_HOME"
   | "CONTAIN_MISMATCH"
   | "FRONT_SEAL"
+  | "BACKSIDE_CONTEST"
+  | "STAY_HOME_POST"
+  | "DIG_POST"
   | "PRESSURE_MISMATCH";
 export type PlanId = OffensePlanId | DefensePlanId;
 export type Branch = "undecided" | "use" | "reject";
@@ -76,6 +85,12 @@ export type EventType =
   | "pass_launched"
   | "pass_caught"
   | "pass_denied"
+  | "post_catch_attack"
+  | "help_committed"
+  | "kickout_window_open"
+  | "kickout_launched"
+  | "kickout_caught"
+  | "finish_window"
   | "mismatch_advantage"
   | "mismatch_contained"
   | "advantage_created"
@@ -102,9 +117,15 @@ export const EVENT_ORDER: Record<EventType, number> = {
   mismatch_contained: 80,
   pass_launched: 82,
   pass_caught: 84,
-  pass_denied: 84,
-  advantage_created: 85,
-  terminal: 90,
+  post_catch_attack: 86,
+  help_committed: 87,
+  kickout_window_open: 88,
+  finish_window: 88,
+  kickout_launched: 89,
+  kickout_caught: 90,
+  pass_denied: 92,
+  advantage_created: 95,
+  terminal: 100,
 };
 
 export interface WorldEvent {
@@ -122,6 +143,8 @@ export interface TerminalState {
   reason:
     | "mismatch_advantage"
     | "seal_catch_advantage"
+    | "post_catch_finish_window"
+    | "post_catch_kickout_caught"
     | "pass_denied"
     | "switch_contained"
     | "reject_advantage"
@@ -140,6 +163,7 @@ export interface WorldState {
   facts: ScreenFacts;
   mismatch: MismatchFacts;
   seal: SealFacts;
+  postCatch: PostCatchFacts;
   terminal: TerminalState | null;
   pendingPlannerEvents: WorldEvent[];
   stateHash: string;
@@ -196,6 +220,9 @@ export interface SimulationConfig {
   cue: DefensiveCue;
   seed: number;
   maxTime: number;
+  d1FrontReactionDelay: number;
+  d1PostCatchRecoveryDelay: number;
+  horizon: SimulationHorizon;
 }
 
 export interface PublicObservation {
@@ -210,12 +237,13 @@ export interface PublicObservation {
     pos: Vec2;
     vel: Vec2;
     inFlight: boolean;
-    kind: "lob_entry" | null;
+    kind: "lob_entry" | "kick_out" | null;
   };
   branch: Branch;
   facts: ScreenFacts;
   mismatch: MismatchFacts;
   seal: SealFacts;
+  postCatch: PostCatchFacts;
   court: typeof COURT;
   triggerEvents: WorldEvent[];
 }
@@ -260,10 +288,39 @@ export interface SealFacts {
   established: boolean;
   o5GoalSide: boolean;
   d1Fronting: boolean;
+  frontReactionDelay: number;
+  frontRouteLength: number;
+  frontRouteLegal: boolean;
+  frontRouteNeedsDetour: boolean;
+  frontEta: number;
+  entryFlightTime: number;
+  frontFeasible: boolean;
   passLaneClear: boolean;
   laneClearance: number;
   passWindow: boolean;
   passWindowOpenedAtTick: number | null;
+}
+
+export interface PostCatchFacts {
+  active: boolean;
+  startedAt: number | null;
+  elapsed: number;
+  attackCommitted: boolean;
+  o5RimDistance: number;
+  d1Behind: boolean;
+  d1BodyGap: number;
+  d1RecoveryDelay: number;
+  d1RecoveryReadyIn: number;
+  d5AttachedToO1: boolean;
+  d5O1Distance: number;
+  d5O5Distance: number;
+  d5HelpCommitted: boolean;
+  o1Spacing: number;
+  o1Relocated: boolean;
+  kickoutLaneClearance: number;
+  kickoutWindow: boolean;
+  kickoutWindowOpenedAtTick: number | null;
+  finishWindow: boolean;
 }
 
 export interface BallState {
@@ -275,15 +332,13 @@ export interface BallState {
   intendedReceiver: PlayerId | null;
   target: Vec2 | null;
   launchedAt: number | null;
-  kind: "lob_entry" | null;
+  kind: "lob_entry" | "kick_out" | null;
   outcome: "live" | "caught" | "deflected" | "missed";
 }
 
-interface PassIntent {
-  from: "O1";
-  to: "O5";
-  kind: "lob_entry";
-}
+type PassIntent =
+  | { from: "O1"; to: "O5"; kind: "lob_entry" }
+  | { from: "O5"; to: "O1"; kind: "kick_out" };
 
 const OFFENSE_IDS: PlayerId[] = ["O1", "O5"];
 const DEFENSE_IDS: PlayerId[] = ["D1", "D5"];
@@ -315,10 +370,38 @@ const EMPTY_SEAL: SealFacts = {
   established: false,
   o5GoalSide: false,
   d1Fronting: false,
+  frontReactionDelay: 0,
+  frontRouteLength: 0,
+  frontRouteLegal: false,
+  frontRouteNeedsDetour: false,
+  frontEta: 0,
+  entryFlightTime: 0,
+  frontFeasible: false,
   passLaneClear: false,
   laneClearance: 0,
   passWindow: false,
   passWindowOpenedAtTick: null,
+};
+const EMPTY_POST_CATCH: PostCatchFacts = {
+  active: false,
+  startedAt: null,
+  elapsed: 0,
+  attackCommitted: false,
+  o5RimDistance: 0,
+  d1Behind: false,
+  d1BodyGap: 0,
+  d1RecoveryDelay: 0,
+  d1RecoveryReadyIn: 0,
+  d5AttachedToO1: false,
+  d5O1Distance: 0,
+  d5O5Distance: 0,
+  d5HelpCommitted: false,
+  o1Spacing: 0,
+  o1Relocated: false,
+  kickoutLaneClearance: 0,
+  kickoutWindow: false,
+  kickoutWindowOpenedAtTick: null,
+  finishWindow: false,
 };
 
 function v(x = 0, y = 0): Vec2 {
@@ -354,6 +437,15 @@ export function distance(a: Vec2, b: Vec2): number {
   return length(sub(a, b));
 }
 
+function lowSideDigPoint(o5: Vec2, o1: Vec2, offset = 0.82): Vec2 {
+  const passDirection = normalize(sub(o1, o5));
+  const sideA = v(passDirection.y, -passDirection.x);
+  const sideB = scale(sideA, -1);
+  const hoopDirection = normalize(sub(COURT.hoop, o5));
+  const lowSide = dot(sideA, hoopDirection) >= dot(sideB, hoopDirection) ? sideA : sideB;
+  return add(o5, scale(lowSide, offset));
+}
+
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
 }
@@ -385,6 +477,58 @@ function pointSegmentDistance(point: Vec2, a: Vec2, b: Vec2): { distance: number
   const t = clamp(dot(sub(point, a), ab) / denominator, 0, 1);
   const closest = add(a, scale(ab, t));
   return { distance: distance(point, closest), t };
+}
+
+function bodyAwareRoute(
+  start: Vec2,
+  target: Vec2,
+  blocker: PlayerState,
+  moverRadius: number,
+): { length: number; legal: boolean; needsDetour: boolean } {
+  const straightLength = distance(start, target);
+  const clearanceRadius = blocker.radius + moverRadius;
+  const crossing = pointSegmentDistance(blocker.pos, start, target);
+  const needsDetour =
+    crossing.t > 1e-6 &&
+    crossing.t < 1 - 1e-6 &&
+    crossing.distance < clearanceRadius;
+  if (!needsDetour) {
+    return { length: straightLength, legal: true, needsDetour: false };
+  }
+
+  const startRadius = distance(start, blocker.pos);
+  const targetRadius = distance(target, blocker.pos);
+  const clearanceFitsCourt =
+    blocker.pos.x - clearanceRadius >= 0 &&
+    blocker.pos.x + clearanceRadius <= COURT.width &&
+    blocker.pos.y - clearanceRadius >= 0 &&
+    blocker.pos.y + clearanceRadius <= COURT.height;
+  if (
+    !clearanceFitsCourt ||
+    startRadius <= clearanceRadius + 1e-6 ||
+    targetRadius <= clearanceRadius + 1e-6
+  ) {
+    return { length: straightLength, legal: false, needsDetour: true };
+  }
+
+  const centerAngle = Math.acos(
+    clamp(
+      dot(
+        normalize(sub(start, blocker.pos)),
+        normalize(sub(target, blocker.pos)),
+      ),
+      -1,
+      1,
+    ),
+  );
+  const tangentFromStart = Math.acos(clamp(clearanceRadius / startRadius, -1, 1));
+  const tangentFromTarget = Math.acos(clamp(clearanceRadius / targetRadius, -1, 1));
+  const arcAngle = Math.max(0, centerAngle - tangentFromStart - tangentFromTarget);
+  const detourLength =
+    Math.sqrt(Math.max(0, startRadius ** 2 - clearanceRadius ** 2)) +
+    Math.sqrt(Math.max(0, targetRadius ** 2 - clearanceRadius ** 2)) +
+    clearanceRadius * arcAngle;
+  return { length: detourLength, legal: true, needsDetour: true };
 }
 
 export function screenGeometry(input: GeometryInput): {
@@ -482,7 +626,12 @@ function initialWorld(config: SimulationConfig): WorldState {
     branch: "undecided",
     facts: { ...EMPTY_FACTS },
     mismatch: { ...EMPTY_MISMATCH },
-    seal: { ...EMPTY_SEAL },
+    seal: { ...EMPTY_SEAL, frontReactionDelay: config.d1FrontReactionDelay },
+    postCatch: {
+      ...EMPTY_POST_CATCH,
+      d1RecoveryDelay: config.d1PostCatchRecoveryDelay,
+      d1RecoveryReadyIn: config.d1PostCatchRecoveryDelay,
+    },
     terminal: null,
     pendingPlannerEvents: [],
     stateHash: "00000000",
@@ -524,6 +673,7 @@ export function createPlannerObservation(
     facts: { ...world.facts },
     mismatch: { ...world.mismatch },
     seal: { ...world.seal },
+    postCatch: { ...world.postCatch },
     court: COURT,
     triggerEvents: triggerEvents.map((event) => ({ ...event })),
   };
@@ -535,6 +685,74 @@ function offenseRollout(
   candidate: OffensePlanId,
   observation: PublicObservation,
 ): { score: number; evidence: string[] } {
+  if (candidate === "POST_FINISH" || candidate === "KICK_OUT") {
+    const step = 1 / 30;
+    const horizonSteps = 24;
+    let o5 = { ...observation.players.O5.pos };
+    let o1 = { ...observation.players.O1.pos };
+    let d1 = { ...observation.players.D1.pos };
+    let d5 = { ...observation.players.D5.pos };
+    const initialRimDistance = distance(o5, COURT.hoop);
+    const finishTarget = v(5.12, 1.58);
+    const relocateTarget = candidate === "KICK_OUT" ? v(8.58, 2.78) : v(8.18, 4.3);
+    const helpCommitted = observation.postCatch.d5HelpCommitted;
+
+    for (let i = 0; i < horizonSteps; i += 1) {
+      o5 = movePointToward(
+        o5,
+        candidate === "POST_FINISH" ? finishTarget : o5,
+        observation.players.O5.maxSpeed * 0.94 * step,
+      );
+      o1 = movePointToward(o1, relocateTarget, observation.players.O1.maxSpeed * 0.76 * step);
+      const rearPoint = add(o5, scale(normalize(sub(o5, COURT.hoop)), 0.73));
+      const recoveryReady = i * step >= observation.postCatch.d1RecoveryReadyIn;
+      d1 = movePointToward(
+        d1,
+        rearPoint,
+        observation.players.D1.maxSpeed * (recoveryReady ? 0.92 : 0.2) * step,
+      );
+      const d5Target =
+        helpCommitted && candidate === "POST_FINISH"
+          ? lowSideDigPoint(o5, o1)
+          : add(o1, scale(normalize(sub(COURT.hoop, o1)), 0.72));
+      d5 = movePointToward(
+        d5,
+        d5Target,
+        observation.players.D5.maxSpeed * (helpCommitted && candidate === "KICK_OUT" ? 0.74 : 0.9) * step,
+      );
+    }
+
+    const rimProgress = initialRimDistance - distance(o5, COURT.hoop);
+    const d1GoalSideLeverage = distance(d1, COURT.hoop) - distance(o5, COURT.hoop);
+    const o1D5Separation = distance(o1, d5);
+    const o1Spacing = distance(o1, o5);
+    const d5O5Distance = distance(d5, o5);
+    const score =
+      candidate === "POST_FINISH"
+        ? rimProgress * 1.38 +
+          Math.max(-0.4, d1GoalSideLeverage) * 1.08 +
+          o1Spacing * 0.22 +
+          0.84 -
+          (helpCommitted ? clamp(2.05 - d5O5Distance, 0, 1.45) * 2.6 + 2.1 : 0)
+        : o1D5Separation * 1.04 +
+          o1Spacing * 0.16 +
+          (observation.postCatch.d5AttachedToO1 ? -0.72 : 0.48) +
+          (helpCommitted ? 2.7 : 0);
+    return {
+      score: round(score),
+      evidence: [
+        "24 步 / 0.8 秒接球后短推演",
+        `预计 O5 入筐推进 ${round(rimProgress, 2)}m`,
+        `预计 O5 对 D1 篮筐侧优势 ${round(d1GoalSideLeverage, 2)}m`,
+        `预计 O1 / D5 分离 ${round(o1D5Separation, 2)}m`,
+        `预计 O1–O5 拉开 ${round(o1Spacing, 2)}m`,
+        helpCommitted
+          ? `D5 已公开进入局部协防，预计距 O5 ${round(d5O5Distance, 2)}m`
+          : "D5 尚未公开离开 O1",
+      ],
+    };
+  }
+
   if (candidate === "FEED_SEAL") {
     const step = 1 / 30;
     const horizonSteps = 27;
@@ -694,24 +912,31 @@ function evaluateOffenseCandidates(
   currentPlan: TeamPlan | null,
 ): CandidateEvaluation[] {
   const screenOnRight = COURT.screenSpot.x > observation.players.O1.pos.x;
-  const ownsBall = observation.ballOwner === "O1";
+  const o1OwnsBall = observation.ballOwner === "O1";
+  const o5OwnsBall = observation.ballOwner === "O5";
   const candidates: OffensePlanId[] = [
     "USE_RIGHT_SCREEN",
     "REJECT_LEFT",
     "ATTACK_BIG",
     "FEED_SEAL",
     "RESET_MISMATCH",
+    "POST_FINISH",
+    "KICK_OUT",
   ];
 
   return candidates.map((id) => {
     const vetoes: string[] = [];
-    if (!ownsBall) vetoes.push("O1 不持球，挡拆发起不合法");
+    const postCatchCandidate = id === "POST_FINISH" || id === "KICK_OUT";
     const postSwitchCandidate =
       id === "ATTACK_BIG" || id === "FEED_SEAL" || id === "RESET_MISMATCH";
-    if (observation.facts.matchupExchange && !postSwitchCandidate) {
+    const o1BallCandidate = !postCatchCandidate;
+    if (o1BallCandidate && !o1OwnsBall) vetoes.push("O1 已不持球，原挡拆计划必须结束");
+    if (postCatchCandidate && !o5OwnsBall) vetoes.push("O5 尚未合法接球，禁止提前进入接球后处理");
+    if (o5OwnsBall && !postCatchCandidate) vetoes.push("O5 已建立球权，只能进入接球后队级方案");
+    if (observation.facts.matchupExchange && !postSwitchCandidate && !postCatchCandidate) {
       vetoes.push("换防已经完成，第一段挡拆计划必须终止");
     }
-    if (!observation.facts.matchupExchange && postSwitchCandidate) {
+    if (!observation.facts.matchupExchange && (postSwitchCandidate || postCatchCandidate)) {
       vetoes.push("尚未完成 D1/D5 对位交换，禁止提前攻击错位");
     }
     if (id === "USE_RIGHT_SCREEN" && !screenOnRight && observation.branch === "undecided") {
@@ -724,6 +949,9 @@ function evaluateOffenseCandidates(
     }
     if (id === "FEED_SEAL" && observation.seal.d1Fronting) {
       vetoes.push("D1 已公开站上传球侧，当前直传走廊被否决");
+    }
+    if (id === "KICK_OUT" && !observation.postCatch.d5HelpCommitted) {
+      vetoes.push("D5 尚未真实进入局部协防位置，禁止预判其隐藏方案");
     }
 
     const rollout = offenseRollout(id, observation);
@@ -740,7 +968,11 @@ function evaluateOffenseCandidates(
               ? "攻击换防大个"
               : id === "FEED_SEAL"
                 ? "喂 O5 卡位"
-                : "拉出重置回合",
+                : id === "RESET_MISMATCH"
+                  ? "拉出重置回合"
+                  : id === "POST_FINISH"
+                    ? "O5 转身攻筐"
+                    : "O5 分回 O1",
       feasible: vetoes.length === 0,
       score,
       vetoes,
@@ -758,6 +990,66 @@ function defenseRollout(
 ): { score: number; evidence: string[] } {
   const step = 1 / 30;
   const horizonSteps = 18;
+  if (candidate === "STAY_HOME_POST" || candidate === "DIG_POST") {
+    let o5 = { ...observation.players.O5.pos };
+    let o1 = { ...observation.players.O1.pos };
+    let d1 = { ...observation.players.D1.pos };
+    let d5 = { ...observation.players.D5.pos };
+    const finishTarget = v(5.12, 1.58);
+    const relocateTarget = v(8.18, 4.3);
+    const recoveryRisk = clamp(
+      observation.postCatch.d1RecoveryReadyIn / 0.32 +
+        Math.max(0, observation.postCatch.d1BodyGap - 0.18) * 0.8,
+      0,
+      1.4,
+    );
+
+    for (let i = 0; i < horizonSteps; i += 1) {
+      o5 = movePointToward(o5, finishTarget, observation.players.O5.maxSpeed * 0.92 * step);
+      o1 = movePointToward(o1, relocateTarget, observation.players.O1.maxSpeed * 0.72 * step);
+      const rearPoint = add(o5, scale(normalize(sub(o5, COURT.hoop)), 0.73));
+      const recoveryReady = i * step >= observation.postCatch.d1RecoveryReadyIn;
+      d1 = movePointToward(
+        d1,
+        rearPoint,
+        observation.players.D1.maxSpeed * (recoveryReady ? 0.92 : 0.2) * step,
+      );
+      const d5Target =
+        candidate === "DIG_POST"
+          ? lowSideDigPoint(o5, o1)
+          : add(o1, scale(normalize(sub(COURT.hoop, o1)), 0.72));
+      d5 = movePointToward(d5, d5Target, observation.players.D5.maxSpeed * 0.92 * step);
+    }
+
+    const rearBodyGap =
+      distance(o5, d1) - observation.players.O5.radius - observation.players.D1.radius;
+    const d5O1Distance = distance(d5, o1);
+    const d5O5Distance = distance(d5, o5);
+    const d1Behind = distance(d1, COURT.hoop) > distance(o5, COURT.hoop);
+    const score =
+      candidate === "STAY_HOME_POST"
+        ? (d1Behind ? 1.12 : -0.8) +
+          clamp(0.95 - rearBodyGap, -0.5, 1.1) * 0.84 +
+          clamp(1.05 - d5O1Distance, -0.6, 0.9) * 1.08 +
+          0.72 -
+          recoveryRisk * 3.1
+        : clamp(2.1 - d5O5Distance, -0.6, 1.5) * 0.82 +
+          clamp(d5O1Distance - 0.7, -0.5, 1.5) * -0.92 +
+          (d1Behind ? -0.22 : 0.82) +
+          recoveryRisk * 3.6;
+    return {
+      score: round(score),
+      evidence: [
+        "18 步 / 0.6 秒接球后防守短推演",
+        `预计 D1 身后身体间距 ${round(rearBodyGap, 2)}m`,
+        `预计 D5–O1 距离 ${round(d5O1Distance, 2)}m`,
+        `预计 D5–O5 协防距离 ${round(d5O5Distance, 2)}m`,
+        `D1 身后恢复还需 ${round(observation.postCatch.d1RecoveryReadyIn, 2)}s`,
+        d1Behind ? "D1 仍在 O5 身后可持续干扰" : "D1 已失去身后干扰位置",
+      ],
+    };
+  }
+
   let ball = { ...observation.players.O1.pos };
   let screener = { ...observation.players.O5.pos };
   let d1 = { ...observation.players.D1.pos };
@@ -793,17 +1085,22 @@ function defenseRollout(
     const postSwitchDefense =
       candidate === "CONTAIN_MISMATCH" ||
       candidate === "FRONT_SEAL" ||
+      candidate === "BACKSIDE_CONTEST" ||
       candidate === "PRESSURE_MISMATCH";
     const d1Target =
       candidate === "FRONT_SEAL"
         ? add(screener, scale(normalize(sub(ball, screener)), 0.72))
+        : candidate === "BACKSIDE_CONTEST"
+          ? add(screener, scale(normalize(sub(screener, COURT.hoop)), 0.72))
         : candidate === "SWITCH" || postSwitchDefense
           ? screener
           : ball;
     const d5Target =
       candidate === "SWITCH" || candidate === "PRESSURE_MISMATCH"
         ? ball
-        : candidate === "CONTAIN_MISMATCH" || candidate === "FRONT_SEAL"
+        : candidate === "CONTAIN_MISMATCH" ||
+            candidate === "FRONT_SEAL" ||
+            candidate === "BACKSIDE_CONTEST"
           ? add(ball, scale(normalize(sub(COURT.hoop, ball)), 0.74))
           : candidate === "SWITCH_READY"
             ? { x: screener.x + 0.72, y: screener.y - 0.52 }
@@ -818,6 +1115,7 @@ function defenseRollout(
     candidate === "SWITCH" ||
     candidate === "CONTAIN_MISMATCH" ||
     candidate === "FRONT_SEAL" ||
+    candidate === "BACKSIDE_CONTEST" ||
     candidate === "PRESSURE_MISMATCH"
       ? 2.2 - (distance(d1, screener) + distance(d5, ball)) * 0.5
       : candidate === "STAY_HOME"
@@ -845,6 +1143,14 @@ function defenseRollout(
             : sealThreat
               ? 0.72
               : -1.2
+        : candidate === "BACKSIDE_CONTEST"
+          ? observation.seal.established
+            ? observation.seal.frontFeasible
+              ? 0.18
+              : 2.18
+            : sealThreat
+              ? 0.52
+              : -1.2
         : candidate === "SWITCH_READY"
       ? !isReject && !cleared
         ? 1.08
@@ -863,6 +1169,14 @@ function defenseRollout(
     evidence: [
       "18 步 / 0.6 秒确定性短推演",
       "最近持球对位距离 " + round(Math.min(distance(ball, d1), distance(ball, d5)), 2) + "m",
+      ...(candidate === "FRONT_SEAL" || candidate === "BACKSIDE_CONTEST"
+        ? [
+            `合法绕前 ETA ${round(observation.seal.frontEta, 3)}s / 高吊到达 ${round(observation.seal.entryFlightTime, 3)}s`,
+            observation.seal.frontRouteNeedsDetour
+              ? `直线受 O5 身体占据，合法绕行路径 ${round(observation.seal.frontRouteLength, 2)}m`
+              : `直线路径不穿过 O5，占位距离 ${round(observation.seal.frontRouteLength, 2)}m`,
+          ]
+        : []),
       isReject
         ? "公开速度/位置显示拒绝：保持原对位"
         : postSwitch
@@ -884,17 +1198,32 @@ function evaluateDefenseCandidates(
     "STAY_HOME",
     "CONTAIN_MISMATCH",
     "FRONT_SEAL",
+    "BACKSIDE_CONTEST",
+    "STAY_HOME_POST",
+    "DIG_POST",
     "PRESSURE_MISMATCH",
   ];
   return ids.map((id) => {
     const vetoes: string[] = [];
+    const postCatchCandidate = id === "STAY_HOME_POST" || id === "DIG_POST";
+    const o5OwnsBall = observation.ballOwner === "O5";
     const postSwitchCandidate =
-      id === "CONTAIN_MISMATCH" || id === "FRONT_SEAL" || id === "PRESSURE_MISMATCH";
+      id === "CONTAIN_MISMATCH" ||
+      id === "FRONT_SEAL" ||
+      id === "BACKSIDE_CONTEST" ||
+      postCatchCandidate ||
+      id === "PRESSURE_MISMATCH";
     if (observation.facts.matchupExchange && !postSwitchCandidate) {
       vetoes.push("换防已完成，必须进入 D5 守球、D1 守 O5 的错位阶段");
     }
     if (!observation.facts.matchupExchange && postSwitchCandidate) {
       vetoes.push("对位交换尚未完成，禁止提前选择错位防守");
+    }
+    if (o5OwnsBall && !postCatchCandidate) {
+      vetoes.push("O5 已建立球权，防守必须进入接球后协防判断");
+    }
+    if (!o5OwnsBall && postCatchCandidate) {
+      vetoes.push("O5 尚未合法接球，禁止提前下沉或声明留守");
     }
     if (id === "SWITCH_READY" && observation.branch === "reject") {
       vetoes.push("O1 已公开拒绝掩护，禁止无事件换防");
@@ -907,6 +1236,22 @@ function evaluateDefenseCandidates(
     }
     if (id === "SWITCH" && observation.branch === "reject") {
       vetoes.push("拒绝分支没有换防交接窗口");
+    }
+    if (id === "FRONT_SEAL" && observation.seal.established) {
+      if (!observation.seal.frontRouteLegal) {
+        vetoes.push("D1 无法在不穿过 O5 占据空间的情况下到达传球侧");
+      } else if (!observation.seal.frontFeasible) {
+        vetoes.push(
+          `合法绕前 ETA ${round(observation.seal.frontEta, 3)}s 晚于高吊到达 ${round(observation.seal.entryFlightTime, 3)}s`,
+        );
+      }
+    }
+    if (
+      id === "BACKSIDE_CONTEST" &&
+      observation.seal.established &&
+      observation.seal.frontFeasible
+    ) {
+      vetoes.push("合法绕前窗口仍然充足，不提前退为身后干扰");
     }
 
     const rollout = defenseRollout(id, observation);
@@ -924,6 +1269,12 @@ function evaluateDefenseCandidates(
                 ? "后撤遏制 O1"
                 : id === "FRONT_SEAL"
                   ? "D1 抢传球侧绕前"
+                  : id === "BACKSIDE_CONTEST"
+                    ? "D1 留在身后干扰"
+                    : id === "STAY_HOME_POST"
+                      ? "D5 留守 O1"
+                      : id === "DIG_POST"
+                        ? "D5 下沉协防 O5"
                   : "贴身施压 O1",
       feasible: vetoes.length === 0,
       score: vetoes.length === 0 ? round(rollout.score + hysteresis) : null,
@@ -1020,6 +1371,49 @@ function makeOffensePlan(
       },
     };
     rationale = "换防已经完成，但短推演未显示立即突破收益；拉出保留错位并保持队友间距。";
+  } else if (chosen.id === "POST_FINISH") {
+    primaryTarget = v(5.12, 1.58);
+    secondaryTarget = v(8.18, 4.3);
+    roles = {
+      O1: {
+        playerId: "O1",
+        roleCode: "relocate_post_space",
+        roleLabel: "接球后外移拉开",
+        intent: "确认 O5 建立球权 → 向右侧外移 → 拉走 D5 并保留回传角度",
+        owner: "offense-planner",
+      },
+      O5: {
+        playerId: "O5",
+        roleCode: "turn_finish",
+        roleLabel: "转身攻击篮筐",
+        intent: "护住接球 → 以 D1 在身后为依据转向篮筐 → 到近筐处理点停止",
+        owner: "offense-planner",
+      },
+    };
+    rationale =
+      "O5 已合法接球且仍保持 D1 的篮筐侧；D5 公开位置仍贴近 O1，短推演选择 O5 转身推进，由 O1 外移清空。";
+  } else if (chosen.id === "KICK_OUT") {
+    primaryTarget = { ...world.players.O5.pos };
+    secondaryTarget = v(8.58, 2.78);
+    passTarget = "O1";
+    roles = {
+      O1: {
+        playerId: "O1",
+        roleCode: "relocate_receive",
+        roleLabel: "外移准备回传",
+        intent: "看到 D5 下沉 → 从原传球线漂向右侧出口 → 给 O5 明确回传窗口",
+        owner: "offense-planner",
+      },
+      O5: {
+        playerId: "O5",
+        roleCode: "kick_out_post",
+        roleLabel: "低位分球者",
+        intent: "护住接球 → 读取 D5 下沉 → 走廊开放后分回 O1",
+        owner: "offense-planner",
+      },
+    };
+    rationale =
+      "D5 已真实离开 O1 并进入 O5 附近的协防位置；公开回传走廊成立后，O5 停稳分回外移的 O1，不读取防守隐藏方案。";
   } else if (chosen.id === "USE_RIGHT_SCREEN") {
     roles = {
       O1: {
@@ -1061,7 +1455,9 @@ function makeOffensePlan(
   const postSwitch =
     chosen.id === "ATTACK_BIG" ||
     chosen.id === "FEED_SEAL" ||
-    chosen.id === "RESET_MISMATCH";
+    chosen.id === "RESET_MISMATCH" ||
+    chosen.id === "POST_FINISH" ||
+    chosen.id === "KICK_OUT";
   return {
     team: "offense",
     id: chosen.id,
@@ -1161,6 +1557,62 @@ function makeDefensePlan(
     };
     rationale =
       "O5 已公开把 D1 压在篮筐外侧；D1 抢到球侧直传线，D5 继续守 O1，避免靠双人追球解决卡位。";
+  } else if (chosen.id === "BACKSIDE_CONTEST") {
+    roles = {
+      D1: {
+        playerId: "D1",
+        roleCode: "backside_contest",
+        roleLabel: "身后干扰接球",
+        intent: "承认绕前窗口已失 → 留在 O5 身后保持接触距离 → 接球后再防，不穿越其身体",
+        owner: "defense-planner",
+      },
+      D5: {
+        playerId: "D5",
+        roleCode: "contain_passer",
+        roleLabel: "遏制传球人",
+        intent: "继续负责 O1 → 不下沉替 D1 抢结果 → 保持球与筐之间",
+        owner: "defense-planner",
+      },
+    };
+    rationale =
+      `合法绕前 ETA ${world.seal.frontEta.toFixed(3)}s 晚于高吊到达 ${world.seal.entryFlightTime.toFixed(3)}s；D1 不穿过 O5，退守身后干扰，D5 继续守 O1。`;
+  } else if (chosen.id === "STAY_HOME_POST") {
+    roles = {
+      D1: {
+        playerId: "D1",
+        roleCode: "rear_contest_post",
+        roleLabel: "身后持续干扰",
+        intent: "保持在 O5 身后 → 不穿人抢前 → 压缩其转身空间",
+        owner: "defense-planner",
+      },
+      D5: {
+        playerId: "D5",
+        roleCode: "stay_attached_o1",
+        roleLabel: "留守外移 O1",
+        intent: "跟随 O1 外移 → 保持内侧站位 → 不无故下沉形成空位回传",
+        owner: "defense-planner",
+      },
+    };
+    rationale =
+      "O5 接球时 D1 仍保持紧密身后干扰；短推演认为 D5 离开 O1 的代价高于立即下沉收益，因此 D5 留守原责任。";
+  } else if (chosen.id === "DIG_POST") {
+    roles = {
+      D1: {
+        playerId: "D1",
+        roleCode: "rear_contest_post",
+        roleLabel: "身后持续干扰",
+        intent: "保持在 O5 身后 → 把持球人推向协防侧",
+        owner: "defense-planner",
+      },
+      D5: {
+        playerId: "D5",
+        roleCode: "dig_post",
+        roleLabel: "下沉协防 O5",
+        intent: "离开 O1 一步 → 到 O5 篮筐侧挖球 → 保留回位责任",
+        owner: "defense-planner",
+      },
+    };
+    rationale = "候选用于 D1 失位或 O5 直接进入深位时的下沉协防；当前仍需承担放开 O1 的代价。";
   } else if (chosen.id === "PRESSURE_MISMATCH") {
     roles = {
       D1: {
@@ -1202,6 +1654,9 @@ function makeDefensePlan(
   const postSwitch =
     chosen.id === "CONTAIN_MISMATCH" ||
     chosen.id === "FRONT_SEAL" ||
+    chosen.id === "BACKSIDE_CONTEST" ||
+    chosen.id === "STAY_HOME_POST" ||
+    chosen.id === "DIG_POST" ||
     chosen.id === "PRESSURE_MISMATCH";
 
   return {
@@ -1211,8 +1666,8 @@ function makeDefensePlan(
     version,
     startedAt: world.time,
     startedTick: world.tick,
-    commitUntil: world.time + (postSwitch ? 0.52 : 0.56),
-    watchdogAt: world.time + (postSwitch ? 1 : 1.08),
+    commitUntil: world.time + (chosen.id === "DIG_POST" ? 1.12 : postSwitch ? 0.52 : 0.56),
+    watchdogAt: world.time + (chosen.id === "DIG_POST" ? 1.28 : postSwitch ? 1 : 1.08),
     roles,
     chosenScore: chosen.score ?? 0,
     rationale,
@@ -1221,6 +1676,21 @@ function makeDefensePlan(
 
 function offensiveIntents(plan: TeamPlan, world: WorldState): Record<"O1" | "O5", MotionIntent> {
   const o1 = world.players.O1;
+  if (plan.id === "POST_FINISH" || plan.id === "KICK_OUT") {
+    return {
+      O1: {
+        target: plan.secondaryTarget ?? v(8.18, 4.3),
+        maxSpeed: 2.78,
+        arriveRadius: 0.1,
+      },
+      O5: {
+        target: plan.primaryTarget ?? (plan.id === "POST_FINISH" ? v(5.12, 1.58) : v(5.48, 3.82)),
+        maxSpeed: plan.id === "POST_FINISH" ? 2.72 : 1.4,
+        arriveRadius: 0.08,
+      },
+    };
+  }
+
   if (plan.id === "FEED_SEAL") {
     return {
       O1: {
@@ -1346,6 +1816,17 @@ function offensivePassIntent(plan: TeamPlan, world: WorldState): PassIntent | nu
   ) {
     return { from: "O1", to: "O5", kind: "lob_entry" };
   }
+  if (
+    plan.id === "KICK_OUT" &&
+    plan.passTarget === "O1" &&
+    world.ballOwner === "O5" &&
+    !world.ball.inFlight &&
+    world.postCatch.kickoutWindow &&
+    world.postCatch.kickoutWindowOpenedAtTick !== null &&
+    world.tick >= world.postCatch.kickoutWindowOpenedAtTick + 1
+  ) {
+    return { from: "O5", to: "O1", kind: "kick_out" };
+  }
   return null;
 }
 
@@ -1355,11 +1836,48 @@ function defensiveIntents(plan: TeamPlan, world: WorldState): Record<"D1" | "D5"
   const leadO1 = add(o1.pos, scale(o1.vel, 0.13));
   const leadO5 = add(o5.pos, scale(o5.vel, 0.1));
 
+  if (plan.id === "STAY_HOME_POST") {
+    const behindO5 = add(o5.pos, scale(normalize(sub(o5.pos, COURT.hoop)), 0.73));
+    const attachedO1 = add(o1.pos, scale(normalize(sub(COURT.hoop, o1.pos)), 0.72));
+    return {
+      D1: {
+        target: behindO5,
+        maxSpeed: world.postCatch.d1RecoveryReadyIn > 0 ? 0.72 : 3.36,
+        arriveRadius: 0.08,
+        screenNavigation: "none",
+      },
+      D5: { target: attachedO1, maxSpeed: 3.12, arriveRadius: 0.07, screenNavigation: "none" },
+    };
+  }
+
+  if (plan.id === "DIG_POST") {
+    const behindO5 = add(o5.pos, scale(normalize(sub(o5.pos, COURT.hoop)), 0.73));
+    const digPoint = lowSideDigPoint(o5.pos, o1.pos);
+    return {
+      D1: {
+        target: behindO5,
+        maxSpeed: world.postCatch.d1RecoveryReadyIn > 0 ? 0.72 : 3.36,
+        arriveRadius: 0.08,
+        screenNavigation: "none",
+      },
+      D5: { target: digPoint, maxSpeed: 3.12, arriveRadius: 0.09, screenNavigation: "none" },
+    };
+  }
+
   if (plan.id === "FRONT_SEAL") {
     const ballSide = add(o5.pos, scale(normalize(sub(o1.pos, o5.pos)), 0.73));
     const goalSideO1 = add(o1.pos, scale(normalize(sub(COURT.hoop, o1.pos)), 0.74));
     return {
       D1: { target: ballSide, maxSpeed: 3.58, arriveRadius: 0.07, screenNavigation: "none" },
+      D5: { target: goalSideO1, maxSpeed: 3.18, arriveRadius: 0.07, screenNavigation: "none" },
+    };
+  }
+
+  if (plan.id === "BACKSIDE_CONTEST") {
+    const behindO5 = add(o5.pos, scale(normalize(sub(o5.pos, COURT.hoop)), 0.73));
+    const goalSideO1 = add(o1.pos, scale(normalize(sub(COURT.hoop, o1.pos)), 0.74));
+    return {
+      D1: { target: behindO5, maxSpeed: 3.36, arriveRadius: 0.08, screenNavigation: "none" },
       D5: { target: goalSideO1, maxSpeed: 3.18, arriveRadius: 0.07, screenNavigation: "none" },
     };
   }
@@ -1465,6 +1983,9 @@ export class PnrSimulation {
       cue: config.cue ?? "neutral",
       seed: config.seed ?? 17,
       maxTime: config.maxTime ?? 7.4,
+      d1FrontReactionDelay: clamp(config.d1FrontReactionDelay ?? 0, 0, 0.5),
+      d1PostCatchRecoveryDelay: clamp(config.d1PostCatchRecoveryDelay ?? 0, 0, 0.6),
+      horizon: config.horizon ?? "pnr_resolution",
     };
     this.world = initialWorld(this.config);
     this.offensePlan = this.replanOffense("初始边界", []);
@@ -1530,7 +2051,12 @@ export class PnrSimulation {
     const eventNames = (events: WorldEvent[]) => events.map((event) => event.label).join(" / ");
 
     const urgentOffenseBoundary = this.offenseQueue.some(
-      (event) => event.type === "switch_completed" || event.type === "seal_fronted",
+      (event) =>
+        event.type === "switch_completed" ||
+        event.type === "seal_fronted" ||
+        event.type === "pass_caught" ||
+        event.type === "help_committed" ||
+        event.type === "kickout_window_open",
     );
     if (
       this.offenseQueue.length > 0 &&
@@ -1552,7 +2078,8 @@ export class PnrSimulation {
         event.type === "screen_cleared" ||
         event.type === "branch_reject" ||
         event.type === "switch_completed" ||
-        event.type === "seal_established",
+        event.type === "seal_established" ||
+        event.type === "pass_caught",
     );
     if (
       this.defenseQueue.length > 0 &&
@@ -1704,7 +2231,12 @@ export class PnrSimulation {
 
   private resolveSeal(previous: SealFacts): SealFacts {
     const active = this.world.facts.matchupExchange;
-    if (!active) return { ...EMPTY_SEAL };
+    if (!active) {
+      return {
+        ...EMPTY_SEAL,
+        frontReactionDelay: this.config.d1FrontReactionDelay,
+      };
+    }
 
     const o1 = this.world.players.O1;
     const o5 = this.world.players.O5;
@@ -1721,8 +2253,21 @@ export class PnrSimulation {
     const releaseLegal =
       distance(o1.pos, d5.pos) >= o1.radius + d5.radius - 0.006;
     const established = active && o5.pos.y < 4.15 && engaged && o5GoalSide;
+    const frontTarget = add(o5.pos, scale(normalize(sub(o1.pos, o5.pos)), 0.73));
+    const frontRoute = bodyAwareRoute(d1.pos, frontTarget, o5, d1.radius);
+    const entryFlightTime = established
+      ? clamp(distance(o1.pos, o5.pos) / 9.2, 0.16, 0.42)
+      : 0;
+    const frontEta = established
+      ? this.config.d1FrontReactionDelay + frontRoute.length / d1.maxSpeed
+      : 0;
+    const frontFeasible =
+      established &&
+      frontRoute.legal &&
+      frontEta + 0.004 <= entryFlightTime;
     const d1Fronting =
       established &&
+      (previous.d1Fronting || frontFeasible) &&
       d1Relevant &&
       d1Lane.t > 0.52 &&
       d1Lane.distance <= d1.radius + this.world.ball.radius + 0.11;
@@ -1743,6 +2288,13 @@ export class PnrSimulation {
       established,
       o5GoalSide,
       d1Fronting,
+      frontReactionDelay: this.config.d1FrontReactionDelay,
+      frontRouteLength: established ? round(frontRoute.length) : 0,
+      frontRouteLegal: established && frontRoute.legal,
+      frontRouteNeedsDetour: established && frontRoute.needsDetour,
+      frontEta: round(frontEta),
+      entryFlightTime: round(entryFlightTime),
+      frontFeasible,
       passLaneClear,
       laneClearance: round(laneClearance),
       passWindow,
@@ -1760,9 +2312,11 @@ export class PnrSimulation {
       const next = remaining <= stepDistance
         ? { ...target }
         : add(from, scale(normalize(ball.vel), stepDistance));
-      const receiver = this.world.players.O5;
+      const receiverId = ball.intendedReceiver;
+      if (!receiverId) throw new Error("In-flight ball is missing an intended receiver");
+      const receiver = this.world.players[receiverId];
       const receiverHit = pointSegmentDistance(receiver.pos, from, next);
-      const interceptions = (["D1", "D5"] as const)
+      const interceptions = (DEFENSE_IDS as Array<"D1" | "D5">)
         .map((id) => {
           const defender = this.world.players[id];
           const hit = pointSegmentDistance(defender.pos, from, next);
@@ -1789,7 +2343,7 @@ export class PnrSimulation {
         return;
       }
       if (receiverCanCatch) {
-        this.world.ballOwner = "O5";
+        this.world.ballOwner = receiverId;
         ball.pos = next;
         ball.vel = { ...receiver.vel };
         ball.inFlight = false;
@@ -1809,24 +2363,31 @@ export class PnrSimulation {
       return;
     }
 
-    if (
-      intent &&
-      this.world.ballOwner === intent.from &&
-      intent.to === "O5" &&
-      this.world.seal.passWindow
-    ) {
-      const passer = this.world.players.O1;
-      const receiver = this.world.players.O5;
-      const passSpeed = 9.2;
-      const flightTime = clamp(distance(passer.pos, receiver.pos) / passSpeed, 0.16, 0.42);
+    const launchWindowOpen =
+      intent?.kind === "lob_entry"
+        ? this.world.seal.passWindow
+        : intent?.kind === "kick_out"
+          ? this.world.postCatch.kickoutWindow
+          : false;
+    if (intent && this.world.ballOwner === intent.from && launchWindowOpen) {
+      const passer = this.world.players[intent.from];
+      const receiver = this.world.players[intent.to];
+      const passSpeed = intent.kind === "lob_entry" ? 9.2 : 13.6;
+      const minimumFlight = intent.kind === "lob_entry" ? 0.16 : 0.12;
+      const maximumFlight = intent.kind === "lob_entry" ? 0.42 : 0.4;
+      const flightTime = clamp(
+        distance(passer.pos, receiver.pos) / passSpeed,
+        minimumFlight,
+        maximumFlight,
+      );
       const target = add(receiver.pos, scale(receiver.vel, flightTime));
       target.x = clamp(target.x, receiver.radius, COURT.width - receiver.radius);
       target.y = clamp(target.y, receiver.radius, COURT.height - receiver.radius);
       ball.pos = { ...passer.pos };
       ball.vel = scale(normalize(sub(target, passer.pos)), passSpeed);
       ball.inFlight = true;
-      ball.from = "O1";
-      ball.intendedReceiver = "O5";
+      ball.from = intent.from;
+      ball.intendedReceiver = intent.to;
       ball.target = target;
       ball.launchedAt = this.world.time;
       ball.kind = intent.kind;
@@ -1881,6 +2442,98 @@ export class PnrSimulation {
     };
   }
 
+  private resolvePostCatch(previous: PostCatchFacts): PostCatchFacts {
+    const active =
+      previous.active ||
+      (this.world.ballOwner === "O5" &&
+        this.world.ball.kind === "lob_entry" &&
+        this.world.ball.outcome === "caught");
+    if (!active) {
+      return {
+        ...EMPTY_POST_CATCH,
+        d1RecoveryDelay: this.config.d1PostCatchRecoveryDelay,
+        d1RecoveryReadyIn: this.config.d1PostCatchRecoveryDelay,
+      };
+    }
+
+    const o1 = this.world.players.O1;
+    const o5 = this.world.players.O5;
+    const d1 = this.world.players.D1;
+    const d5 = this.world.players.D5;
+    const startedAt = previous.startedAt ?? this.world.time;
+    const elapsed = Math.max(0, this.world.time - startedAt);
+    const o5RimDistance = distance(o5.pos, COURT.hoop);
+    const d1RimDistance = distance(d1.pos, COURT.hoop);
+    const d1Behind = d1RimDistance >= o5RimDistance + 0.08;
+    const d1BodyGap = distance(o5.pos, d1.pos) - o5.radius - d1.radius;
+    const d1RecoveryDelay = this.config.d1PostCatchRecoveryDelay;
+    const d1RecoveryReadyIn = Math.max(0, d1RecoveryDelay - elapsed);
+    const d5O1Distance = distance(d5.pos, o1.pos);
+    const d5O5Distance = distance(d5.pos, o5.pos);
+    const d5AttachedToO1 = d5O1Distance <= 0.94;
+    const d5HelpCommitted =
+      previous.d5HelpCommitted ||
+      (previous.active && d5O5Distance <= 1.12 && d5O1Distance >= 1.28);
+    const o1Spacing = distance(o1.pos, o5.pos);
+    const o1Relocated = o1Spacing >= 2.62 && o1.pos.x >= 7.55;
+    const kickoutClearances = (["D1", "D5"] as const).map((id) => {
+      const defender = this.world.players[id];
+      const lane = pointSegmentDistance(defender.pos, o5.pos, o1.pos);
+      return lane.t > 0.055 && lane.t < 0.96
+        ? lane.distance - defender.radius - this.world.ball.radius
+        : 1.4;
+    });
+    const kickoutLaneClearance = Math.min(...kickoutClearances);
+    const kickoutWindowNow =
+      d5HelpCommitted &&
+      o1Relocated &&
+      kickoutLaneClearance > 0.1 &&
+      this.world.ballOwner === "O5" &&
+      !this.world.ball.inFlight;
+    const kickoutWindow = previous.kickoutWindow || kickoutWindowNow;
+    const kickoutWindowOpenedAtTick = kickoutWindow
+      ? previous.kickoutWindow
+        ? previous.kickoutWindowOpenedAtTick
+        : this.world.tick
+      : null;
+    const rimDirection = normalize(sub(COURT.hoop, o5.pos));
+    const visibleRimTurn =
+      length(o5.vel) > 0.78 && dot(normalize(o5.vel), rimDirection) > 0.66;
+    const attackCommitted =
+      previous.attackCommitted ||
+      (previous.active && elapsed >= 0.08 && visibleRimTurn);
+    const finishWindow =
+      attackCommitted &&
+      o5RimDistance <= 1.72 &&
+      d1Behind &&
+      d1BodyGap >= -0.01 &&
+      d5AttachedToO1 &&
+      o1Relocated &&
+      this.world.ballOwner === "O5";
+
+    return {
+      active,
+      startedAt,
+      elapsed: round(elapsed),
+      attackCommitted,
+      o5RimDistance: round(o5RimDistance),
+      d1Behind,
+      d1BodyGap: round(d1BodyGap),
+      d1RecoveryDelay,
+      d1RecoveryReadyIn: round(d1RecoveryReadyIn),
+      d5AttachedToO1,
+      d5O1Distance: round(d5O1Distance),
+      d5O5Distance: round(d5O5Distance),
+      d5HelpCommitted,
+      o1Spacing: round(o1Spacing),
+      o1Relocated,
+      kickoutLaneClearance: round(kickoutLaneClearance),
+      kickoutWindow,
+      kickoutWindowOpenedAtTick,
+      finishWindow,
+    };
+  }
+
   private resolveBranch(): Branch {
     if (this.world.branch !== "undecided") return this.world.branch;
     const o1 = this.world.players.O1;
@@ -1899,6 +2552,7 @@ export class PnrSimulation {
     previousFacts: ScreenFacts,
     previousMismatch: MismatchFacts,
     previousSeal: SealFacts,
+    previousPostCatch: PostCatchFacts,
     previousBall: BallState,
     previousBranch: Branch,
   ): WorldEvent[] {
@@ -1953,7 +2607,11 @@ export class PnrSimulation {
         ),
       );
     }
-    if (!previousSeal.established && this.world.seal.established) {
+    if (
+      !this.world.postCatch.active &&
+      !previousSeal.established &&
+      this.world.seal.established
+    ) {
       events.push(
         makeEvent(
           "seal_established",
@@ -1964,7 +2622,11 @@ export class PnrSimulation {
         ),
       );
     }
-    if (!previousSeal.d1Fronting && this.world.seal.d1Fronting) {
+    if (
+      !this.world.postCatch.active &&
+      !previousSeal.d1Fronting &&
+      this.world.seal.d1Fronting
+    ) {
       events.push(
         makeEvent(
           "seal_fronted",
@@ -1975,7 +2637,11 @@ export class PnrSimulation {
         ),
       );
     }
-    if (!previousSeal.passWindow && this.world.seal.passWindow) {
+    if (
+      !this.world.postCatch.active &&
+      !previousSeal.passWindow &&
+      this.world.seal.passWindow
+    ) {
       events.push(
         makeEvent(
           "pass_window_open",
@@ -1988,23 +2654,83 @@ export class PnrSimulation {
     }
     if (!previousBall.inFlight && this.world.ball.inFlight) {
       events.push(
-        makeEvent(
-          "pass_launched",
-          tick,
-          at,
-          "O1 传向 O5",
-          "高吊球以固定速度离手并越过近身 D5；此刻球权为空，D1 与 O5 的先触球顺序仍由后续几何解析。",
-        ),
+        this.world.ball.kind === "kick_out"
+          ? makeEvent(
+              "kickout_launched",
+              tick,
+              at,
+              "O5 分回 O1",
+              "O5 在公开回传窗内出球；飞行期间球权为空，防守仍可按真实局部触球顺序破坏。",
+            )
+          : makeEvent(
+              "pass_launched",
+              tick,
+              at,
+              "O1 传向 O5",
+              "高吊球以固定速度离手并越过近身 D5；此刻球权为空，D1 与 O5 的先触球顺序仍由后续几何解析。",
+            ),
       );
     }
     if (previousBall.outcome !== "caught" && this.world.ball.outcome === "caught") {
       events.push(
+        this.world.ball.kind === "kick_out" && this.world.ballOwner === "O1"
+          ? makeEvent(
+              "kickout_caught",
+              tick,
+              at,
+              "O1 接到分球",
+              "球先进入外移 O1 的合法接球半径；球权从空中转回 O1，只确认接球空间，不模拟投篮。",
+            )
+          : makeEvent(
+              "pass_caught",
+              tick,
+              at,
+              "O5 深位接球",
+              "球先进入 O5 的合法接球半径，球权从空中转移到 O5。",
+            ),
+      );
+    }
+    if (!previousPostCatch.attackCommitted && this.world.postCatch.attackCommitted) {
+      events.push(
         makeEvent(
-          "pass_caught",
+          "post_catch_attack",
           tick,
           at,
-          "O5 深位接球",
-          "球先进入 O5 的合法接球半径，球权从空中转移到 O5。",
+          "O5 转身攻击篮筐",
+          "O5 已护住接球并持续向篮筐推进；O1 同步外移，接球后队级方案正式落地。",
+        ),
+      );
+    }
+    if (!previousPostCatch.d5HelpCommitted && this.world.postCatch.d5HelpCommitted) {
+      events.push(
+        makeEvent(
+          "help_committed",
+          tick,
+          at,
+          "D5 真实下沉协防",
+          "D5 已离开 O1 并进入 O5 的局部协防半径；进攻此后才能读取该公开移动，不能预知防守隐藏方案。",
+        ),
+      );
+    }
+    if (!previousPostCatch.kickoutWindow && this.world.postCatch.kickoutWindow) {
+      events.push(
+        makeEvent(
+          "kickout_window_open",
+          tick,
+          at,
+          "O5–O1 回传窗打开",
+          "D5 已下沉、O1 已外移且局部传球走廊合法；这里只开放分球，不指定接球结果。",
+        ),
+      );
+    }
+    if (!previousPostCatch.finishWindow && this.world.postCatch.finishWindow) {
+      events.push(
+        makeEvent(
+          "finish_window",
+          tick,
+          at,
+          "O5 形成近筐处理窗口",
+          "O5 保持 D1 的篮筐侧，D5 仍留守 O1；这里只确认处理窗口，不模拟投篮结果。",
         ),
       );
     }
@@ -2017,10 +2743,10 @@ export class PnrSimulation {
           "pass_denied",
           tick,
           at,
-          "内线传球被否决",
+          this.world.ball.kind === "kick_out" ? "外传被否决" : "内线传球被否决",
           this.world.ball.outcome === "deflected"
             ? "防守者先进入球的局部飞行线并取得球权。"
-            : "球到达既定落点前没有进入 O5 的接球半径。",
+            : `球到达既定落点前没有进入${this.world.ball.kind === "kick_out" ? " O1" : " O5"} 的接球半径。`,
         ),
       );
     }
@@ -2057,7 +2783,31 @@ export class PnrSimulation {
     );
     let terminal: TerminalState | null = null;
 
-    if (this.world.ball.outcome === "caught" && this.world.ballOwner === "O5") {
+    if (
+      this.config.horizon === "post_catch_kickout" &&
+      this.world.ball.kind === "kick_out" &&
+      this.world.ball.outcome === "caught" &&
+      this.world.ballOwner === "O1"
+    ) {
+      terminal = {
+        reason: "post_catch_kickout_caught",
+        label: "D5 下沉后，O5 分回外移 O1 并完成合法接球",
+        at: this.world.time,
+      };
+    } else if (
+      this.config.horizon === "post_catch_finish" &&
+      this.world.postCatch.finishWindow
+    ) {
+      terminal = {
+        reason: "post_catch_finish_window",
+        label: "O5 接球转身并形成近筐处理窗口",
+        at: this.world.time,
+      };
+    } else if (
+      this.config.horizon === "pnr_resolution" &&
+      this.world.ball.outcome === "caught" &&
+      this.world.ballOwner === "O5"
+    ) {
       terminal = {
         reason: "seal_catch_advantage",
         label: "O5 卡住 D1 并在深位合法接球",
@@ -2069,7 +2819,10 @@ export class PnrSimulation {
     ) {
       terminal = {
         reason: "pass_denied",
-        label: "防守否决 O1 给 O5 的内线传球",
+        label:
+          this.world.ball.kind === "kick_out"
+            ? "防守否决 O5 分回 O1 的外传"
+            : "防守否决 O1 给 O5 的内线传球",
         at: this.world.time,
       };
     } else if (this.world.mismatch.advantage) {
@@ -2103,6 +2856,8 @@ export class PnrSimulation {
     if (
       terminal.reason === "mismatch_advantage" ||
       terminal.reason === "seal_catch_advantage" ||
+      terminal.reason === "post_catch_finish_window" ||
+      terminal.reason === "post_catch_kickout_caught" ||
       terminal.reason === "reject_advantage"
     ) {
       events.push(
@@ -2119,6 +2874,9 @@ export class PnrSimulation {
     return stableHash({
       seed: this.config.seed,
       cue: this.config.cue,
+      d1FrontReactionDelay: this.config.d1FrontReactionDelay,
+      d1PostCatchRecoveryDelay: this.config.d1PostCatchRecoveryDelay,
+      horizon: this.config.horizon,
       tick: this.world.tick,
       ballOwner: this.world.ballOwner,
       branch: this.world.branch,
@@ -2132,6 +2890,7 @@ export class PnrSimulation {
       facts: this.world.facts,
       mismatch: this.world.mismatch,
       seal: this.world.seal,
+      postCatch: this.world.postCatch,
       ball: {
         owner: this.world.ballOwner,
         pos: this.world.ball.pos,
@@ -2159,6 +2918,7 @@ export class PnrSimulation {
       const previousFacts = { ...this.world.facts };
       const previousMismatch = { ...this.world.mismatch };
       const previousSeal = { ...this.world.seal };
+      const previousPostCatch = { ...this.world.postCatch };
       const previousBall: BallState = {
         ...this.world.ball,
         pos: { ...this.world.ball.pos },
@@ -2175,10 +2935,12 @@ export class PnrSimulation {
       this.world.seal = this.resolveSeal(previousSeal);
       this.world.mismatch = this.resolveMismatch(previousMismatch);
       this.integrateBall(passIntent);
+      this.world.postCatch = this.resolvePostCatch(previousPostCatch);
       const events = this.resolveEvents(
         previousFacts,
         previousMismatch,
         previousSeal,
+        previousPostCatch,
         previousBall,
         previousBranch,
       );

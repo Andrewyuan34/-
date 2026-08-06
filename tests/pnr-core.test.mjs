@@ -9,6 +9,11 @@ import {
   createPlannerObservation,
   evaluateScreenFacts,
 } from "../lib/pnr-core.ts";
+import {
+  DEFAULT_SCENARIO_ID,
+  PNR_SCENARIOS,
+  makeScenarioConfig,
+} from "../lib/pnr-scenarios.ts";
 
 function runToStop(cue = "neutral") {
   const simulation = new PnrSimulation({ cue });
@@ -17,6 +22,356 @@ function runToStop(cue = "neutral") {
   }
   return simulation;
 }
+
+function runScenarioToStop(scenarioId) {
+  const simulation = new PnrSimulation(makeScenarioConfig(scenarioId));
+  for (let i = 0; i < 600 && !simulation.world.terminal; i += 1) {
+    simulation.step();
+  }
+  return simulation;
+}
+
+test("saved scenario presets are unique, deterministic, and contain inputs rather than outcomes", () => {
+  assert.equal(DEFAULT_SCENARIO_ID, "switch_feed_front_denied");
+  assert.deepEqual(
+    PNR_SCENARIOS.map(({ code, id }) => ({ code, id })),
+    [
+      { code: "S01", id: "switch_feed_front_denied" },
+      { code: "S02", id: "reject_overplay_right" },
+      { code: "S03", id: "switch_feed_front_late_catch" },
+      { code: "S04", id: "post_catch_stay_home_finish" },
+      { code: "S05", id: "post_catch_dig_kickout" },
+    ],
+  );
+  assert.equal(new Set(PNR_SCENARIOS.map((scenario) => scenario.id)).size, PNR_SCENARIOS.length);
+  assert.equal(new Set(PNR_SCENARIOS.map((scenario) => scenario.code)).size, PNR_SCENARIOS.length);
+
+  for (const scenario of PNR_SCENARIOS) {
+    const publicInputText = JSON.stringify(scenario.publicInput);
+    for (const forbidden of ["terminal", "outcome", "ballOwner", "winner", "plan"]) {
+      assert.equal(publicInputText.includes(forbidden), false);
+    }
+
+    const first = runScenarioToStop(scenario.id);
+    const replay = runScenarioToStop(scenario.id);
+    assert.equal(first.world.stateHash, replay.world.stateHash);
+    assert.equal(first.world.branch, scenario.checkpoint.branch);
+    assert.equal(first.world.terminal?.reason, scenario.checkpoint.terminalReason);
+    assert.equal(first.world.ballOwner, scenario.checkpoint.ballOwner);
+  }
+});
+
+test("late fronting is vetoed by public time and path facts, then O5 wins the touch race", () => {
+  const simulation = new PnrSimulation(makeScenarioConfig("switch_feed_front_late_catch"));
+  let previousBall = { ...simulation.world.ball.pos };
+  let maxBallStep = 0;
+  let minimumO5D1Gap = Number.POSITIVE_INFINITY;
+  let sawFlight = false;
+  let sawEstablishedSeal = false;
+
+  for (let i = 0; i < 600 && !simulation.world.terminal; i += 1) {
+    simulation.step();
+    const o5 = simulation.world.players.O5;
+    const d1 = simulation.world.players.D1;
+    const ballStep = Math.hypot(
+      simulation.world.ball.pos.x - previousBall.x,
+      simulation.world.ball.pos.y - previousBall.y,
+    );
+    maxBallStep = Math.max(maxBallStep, ballStep);
+    previousBall = { ...simulation.world.ball.pos };
+
+    if (simulation.world.seal.established) {
+      sawEstablishedSeal = true;
+      minimumO5D1Gap = Math.min(
+        minimumO5D1Gap,
+        Math.hypot(o5.pos.x - d1.pos.x, o5.pos.y - d1.pos.y) - o5.radius - d1.radius,
+      );
+      assert.ok(
+        Math.hypot(d1.pos.x - COURT.hoop.x, d1.pos.y - COURT.hoop.y) >=
+          Math.hypot(o5.pos.x - COURT.hoop.x, o5.pos.y - COURT.hoop.y) - 0.01,
+      );
+    }
+    if (simulation.world.ball.inFlight) {
+      sawFlight = true;
+      assert.equal(simulation.world.ballOwner, null);
+    }
+  }
+
+  const sealEvent = simulation.eventLog.find((event) => event.type === "seal_established");
+  const launch = simulation.eventLog.find((event) => event.type === "pass_launched");
+  const caught = simulation.eventLog.find((event) => event.type === "pass_caught");
+  const backsideRecord = simulation.planningLog.find(
+    (record) => record.team === "defense" && record.chosen === "BACKSIDE_CONTEST",
+  );
+  const frontCandidate = backsideRecord?.candidates.find((candidate) => candidate.id === "FRONT_SEAL");
+  const roles = new Map(simulation.getRoles().map((role) => [role.playerId, role]));
+
+  assert.ok(sealEvent);
+  assert.ok(launch);
+  assert.ok(caught);
+  assert.ok(backsideRecord);
+  assert.ok(backsideRecord.tick >= sealEvent.availableAtTick);
+  assert.equal(frontCandidate?.feasible, false);
+  assert.ok(frontCandidate?.vetoes.some((veto) => veto.includes("合法绕前 ETA")));
+  assert.equal(simulation.world.seal.frontReactionDelay, 0.12);
+  assert.equal(simulation.world.seal.frontRouteLegal, true);
+  assert.equal(simulation.world.seal.frontFeasible, false);
+  assert.ok(simulation.world.seal.frontEta > simulation.world.seal.entryFlightTime);
+  assert.equal(simulation.eventLog.some((event) => event.type === "seal_fronted"), false);
+  assert.equal(simulation.eventLog.some((event) => event.type === "pass_denied"), false);
+  assert.ok(caught.tick > launch.tick);
+  assert.equal(sawEstablishedSeal, true);
+  assert.equal(sawFlight, true);
+  assert.ok(minimumO5D1Gap >= -0.01);
+  assert.ok(maxBallStep <= 9.2 * FIXED_DT + 0.007);
+  assert.equal(simulation.world.ball.outcome, "caught");
+  assert.equal(simulation.world.ballOwner, "O5");
+  assert.equal(simulation.world.terminal?.reason, "seal_catch_advantage");
+  assert.equal(roles.get("D1")?.roleCode, "backside_contest");
+  assert.equal(roles.get("D5")?.roleCode, "contain_passer");
+});
+
+test("S04 preserves S03 through the catch, then forms a stay-home post finish window", () => {
+  const s03 = runScenarioToStop("switch_feed_front_late_catch");
+  const s04 = new PnrSimulation(makeScenarioConfig("post_catch_stay_home_finish"));
+  let s04AtCatch;
+
+  for (let i = 0; i < 600 && !s04.world.terminal; i += 1) {
+    s04.step();
+    if (!s04AtCatch && s04.eventLog.some((event) => event.type === "pass_caught")) {
+      s04AtCatch = {
+        tick: s04.world.tick,
+        time: s04.world.time,
+        ballOwner: s04.world.ballOwner,
+        ball: structuredClone(s04.world.ball),
+        players: structuredClone(s04.world.players),
+      };
+    }
+  }
+
+  const s03CaughtIndex = s03.eventLog.findIndex((event) => event.type === "pass_caught");
+  const s04CaughtIndex = s04.eventLog.findIndex((event) => event.type === "pass_caught");
+  const caught = s04.eventLog[s04CaughtIndex];
+  const attack = s04.eventLog.find((event) => event.type === "post_catch_attack");
+  const finish = s04.eventLog.find((event) => event.type === "finish_window");
+  const terminal = s04.eventLog.find((event) => event.type === "terminal");
+  const firstPostOffense = s04.planningLog.find(
+    (record) => record.team === "offense" && record.chosen === "POST_FINISH",
+  );
+  const firstPostDefense = s04.planningLog.find(
+    (record) => record.team === "defense" && record.chosen === "STAY_HOME_POST",
+  );
+  const kickOut = firstPostOffense?.candidates.find((candidate) => candidate.id === "KICK_OUT");
+  const dig = firstPostDefense?.candidates.find((candidate) => candidate.id === "DIG_POST");
+  const roles = new Map(s04.getRoles().map((role) => [role.playerId, role]));
+
+  assert.ok(s04AtCatch);
+  assert.deepEqual(s04AtCatch, {
+    tick: s03.world.tick,
+    time: s03.world.time,
+    ballOwner: s03.world.ballOwner,
+    ball: structuredClone(s03.world.ball),
+    players: structuredClone(s03.world.players),
+  });
+  assert.deepEqual(
+    s04.eventLog.slice(0, s04CaughtIndex + 1).map(({ type, tick, detail }) => ({ type, tick, detail })),
+    s03.eventLog.slice(0, s03CaughtIndex + 1).map(({ type, tick, detail }) => ({ type, tick, detail })),
+  );
+  assert.deepEqual(
+    s04.planningLog
+      .filter((record) => record.tick <= s04AtCatch.tick)
+      .map(({ tick, team, trigger, chosen }) => ({ tick, team, trigger, chosen })),
+    s03.planningLog.map(({ tick, team, trigger, chosen }) => ({ tick, team, trigger, chosen })),
+  );
+
+  assert.ok(caught);
+  assert.ok(attack);
+  assert.ok(finish);
+  assert.ok(terminal);
+  assert.ok(caught.tick < attack.tick);
+  assert.ok(attack.tick < finish.tick);
+  assert.equal(finish.tick, terminal.tick);
+  assert.ok(firstPostOffense);
+  assert.ok(firstPostDefense);
+  assert.ok(firstPostOffense.tick >= caught.availableAtTick);
+  assert.ok(firstPostDefense.tick >= caught.availableAtTick);
+  assert.equal(kickOut?.feasible, false);
+  assert.ok(kickOut?.vetoes.some((veto) => veto.includes("禁止预判其隐藏方案")));
+  assert.equal(dig?.feasible, true);
+  assert.ok(firstPostDefense.candidates.find((candidate) => candidate.id === "STAY_HOME_POST").score > dig.score);
+
+  assert.equal(s04.world.terminal?.reason, "post_catch_finish_window");
+  assert.equal(s04.world.ballOwner, "O5");
+  assert.equal(s04.world.ball.outcome, "caught");
+  assert.equal(s04.world.postCatch.attackCommitted, true);
+  assert.equal(s04.world.postCatch.finishWindow, true);
+  assert.equal(s04.world.postCatch.d1Behind, true);
+  assert.ok(s04.world.postCatch.d1BodyGap >= -0.01);
+  assert.equal(s04.world.postCatch.d5AttachedToO1, true);
+  assert.equal(s04.world.postCatch.o1Relocated, true);
+  assert.ok(s04.world.postCatch.o5RimDistance <= 1.72);
+  assert.equal(roles.get("O1")?.roleCode, "relocate_post_space");
+  assert.equal(roles.get("O5")?.roleCode, "turn_finish");
+  assert.equal(roles.get("D1")?.roleCode, "rear_contest_post");
+  assert.equal(roles.get("D5")?.roleCode, "stay_attached_o1");
+  assert.equal(s04.eventLog.some((event) => event.type.includes("shot")), false);
+  assert.equal(s04.eventLog.some((event) => event.type === "pass_denied"), false);
+});
+
+test("S05 waits for a local D5 dig before O5 kicks out and O1 legally catches", () => {
+  const s04 = new PnrSimulation(makeScenarioConfig("post_catch_stay_home_finish"));
+  const s05 = new PnrSimulation(makeScenarioConfig("post_catch_dig_kickout"));
+  let s04AtCatch;
+  let s05AtCatch;
+  let helpSnapshot;
+  let windowSnapshot;
+  let sawKickoutFlight = false;
+  let maxKickoutStep = 0;
+  let previousBall = { ...s05.world.ball.pos };
+
+  for (let i = 0; i < 600 && (!s04AtCatch || !s04.world.terminal); i += 1) {
+    s04.step();
+    if (!s04AtCatch && s04.eventLog.some((event) => event.type === "pass_caught")) {
+      s04AtCatch = {
+        tick: s04.world.tick,
+        time: s04.world.time,
+        ballOwner: s04.world.ballOwner,
+        ball: structuredClone(s04.world.ball),
+        players: structuredClone(s04.world.players),
+      };
+    }
+  }
+
+  for (let i = 0; i < 600 && !s05.world.terminal; i += 1) {
+    s05.step();
+    if (!s05AtCatch && s05.eventLog.some((event) => event.type === "pass_caught")) {
+      s05AtCatch = {
+        tick: s05.world.tick,
+        time: s05.world.time,
+        ballOwner: s05.world.ballOwner,
+        ball: structuredClone(s05.world.ball),
+        players: structuredClone(s05.world.players),
+      };
+    }
+    if (!helpSnapshot && s05.eventLog.some((event) => event.type === "help_committed")) {
+      helpSnapshot = {
+        d5O5Distance: s05.world.postCatch.d5O5Distance,
+        d5O1Distance: s05.world.postCatch.d5O1Distance,
+      };
+    }
+    if (!windowSnapshot && s05.eventLog.some((event) => event.type === "kickout_window_open")) {
+      windowSnapshot = {
+        clearance: s05.world.postCatch.kickoutLaneClearance,
+        o1Relocated: s05.world.postCatch.o1Relocated,
+      };
+    }
+    const ballStep = Math.hypot(
+      s05.world.ball.pos.x - previousBall.x,
+      s05.world.ball.pos.y - previousBall.y,
+    );
+    previousBall = { ...s05.world.ball.pos };
+    if (s05.world.ball.inFlight && s05.world.ball.kind === "kick_out") {
+      sawKickoutFlight = true;
+      maxKickoutStep = Math.max(maxKickoutStep, ballStep);
+      assert.equal(s05.world.ballOwner, null);
+    }
+  }
+
+  const s04CaughtIndex = s04.eventLog.findIndex((event) => event.type === "pass_caught");
+  const s05CaughtIndex = s05.eventLog.findIndex((event) => event.type === "pass_caught");
+  const caught = s05.eventLog[s05CaughtIndex];
+  const attack = s05.eventLog.find((event) => event.type === "post_catch_attack");
+  const help = s05.eventLog.find((event) => event.type === "help_committed");
+  const window = s05.eventLog.find((event) => event.type === "kickout_window_open");
+  const launch = s05.eventLog.find((event) => event.type === "kickout_launched");
+  const kickoutCaught = s05.eventLog.find((event) => event.type === "kickout_caught");
+  const terminal = s05.eventLog.find((event) => event.type === "terminal");
+  const firstPostOffense = s05.planningLog.find(
+    (record) => record.team === "offense" && record.tick >= caught.availableAtTick,
+  );
+  const firstPostDefense = s05.planningLog.find(
+    (record) => record.team === "defense" && record.tick >= caught.availableAtTick,
+  );
+  const firstKickout = s05.planningLog.find(
+    (record) => record.team === "offense" && record.chosen === "KICK_OUT",
+  );
+  const kickoutCandidateAtCatch = firstPostOffense?.candidates.find(
+    (candidate) => candidate.id === "KICK_OUT",
+  );
+  const finishAtRead = firstKickout?.candidates.find((candidate) => candidate.id === "POST_FINISH");
+  const kickoutAtRead = firstKickout?.candidates.find((candidate) => candidate.id === "KICK_OUT");
+  const stayAtCatch = firstPostDefense?.candidates.find(
+    (candidate) => candidate.id === "STAY_HOME_POST",
+  );
+  const digAtCatch = firstPostDefense?.candidates.find((candidate) => candidate.id === "DIG_POST");
+  const roles = new Map(s05.getRoles().map((role) => [role.playerId, role]));
+
+  assert.ok(s04AtCatch);
+  assert.ok(s05AtCatch);
+  assert.deepEqual(s05AtCatch, s04AtCatch);
+  assert.deepEqual(
+    s05.eventLog.slice(0, s05CaughtIndex + 1).map(({ type, tick, detail }) => ({ type, tick, detail })),
+    s04.eventLog.slice(0, s04CaughtIndex + 1).map(({ type, tick, detail }) => ({ type, tick, detail })),
+  );
+  assert.deepEqual(
+    s05.planningLog
+      .filter((record) => record.tick <= s05AtCatch.tick)
+      .map(({ tick, team, trigger, chosen }) => ({ tick, team, trigger, chosen })),
+    s04.planningLog
+      .filter((record) => record.tick <= s04AtCatch.tick)
+      .map(({ tick, team, trigger, chosen }) => ({ tick, team, trigger, chosen })),
+  );
+
+  assert.ok(caught);
+  assert.ok(attack);
+  assert.ok(help);
+  assert.ok(window);
+  assert.ok(launch);
+  assert.ok(kickoutCaught);
+  assert.ok(terminal);
+  assert.ok(caught.tick < attack.tick);
+  assert.ok(attack.tick < help.tick);
+  assert.ok(help.tick < window.tick);
+  assert.ok(window.tick < launch.tick);
+  assert.ok(launch.tick < kickoutCaught.tick);
+  assert.equal(kickoutCaught.tick, terminal.tick);
+
+  assert.equal(firstPostOffense?.chosen, "POST_FINISH");
+  assert.equal(firstPostDefense?.chosen, "DIG_POST");
+  assert.equal(kickoutCandidateAtCatch?.feasible, false);
+  assert.ok(kickoutCandidateAtCatch?.vetoes.some((veto) => veto.includes("禁止预判")));
+  assert.ok(digAtCatch.score > stayAtCatch.score);
+  assert.ok(firstKickout);
+  assert.ok(firstKickout.tick >= help.availableAtTick);
+  assert.equal(
+    s05.planningLog.some(
+      (record) => record.team === "offense" && record.chosen === "KICK_OUT" && record.tick < help.availableAtTick,
+    ),
+    false,
+  );
+  assert.equal(kickoutAtRead?.feasible, true);
+  assert.ok(kickoutAtRead.score > finishAtRead.score);
+
+  assert.ok(helpSnapshot);
+  assert.ok(helpSnapshot.d5O5Distance <= 1.12);
+  assert.ok(helpSnapshot.d5O1Distance >= 1.28);
+  assert.ok(windowSnapshot);
+  assert.equal(windowSnapshot.o1Relocated, true);
+  assert.ok(windowSnapshot.clearance > 0.1);
+  assert.equal(sawKickoutFlight, true);
+  assert.ok(maxKickoutStep <= 13.6 * FIXED_DT + 0.007);
+  assert.equal(s05.world.terminal?.reason, "post_catch_kickout_caught");
+  assert.equal(s05.world.ballOwner, "O1");
+  assert.equal(s05.world.ball.kind, "kick_out");
+  assert.equal(s05.world.ball.outcome, "caught");
+  assert.equal(s05.world.postCatch.d5HelpCommitted, true);
+  assert.equal(s05.world.postCatch.kickoutWindow, true);
+  assert.equal(s05.eventLog.some((event) => event.type === "pass_denied"), false);
+  assert.equal(roles.get("O1")?.roleCode, "relocate_receive");
+  assert.equal(roles.get("O5")?.roleCode, "kick_out_post");
+  assert.equal(roles.get("D1")?.roleCode, "rear_contest_post");
+  assert.equal(roles.get("D5")?.roleCode, "dig_post");
+});
 
 test("same input reproduces the identical state and explanation trace", () => {
   const first = runToStop("neutral");
@@ -212,6 +567,7 @@ test("the lob entry waits for a public window, then D1 can win the touch race", 
   assert.ok(frontPlan.tick >= window.availableAtTick);
   assert.ok(launch.tick > window.availableAtTick);
   assert.ok(denied.tick > launch.tick);
+  assert.equal(simulation.eventLog.filter((event) => event.type === "seal_fronted").length, 1);
   assert.equal(sawFlight, true);
   assert.ok(maxBallStep <= 9.2 * FIXED_DT + 0.007);
   assert.equal(simulation.world.ballOwner, "D1");
@@ -244,8 +600,8 @@ test("planner observations contain public facts but never the opponent hidden pl
 });
 
 test("all four players always have exactly one role owner", () => {
-  for (const cue of ["neutral", "overplay_right"]) {
-    const simulation = new PnrSimulation({ cue });
+  for (const scenario of PNR_SCENARIOS) {
+    const simulation = new PnrSimulation(makeScenarioConfig(scenario.id));
     for (let i = 0; i < 520 && !simulation.world.terminal; i += 1) {
       const roles = simulation.getRoles();
       assert.equal(roles.length, 4);
@@ -262,51 +618,55 @@ test("all four players always have exactly one role owner", () => {
 });
 
 test("possession, boundaries, speed-limited paths, and fixed timestep stay legal", () => {
-  const simulation = new PnrSimulation();
-  for (let i = 0; i < 520 && !simulation.world.terminal; i += 1) {
-    simulation.step();
-    assert.ok(
-      simulation.world.ballOwner === null || PLAYER_IDS.includes(simulation.world.ballOwner),
-    );
-    assert.equal(simulation.world.ball.inFlight, simulation.world.ballOwner === null);
-    assert.equal(simulation.world.time, Math.round(simulation.world.tick * FIXED_DT * 1e6) / 1e6);
-    assert.ok(simulation.world.lastStepMaxDisplacement <= 0.15);
-    assert.ok(simulation.world.ball.pos.x >= -1e-9);
-    assert.ok(simulation.world.ball.pos.x <= COURT.width + 1e-9);
-    assert.ok(simulation.world.ball.pos.y >= -1e-9);
-    assert.ok(simulation.world.ball.pos.y <= COURT.height + 1e-9);
-    for (const id of PLAYER_IDS) {
-      const player = simulation.world.players[id];
-      assert.ok(player.pos.x >= player.radius - 1e-9);
-      assert.ok(player.pos.x <= COURT.width - player.radius + 1e-9);
-      assert.ok(player.pos.y >= player.radius - 1e-9);
-      assert.ok(player.pos.y <= COURT.height - player.radius + 1e-9);
+  for (const scenario of PNR_SCENARIOS) {
+    const simulation = new PnrSimulation(makeScenarioConfig(scenario.id));
+    for (let i = 0; i < 520 && !simulation.world.terminal; i += 1) {
+      simulation.step();
+      assert.ok(
+        simulation.world.ballOwner === null || PLAYER_IDS.includes(simulation.world.ballOwner),
+      );
+      assert.equal(simulation.world.ball.inFlight, simulation.world.ballOwner === null);
+      assert.equal(simulation.world.time, Math.round(simulation.world.tick * FIXED_DT * 1e6) / 1e6);
+      assert.ok(simulation.world.lastStepMaxDisplacement <= 0.15);
+      assert.ok(simulation.world.ball.pos.x >= -1e-9);
+      assert.ok(simulation.world.ball.pos.x <= COURT.width + 1e-9);
+      assert.ok(simulation.world.ball.pos.y >= -1e-9);
+      assert.ok(simulation.world.ball.pos.y <= COURT.height + 1e-9);
+      for (const id of PLAYER_IDS) {
+        const player = simulation.world.players[id];
+        assert.ok(player.pos.x >= player.radius - 1e-9);
+        assert.ok(player.pos.x <= COURT.width - player.radius + 1e-9);
+        assert.ok(player.pos.y >= player.radius - 1e-9);
+        assert.ok(player.pos.y <= COURT.height - player.radius + 1e-9);
+      }
     }
   }
 });
 
 test("events use a fixed order and only reach planners at a later boundary", () => {
-  const simulation = runToStop("neutral");
-  const byTick = new Map();
-  for (const event of simulation.eventLog) {
-    const list = byTick.get(event.tick) ?? [];
-    list.push(event);
-    byTick.set(event.tick, list);
-  }
-
-  for (const events of byTick.values()) {
-    for (let i = 1; i < events.length; i += 1) {
-      assert.ok(EVENT_ORDER[events[i - 1].type] <= EVENT_ORDER[events[i].type]);
+  for (const scenario of PNR_SCENARIOS) {
+    const simulation = runScenarioToStop(scenario.id);
+    const byTick = new Map();
+    for (const event of simulation.eventLog) {
+      const list = byTick.get(event.tick) ?? [];
+      list.push(event);
+      byTick.set(event.tick, list);
     }
-  }
 
-  const eventsById = new Map(simulation.eventLog.map((event) => [event.id, event]));
-  for (const record of simulation.planningLog) {
-    for (const id of record.triggerEventIds) {
-      const event = eventsById.get(id);
-      assert.ok(event);
-      assert.ok(event.availableAtTick > event.tick);
-      assert.ok(record.tick >= event.availableAtTick);
+    for (const events of byTick.values()) {
+      for (let i = 1; i < events.length; i += 1) {
+        assert.ok(EVENT_ORDER[events[i - 1].type] <= EVENT_ORDER[events[i].type]);
+      }
+    }
+
+    const eventsById = new Map(simulation.eventLog.map((event) => [event.id, event]));
+    for (const record of simulation.planningLog) {
+      for (const id of record.triggerEventIds) {
+        const event = eventsById.get(id);
+        assert.ok(event);
+        assert.ok(event.availableAtTick > event.tick);
+        assert.ok(record.tick >= event.availableAtTick);
+      }
     }
   }
 });
@@ -337,8 +697,8 @@ test("no contact and no route exposure can never create remote impediment", () =
 });
 
 test("every live impediment has a local contact or corridor cause", () => {
-  for (const cue of ["neutral", "overplay_right"]) {
-    const simulation = new PnrSimulation({ cue });
+  for (const scenario of PNR_SCENARIOS) {
+    const simulation = new PnrSimulation(makeScenarioConfig(scenario.id));
     for (let i = 0; i < 600 && !simulation.world.terminal; i += 1) {
       simulation.step();
       if (simulation.world.facts.impeded) {

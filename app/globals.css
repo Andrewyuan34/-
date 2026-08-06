@@ -149,45 +149,42 @@ select:focus-visible {
   margin: 5px 0 0;
 }
 
-.segmented {
+.scenario-picker {
   background: #090f15;
   border: 1px solid var(--line);
   border-radius: 10px;
   display: grid;
-  gap: 4px;
-  grid-template-columns: 1fr 1fr;
+  gap: 5px;
   min-width: 360px;
-  padding: 4px;
+  padding: 8px 10px 9px;
 }
 
-.segmented button {
-  background: transparent;
+.scenario-picker > span {
+  color: #758795;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.scenario-picker select {
+  background: #edf0e5;
   border: 0;
   border-radius: 7px;
-  color: #a8b4bf;
-  cursor: pointer;
-  font-size: 12px;
-  font-weight: 700;
-  padding: 8px 14px;
-  text-align: left;
-  transition: background-color 160ms ease, color 160ms ease;
-}
-
-.segmented button small {
-  color: #6f808f;
-  display: block;
-  font-size: 9px;
-  font-weight: 500;
-  margin-top: 2px;
-}
-
-.segmented button.is-active {
-  background: #edf0e5;
   color: #111a24;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 800;
+  min-height: 34px;
+  padding: 7px 32px 7px 10px;
+  width: 100%;
 }
 
-.segmented button.is-active small {
-  color: #53606a;
+.scenario-picker small {
+  color: #70818f;
+  font-size: 9px;
+  line-height: 1.45;
 }
 
 .workspace-grid {
@@ -708,6 +705,76 @@ select:focus-visible {
   color: #ffb18f;
 }
 
+.post-catch-strip {
+  align-items: center;
+  background: rgba(216, 236, 137, 0.025);
+  border-top: 1px solid var(--line);
+  display: grid;
+  gap: 12px;
+  grid-template-columns: auto auto 1fr;
+  padding: 10px 14px;
+}
+
+.post-catch-strip > span {
+  color: #74805f;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+}
+
+.post-catch-strip strong {
+  color: #8f9a89;
+  font-size: 10px;
+}
+
+.post-catch-strip p {
+  color: #647784;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 8px;
+  margin: 0;
+  text-align: right;
+}
+
+.post-catch-strip.is-active,
+.post-catch-strip.is-attacking {
+  background: rgba(216, 236, 137, 0.075);
+}
+
+.post-catch-strip.is-active > span,
+.post-catch-strip.is-active strong,
+.post-catch-strip.is-attacking > span,
+.post-catch-strip.is-attacking strong {
+  color: #cadd8d;
+}
+
+.post-catch-strip.is-help {
+  background: rgba(98, 151, 255, 0.1);
+}
+
+.post-catch-strip.is-help > span,
+.post-catch-strip.is-help strong {
+  color: #b7ceff;
+}
+
+.post-catch-strip.is-kickout {
+  background: rgba(107, 211, 199, 0.11);
+}
+
+.post-catch-strip.is-kickout > span,
+.post-catch-strip.is-kickout strong {
+  color: #a9eadf;
+}
+
+.post-catch-strip.is-finish {
+  background: rgba(255, 112, 64, 0.13);
+}
+
+.post-catch-strip.is-finish > span,
+.post-catch-strip.is-finish strong {
+  color: #ffb18f;
+}
+
 .inspector {
   overflow: hidden;
 }
@@ -1191,7 +1258,7 @@ footer > span {
     gap: 10px;
   }
 
-  .segmented {
+  .scenario-picker {
     min-width: 0;
     width: 100%;
   }
@@ -1234,11 +1301,13 @@ footer > span {
 
   .handoff-strip p,
   .mismatch-strip p,
+  .post-catch-strip p,
   .seal-strip p {
     text-align: left;
   }
 
   .mismatch-strip,
+  .post-catch-strip,
   .seal-strip {
     align-items: start;
     grid-template-columns: 1fr;

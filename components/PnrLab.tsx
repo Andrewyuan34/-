@@ -7,7 +7,6 @@ import {
   PLAYER_IDS,
   PnrSimulation,
   type CandidateEvaluation,
-  type DefensiveCue,
   type PlayerId,
   type PlanningRecord,
   type RoleAssignment,
@@ -16,6 +15,13 @@ import {
   type WorldEvent,
   type WorldState,
 } from "@/lib/pnr-core";
+import {
+  DEFAULT_SCENARIO_ID,
+  PNR_SCENARIOS,
+  getPnrScenario,
+  makeScenarioConfig,
+  type ScenarioId,
+} from "@/lib/pnr-scenarios";
 
 interface UiSnapshot {
   world: WorldState;
@@ -47,7 +53,12 @@ const PLAN_SHORT: Record<string, string> = {
   STAY_HOME: "STAY · 保持原对位",
   CONTAIN_MISMATCH: "CONTAIN · 后撤遏制",
   FRONT_SEAL: "FRONT · D1 抢传球侧",
+  BACKSIDE_CONTEST: "BEHIND · D1 身后干扰",
+  STAY_HOME_POST: "STAY · D5 留守 O1",
+  DIG_POST: "DIG · D5 下沉协防",
   PRESSURE_MISMATCH: "PRESSURE · 贴身施压",
+  POST_FINISH: "FINISH · O5 转身攻筐",
+  KICK_OUT: "KICK · O5 分回 O1",
 };
 
 function clonePlan(plan: TeamPlan): TeamPlan {
@@ -67,6 +78,7 @@ function takeSnapshot(simulation: PnrSimulation): UiSnapshot {
       facts: { ...simulation.world.facts },
       mismatch: { ...simulation.world.mismatch },
       seal: { ...simulation.world.seal },
+      postCatch: { ...simulation.world.postCatch },
       ball: {
         ...simulation.world.ball,
         pos: { ...simulation.world.ball.pos },
@@ -109,6 +121,17 @@ function freshTrails(simulation: PnrSimulation): TrailMap {
 
 function lerp(a: number, b: number, amount: number): number {
   return a + (b - a) * amount;
+}
+
+function lowSideDigPoint(o5: Vec2, o1: Vec2): Vec2 {
+  const pass = { x: o1.x - o5.x, y: o1.y - o5.y };
+  const passMagnitude = Math.hypot(pass.x, pass.y) || 1;
+  const sideA = { x: pass.y / passMagnitude, y: -pass.x / passMagnitude };
+  const sideB = { x: -sideA.x, y: -sideA.y };
+  const hoop = { x: COURT.hoop.x - o5.x, y: COURT.hoop.y - o5.y };
+  const useA = sideA.x * hoop.x + sideA.y * hoop.y >= sideB.x * hoop.x + sideB.y * hoop.y;
+  const lowSide = useA ? sideA : sideB;
+  return { x: o5.x + lowSide.x * 0.82, y: o5.y + lowSide.y * 0.82 };
 }
 
 function drawCourt(
@@ -270,6 +293,21 @@ function drawCourt(
     }
   }
   if (
+    simulation.offensePlan.id === "POST_FINISH" ||
+    simulation.offensePlan.id === "KICK_OUT"
+  ) {
+    drawPlanPath(
+      [o5Now, simulation.offensePlan.primaryTarget ?? COURT.hoop],
+      "rgba(255, 194, 139, 0.9)",
+    );
+    drawPlanPath(
+      [o1Now, simulation.offensePlan.secondaryTarget ?? o1Now],
+      "#fff3df",
+    );
+    if (simulation.offensePlan.id === "KICK_OUT") {
+      drawPlanPath([o5Now, o1Now], "rgba(247, 220, 142, 0.82)");
+    }
+  } else if (
     simulation.offensePlan.id === "ATTACK_BIG" ||
     simulation.offensePlan.id === "FEED_SEAL" ||
     simulation.offensePlan.id === "RESET_MISMATCH"
@@ -332,6 +370,56 @@ function drawCourt(
     };
     drawPlanPath([current.D1, ballSidePoint], "rgba(46, 91, 181, 0.78)");
     drawPlanPath([current.D5, containPoint], "rgba(46, 91, 181, 0.78)");
+  } else if (simulation.defensePlan.id === "BACKSIDE_CONTEST") {
+    const behindDirection = {
+      x: current.O5.x - COURT.hoop.x,
+      y: current.O5.y - COURT.hoop.y,
+    };
+    const behindMagnitude = Math.hypot(behindDirection.x, behindDirection.y) || 1;
+    const behindPoint = {
+      x: current.O5.x + (behindDirection.x / behindMagnitude) * 0.73,
+      y: current.O5.y + (behindDirection.y / behindMagnitude) * 0.73,
+    };
+    const hoopDirection = {
+      x: COURT.hoop.x - current.O1.x,
+      y: COURT.hoop.y - current.O1.y,
+    };
+    const hoopMagnitude = Math.hypot(hoopDirection.x, hoopDirection.y) || 1;
+    const containPoint = {
+      x: current.O1.x + (hoopDirection.x / hoopMagnitude) * 0.74,
+      y: current.O1.y + (hoopDirection.y / hoopMagnitude) * 0.74,
+    };
+    drawPlanPath([current.D1, behindPoint], "rgba(46, 91, 181, 0.78)");
+    drawPlanPath([current.D5, containPoint], "rgba(46, 91, 181, 0.78)");
+  } else if (
+    simulation.defensePlan.id === "STAY_HOME_POST" ||
+    simulation.defensePlan.id === "DIG_POST"
+  ) {
+    const behindDirection = {
+      x: current.O5.x - COURT.hoop.x,
+      y: current.O5.y - COURT.hoop.y,
+    };
+    const behindMagnitude = Math.hypot(behindDirection.x, behindDirection.y) || 1;
+    const behindPoint = {
+      x: current.O5.x + (behindDirection.x / behindMagnitude) * 0.73,
+      y: current.O5.y + (behindDirection.y / behindMagnitude) * 0.73,
+    };
+    const d5Target =
+      simulation.defensePlan.id === "DIG_POST"
+        ? lowSideDigPoint(current.O5, current.O1)
+        : (() => {
+            const hoopDirection = {
+              x: COURT.hoop.x - current.O1.x,
+              y: COURT.hoop.y - current.O1.y,
+            };
+            const magnitude = Math.hypot(hoopDirection.x, hoopDirection.y) || 1;
+            return {
+              x: current.O1.x + (hoopDirection.x / magnitude) * 0.72,
+              y: current.O1.y + (hoopDirection.y / magnitude) * 0.72,
+            };
+          })();
+    drawPlanPath([current.D1, behindPoint], "rgba(46, 91, 181, 0.78)");
+    drawPlanPath([current.D5, d5Target], "rgba(46, 91, 181, 0.78)");
   } else if (simulation.defensePlan.id === "PRESSURE_MISMATCH") {
     drawPlanPath([current.D1, current.O5], "rgba(46, 91, 181, 0.78)");
     drawPlanPath([current.D5, current.O1], "rgba(46, 91, 181, 0.78)");
@@ -441,8 +529,11 @@ function drawCourt(
       }
     : simulation.world.ball.pos;
   const ballPosition = point(ballWorldPosition);
-  if (simulation.world.ball.inFlight && simulation.world.ball.kind === "lob_entry") {
-    context.strokeStyle = "rgba(255, 241, 176, 0.72)";
+  if (simulation.world.ball.inFlight) {
+    context.strokeStyle =
+      simulation.world.ball.kind === "kick_out"
+        ? "rgba(190, 233, 255, 0.82)"
+        : "rgba(255, 241, 176, 0.72)";
     context.lineWidth = 1.4;
     context.beginPath();
     context.arc(ballPosition.x, ballPosition.y, 0.19 * scale, 0, Math.PI * 2);
@@ -556,8 +647,10 @@ function EventItem({ event }: { event: WorldEvent }) {
 }
 
 export default function PnrLab() {
-  const [cue, setCue] = useState<DefensiveCue>("neutral");
-  const [initialSimulation] = useState(() => new PnrSimulation({ cue: "neutral" }));
+  const [scenarioId, setScenarioId] = useState<ScenarioId>(DEFAULT_SCENARIO_ID);
+  const [initialSimulation] = useState(
+    () => new PnrSimulation(makeScenarioConfig(DEFAULT_SCENARIO_ID)),
+  );
   const simulationRef = useRef(initialSimulation);
   const [snapshot, setSnapshot] = useState<UiSnapshot>(() => takeSnapshot(initialSimulation));
   const [playing, setPlaying] = useState(false);
@@ -581,8 +674,8 @@ export default function PnrLab() {
     setSnapshot(takeSnapshot(simulationRef.current));
   };
 
-  const replaceSimulation = (nextCue: DefensiveCue, shouldPlay: boolean): void => {
-    const simulation = new PnrSimulation({ cue: nextCue });
+  const replaceSimulation = (nextScenarioId: ScenarioId, shouldPlay: boolean): void => {
+    const simulation = new PnrSimulation(makeScenarioConfig(nextScenarioId));
     simulationRef.current = simulation;
     previousRef.current = copyPositions(simulation);
     currentRef.current = copyPositions(simulation);
@@ -659,12 +752,12 @@ export default function PnrLab() {
         });
       }
       if (event.key.toLowerCase() === "r") {
-        replaceSimulation(cue, true);
+        replaceSimulation(scenarioId, true);
       }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [cue]);
+  }, [scenarioId]);
 
   const latestOffense = useMemo(
     () => [...snapshot.planning].reverse().find((record) => record.team === "offense"),
@@ -678,12 +771,14 @@ export default function PnrLab() {
   const facts = snapshot.world.facts;
   const mismatch = snapshot.world.mismatch;
   const seal = snapshot.world.seal;
+  const postCatch = snapshot.world.postCatch;
   const ball = snapshot.world.ball;
   const causalGateOpen = facts.pnrLinked && (facts.contact || facts.routeExposure);
   const planCommitRemaining = Math.max(
     0,
     Math.min(snapshot.offensePlan.commitUntil, snapshot.defensePlan.commitUntil) - snapshot.world.time,
   );
+  const currentScenario = getPnrScenario(scenarioId);
 
   return (
     <main className="lab-shell">
@@ -702,35 +797,30 @@ export default function PnrLab() {
         </div>
       </header>
 
-      <section className="read-selector" aria-label="D1 起手读法">
-        <div>
-          <span className="eyebrow">同一右侧挡拆 · 可见防守读法</span>
-          <p>只改变 D1 的公开起手站位；双方规划器仍各自独立决策。</p>
+      <section className="read-selector" aria-label="挡拆场景目录">
+        <div className="scenario-copy">
+          <span className="eyebrow">SCENARIO CATALOG · {PNR_SCENARIOS.length} SAVED</span>
+          <p>{currentScenario.question}</p>
         </div>
-        <div className="segmented">
-          <button
-            className={cue === "neutral" ? "is-active" : ""}
-            onClick={() => {
-              setCue("neutral");
-              replaceSimulation("neutral", false);
+        <label className="scenario-picker" htmlFor="scenario-select">
+          <span>选择保留局面</span>
+          <select
+            id="scenario-select"
+            value={scenarioId}
+            onChange={(event) => {
+              const nextScenario = getPnrScenario(event.currentTarget.value);
+              setScenarioId(nextScenario.id);
+              replaceSimulation(nextScenario.id, false);
             }}
-            type="button"
           >
-            中性跟防
-            <small>预期：换防后喂 O5，D1 抢前</small>
-          </button>
-          <button
-            className={cue === "overplay_right" ? "is-active" : ""}
-            onClick={() => {
-              setCue("overplay_right");
-              replaceSimulation("overplay_right", false);
-            }}
-            type="button"
-          >
-            提前踩右侧
-            <small>预期：拒绝掩护</small>
-          </button>
-        </div>
+            {PNR_SCENARIOS.map((scenario) => (
+              <option key={scenario.id} value={scenario.id}>
+                {scenario.code} · {scenario.label}
+              </option>
+            ))}
+          </select>
+          <small aria-live="polite">{currentScenario.expected}</small>
+        </label>
       </section>
 
       <div className="workspace-grid">
@@ -758,7 +848,7 @@ export default function PnrLab() {
                 <span className="eyebrow">LOOP CLOSED · {snapshot.world.time.toFixed(2)}s</span>
                 <strong>{snapshot.world.terminal.label}</strong>
                 <p>世界已冻结在第一个判断点；重放可验证相同输入是否复现。</p>
-                <button onClick={() => replaceSimulation(cue, true)} type="button">从头重放</button>
+                <button onClick={() => replaceSimulation(scenarioId, true)} type="button">从头重放</button>
               </div>
             )}
           </div>
@@ -777,8 +867,8 @@ export default function PnrLab() {
               <span>{playing ? "Ⅱ" : "▶"}</span>
               {playing ? "暂停" : "播放"}
             </button>
-            <button onClick={() => replaceSimulation(cue, true)} type="button">↻ 重放</button>
-            <button onClick={() => replaceSimulation(cue, false)} type="button">重置</button>
+            <button onClick={() => replaceSimulation(scenarioId, true)} type="button">↻ 重放</button>
+            <button onClick={() => replaceSimulation(scenarioId, false)} type="button">重置</button>
             <button
               disabled={playing || Boolean(snapshot.world.terminal)}
               onClick={() => {
@@ -917,10 +1007,16 @@ export default function PnrLab() {
                           : "")
             }
           >
-            <span>SEAL / LOB ENTRY</span>
+            <span>{ball.kind === "kick_out" ? "KICKOUT PASS" : "SEAL / LOB ENTRY"}</span>
             <strong>
-              {ball.outcome === "caught"
-                ? "O5 先触球 · 深位接球"
+              {ball.kind === "kick_out" && ball.outcome === "caught"
+                ? "O1 合法接到回传"
+                : ball.kind === "kick_out" && ball.outcome === "deflected"
+                  ? "防守先触球 · 回传被破坏"
+                  : ball.kind === "kick_out" && ball.inFlight
+                    ? "O5 已分球 · 回传飞行中"
+                : ball.outcome === "caught"
+                  ? "O5 先触球 · 深位接球"
                 : ball.outcome === "deflected"
                   ? "D1 先触球 · 传球被破坏"
                   : ball.outcome === "missed"
@@ -929,6 +1025,8 @@ export default function PnrLab() {
                       ? "高吊球飞行中 · 球权为空"
                       : seal.d1Fronting
                         ? "D1 已抢到 O1–O5 传球侧"
+                        : snapshot.defensePlan.id === "BACKSIDE_CONTEST"
+                          ? "D1 绕前来不及 · 留在身后干扰"
                         : seal.passWindow
                           ? "O5 卡位成立 · 高吊窗口开放"
                           : seal.established
@@ -938,9 +1036,59 @@ export default function PnrLab() {
                               : "等待换防完成"}
             </strong>
             <p>
-              {seal.active
-                ? `O5 篮筐侧 ${seal.o5GoalSide ? "是" : "否"} · D1 绕前 ${seal.d1Fronting ? "是" : "否"} · 走廊净空 ${seal.laneClearance.toFixed(2)}m`
+              {ball.kind === "kick_out"
+                ? `回传净空 ${postCatch.kickoutLaneClearance.toFixed(2)}m · D5–O5 ${postCatch.d5O5Distance.toFixed(2)}m · 飞行时球权为空`
+                : seal.established
+                ? `绕前 ETA ${seal.frontEta.toFixed(3)}s / 高吊 ${seal.entryFlightTime.toFixed(3)}s · ${seal.frontFeasible ? "可行" : "否决"} · 反应 ${seal.frontReactionDelay.toFixed(2)}s`
+                : seal.active
+                  ? `O5 篮筐侧 ${seal.o5GoalSide ? "是" : "否"} · D1 绕前 ${seal.d1Fronting ? "是" : "否"} · 走廊净空 ${seal.laneClearance.toFixed(2)}m`
                 : "高吊球可越过近身 D5；D1 仍可按实际触球顺序破坏。"}
+            </p>
+          </div>
+          <div
+            className={
+              "post-catch-strip " +
+              (ball.kind === "kick_out" && ball.outcome === "caught" && snapshot.world.ballOwner === "O1"
+                ? "is-kickout"
+                : ball.kind === "kick_out" && ball.inFlight
+                  ? "is-kickout"
+                  : postCatch.kickoutWindow
+                    ? "is-kickout"
+                    : postCatch.d5HelpCommitted
+                      ? "is-help"
+              : postCatch.finishWindow
+                ? "is-finish"
+                : postCatch.attackCommitted
+                  ? "is-attacking"
+                  : postCatch.active
+                    ? "is-active"
+                    : "")
+            }
+          >
+            <span>POST CATCH</span>
+            <strong>
+              {ball.kind === "kick_out" && ball.outcome === "caught" && snapshot.world.ballOwner === "O1"
+                ? "O1 已接到 O5 回传 · 本场景停止"
+                : ball.kind === "kick_out" && ball.inFlight
+                  ? "回传飞行中 · 球权为空"
+                  : postCatch.kickoutWindow
+                    ? "O5–O1 回传窗已开放"
+                    : postCatch.d5HelpCommitted
+                      ? "D5 已真实下沉 · O5 读取后准备分球"
+              : postCatch.finishWindow
+                ? "O5 已形成近筐处理窗口"
+                : postCatch.attackCommitted
+                  ? "O5 转身推进 · D5 留守 O1"
+                  : postCatch.active
+                    ? "O5 已接球 · 双方重新规划"
+                    : "等待 O5 建立接球球权"}
+            </strong>
+            <p>
+              {postCatch.d5HelpCommitted
+                ? `D1 恢复 ${postCatch.d1RecoveryReadyIn.toFixed(2)}s · D5–O5 ${postCatch.d5O5Distance.toFixed(2)}m · D5–O1 ${postCatch.d5O1Distance.toFixed(2)}m · 回传净空 ${postCatch.kickoutLaneClearance.toFixed(2)}m`
+                : postCatch.active
+                  ? `距筐 ${postCatch.o5RimDistance.toFixed(2)}m · D1 身后 ${postCatch.d1Behind ? "是" : "否"} · D5–O1 ${postCatch.d5O1Distance.toFixed(2)}m · 拉开 ${postCatch.o1Spacing.toFixed(2)}m`
+                : "接球事件只在下一决策边界触发双方新计划。"}
             </p>
           </div>
         </section>
