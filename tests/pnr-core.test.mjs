@@ -10,6 +10,8 @@ import {
   PnrSimulation,
   createPlannerObservation,
   evaluateScreenFacts,
+  mirrorPointAcrossCenterline,
+  validateInitialPlayerPositions,
 } from "../lib/pnr-core.ts";
 import {
   DEFAULT_SCENARIO_ID,
@@ -59,6 +61,20 @@ import {
   makeG07Config,
   scanG07Mirrors,
 } from "../lib/pnr-g07-mirroring.ts";
+import {
+  G08_COMMON_HORIZON,
+  G08_COMMON_MAX_TIME,
+  G08_FROZEN_CORE_COMMIT,
+  G08_HELDOUT_MANIFEST,
+  G08_INPUT_DOMAIN,
+  G08_MANIFEST_GENERATION,
+  G08_MANIFEST_HASH,
+  G08_MANIFEST_SEED,
+  G08_SIMULATION_SEED,
+  canonicalG08ManifestJson,
+  findG08ProhibitedOutputFields,
+  isG08ValueOnPriorGrid,
+} from "../lib/pnr-g08-heldout-manifest.ts";
 
 function makeTestConfig(cue = "neutral", overrides = {}) {
   return {
@@ -130,6 +146,138 @@ function behaviorTrace(config) {
 function behaviorDigest(value) {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");
 }
+
+test("G08 locks 24 input-only held-out cases before any world is run", () => {
+  const expectedIds = [
+    ...Array.from({ length: 12 }, (_, index) => `G08-R${String(index + 1).padStart(2, "0")}`),
+    ...Array.from({ length: 12 }, (_, index) => `G08-L${String(index + 1).padStart(2, "0")}`),
+  ];
+  const inRange = (value, range) => value >= range[0] && value <= range[1];
+  const threeDecimals = (value) => Math.abs(value * 1000 - Math.round(value * 1000)) <= 1e-9;
+
+  assert.equal(G08_FROZEN_CORE_COMMIT, "d92ed9f63bba3dcfa28d65d54b6a47c7e3e1f74c");
+  assert.equal(G08_MANIFEST_SEED, 20260808);
+  assert.equal(G08_SIMULATION_SEED, 17);
+  assert.equal(G08_COMMON_HORIZON, "post_catch_resolution");
+  assert.equal(G08_COMMON_MAX_TIME, 7.4);
+  assert.deepEqual(G08_MANIFEST_GENERATION, {
+    generator: "mulberry32-v1",
+    candidateCount: 24,
+    geometryRejectedCount: 0,
+    duplicateRejectedCount: 0,
+    acceptedCount: 24,
+    rightCount: 12,
+    leftCount: 12,
+  });
+  assert.equal(G08_HELDOUT_MANIFEST.length, 24);
+  assert.deepEqual(G08_HELDOUT_MANIFEST.map((item) => item.id), expectedIds);
+  assert.equal(new Set(G08_HELDOUT_MANIFEST.map((item) => item.id)).size, 24);
+  assert.equal(
+    new Set(G08_HELDOUT_MANIFEST.map((item) => JSON.stringify(item.input))).size,
+    24,
+  );
+  assert.deepEqual(findG08ProhibitedOutputFields(G08_HELDOUT_MANIFEST), []);
+  assert.equal(
+    `sha256:${createHash("sha256").update(canonicalG08ManifestJson()).digest("hex")}`,
+    G08_MANIFEST_HASH,
+  );
+
+  for (const item of G08_HELDOUT_MANIFEST) {
+    assert.deepEqual(Object.keys(item).sort(), ["id", "input", "side", "source"]);
+    assert.deepEqual(Object.keys(item.source).sort(), [
+      "candidateIndex",
+      "generator",
+      "offsets",
+      "tacticalFrame",
+    ]);
+    assert.deepEqual(Object.keys(item.input).sort(), [
+      "d1FrontReactionDelay",
+      "d1PostCatchRecoveryDelay",
+      "horizon",
+      "initialPositions",
+      "maxTime",
+      "o1MaxSpeed",
+      "screenSide",
+      "seed",
+    ]);
+    assert.equal(item.side, item.input.screenSide);
+    assert.equal(item.input.seed, G08_SIMULATION_SEED);
+    assert.equal(item.input.maxTime, G08_COMMON_MAX_TIME);
+    assert.equal(item.input.horizon, G08_COMMON_HORIZON);
+    assert.deepEqual(validateInitialPlayerPositions(item.input.initialPositions), item.input.initialPositions);
+    assert.equal(inRange(item.input.o1MaxSpeed, G08_INPUT_DOMAIN.o1MaxSpeed), true);
+    assert.equal(
+      inRange(item.input.d1FrontReactionDelay, G08_INPUT_DOMAIN.d1FrontReactionDelay),
+      true,
+    );
+    assert.equal(
+      inRange(item.input.d1PostCatchRecoveryDelay, G08_INPUT_DOMAIN.d1PostCatchRecoveryDelay),
+      true,
+    );
+    assert.equal(isG08ValueOnPriorGrid("speed", item.input.o1MaxSpeed), false);
+    assert.equal(isG08ValueOnPriorGrid("front", item.input.d1FrontReactionDelay), false);
+    assert.equal(isG08ValueOnPriorGrid("recovery", item.input.d1PostCatchRecoveryDelay), false);
+
+    const offsets = item.source.offsets;
+    assert.equal(inRange(offsets.formation.x, G08_INPUT_DOMAIN.formationTranslationX), true);
+    assert.equal(inRange(offsets.formation.y, G08_INPUT_DOMAIN.formationTranslationY), true);
+    assert.equal(inRange(offsets.O5.x, G08_INPUT_DOMAIN.o5RelativeX), true);
+    assert.equal(inRange(offsets.O5.y, G08_INPUT_DOMAIN.o5RelativeY), true);
+    assert.equal(inRange(offsets.D1.x, G08_INPUT_DOMAIN.d1RelativeX), true);
+    assert.equal(inRange(offsets.D1.y, G08_INPUT_DOMAIN.d1RelativeY), true);
+    assert.equal(inRange(offsets.D5.x, G08_INPUT_DOMAIN.d5RelativeX), true);
+    assert.equal(inRange(offsets.D5.y, G08_INPUT_DOMAIN.d5RelativeY), true);
+    assert.ok(
+      [
+        offsets.formation.x,
+        offsets.formation.y,
+        offsets.O5.x,
+        offsets.O5.y,
+        offsets.D1.x,
+        offsets.D1.y,
+        offsets.D5.x,
+        offsets.D5.y,
+      ].filter((value) => value !== 0).length >= 2,
+    );
+    for (const point of Object.values(item.input.initialPositions)) {
+      assert.equal(threeDecimals(point.x), true);
+      assert.equal(threeDecimals(point.y), true);
+    }
+    assert.equal(threeDecimals(item.input.o1MaxSpeed), true);
+    assert.equal(threeDecimals(item.input.d1FrontReactionDelay), true);
+    assert.equal(threeDecimals(item.input.d1PostCatchRecoveryDelay), true);
+    assert.equal(Object.isFrozen(item), true);
+    assert.equal(Object.isFrozen(item.input), true);
+    assert.equal(Object.isFrozen(item.input.initialPositions), true);
+  }
+
+  const tacticalFingerprint = (item) => JSON.stringify({
+    positions: Object.fromEntries(
+      PLAYER_IDS.map((id) => {
+        const point = item.input.initialPositions[id];
+        const tactical = item.side === "right" ? point : mirrorPointAcrossCenterline(point);
+        return [id, { x: Number(tactical.x.toFixed(3)), y: Number(tactical.y.toFixed(3)) }];
+      }),
+    ),
+    speed: item.input.o1MaxSpeed,
+    front: item.input.d1FrontReactionDelay,
+    recovery: item.input.d1PostCatchRecoveryDelay,
+  });
+  const rightFingerprints = new Set(
+    G08_HELDOUT_MANIFEST.filter((item) => item.side === "right").map(tacticalFingerprint),
+  );
+  assert.equal(
+    G08_HELDOUT_MANIFEST.filter((item) => item.side === "left").some((item) =>
+      rightFingerprints.has(tacticalFingerprint(item))),
+    false,
+  );
+
+  const source = readFileSync(
+    new URL("../lib/pnr-g08-heldout-manifest.ts", import.meta.url),
+    "utf8",
+  );
+  assert.doesNotMatch(source, /new\s+PnrSimulation|evaluateOffenseCandidates|evaluateDefenseCandidates|scanG0[1-7]/);
+});
 
 test("saved scenario presets are unique, deterministic, and contain inputs rather than outcomes", () => {
   assert.equal(DEFAULT_SCENARIO_ID, "switch_feed_front_denied");
