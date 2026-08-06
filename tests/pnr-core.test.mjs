@@ -41,6 +41,9 @@ test("saved scenario presets are unique, deterministic, and contain inputs rathe
       { code: "S03", id: "switch_feed_front_late_catch" },
       { code: "S04", id: "post_catch_stay_home_finish" },
       { code: "S05", id: "post_catch_dig_kickout" },
+      { code: "S06", id: "switch_attack_big_downhill" },
+      { code: "S07", id: "under_screen_pullup_window" },
+      { code: "S08", id: "reject_help_slip_catch" },
     ],
   );
   assert.equal(new Set(PNR_SCENARIOS.map((scenario) => scenario.id)).size, PNR_SCENARIOS.length);
@@ -371,6 +374,170 @@ test("S05 waits for a local D5 dig before O5 kicks out and O1 legally catches", 
   assert.equal(roles.get("O5")?.roleCode, "kick_out_post");
   assert.equal(roles.get("D1")?.roleCode, "rear_contest_post");
   assert.equal(roles.get("D5")?.roleCode, "dig_post");
+});
+
+test("S06 chooses O1 attacking D5, clears O5, and reaches a real mismatch window", () => {
+  const simulation = runScenarioToStop("switch_attack_big_downhill");
+  const exchange = simulation.eventLog.find((event) => event.type === "switch_completed");
+  const attackEvent = simulation.eventLog.find((event) => event.type === "mismatch_attack");
+  const advantage = simulation.eventLog.find((event) => event.type === "mismatch_advantage");
+  const firstAttackPlan = simulation.planningLog.find(
+    (record) => record.team === "offense" && record.chosen === "ATTACK_BIG",
+  );
+  const firstContainPlan = simulation.planningLog.find(
+    (record) => record.team === "defense" && record.chosen === "CONTAIN_MISMATCH",
+  );
+  const attackCandidate = firstAttackPlan?.candidates.find((candidate) => candidate.id === "ATTACK_BIG");
+  const feedCandidate = firstAttackPlan?.candidates.find((candidate) => candidate.id === "FEED_SEAL");
+  const roles = new Map(simulation.getRoles().map((role) => [role.playerId, role]));
+
+  assert.ok(exchange);
+  assert.ok(attackEvent);
+  assert.ok(advantage);
+  assert.ok(firstAttackPlan);
+  assert.ok(firstContainPlan);
+  assert.ok(firstAttackPlan.tick >= exchange.availableAtTick);
+  assert.ok(firstContainPlan.tick >= exchange.availableAtTick);
+  assert.ok(exchange.tick < attackEvent.tick);
+  assert.ok(attackEvent.tick < advantage.tick);
+  assert.ok(attackCandidate.score > feedCandidate.score);
+  assert.equal(simulation.config.o1MaxSpeed, 4.08);
+  assert.equal(simulation.world.mismatch.attackCommitted, true);
+  assert.equal(simulation.world.mismatch.advantage, true);
+  assert.equal(simulation.world.mismatch.d5GoalSide, false);
+  assert.ok(simulation.world.mismatch.o1D5Separation > 0.76);
+  assert.equal(simulation.world.ballOwner, "O1");
+  assert.equal(simulation.world.terminal?.reason, "mismatch_advantage");
+  assert.equal(simulation.eventLog.some((event) => event.type === "pass_launched"), false);
+  assert.equal(roles.get("O1")?.roleCode, "attack_big");
+  assert.equal(roles.get("O5")?.roleCode, "clear_lane");
+  assert.equal(roles.get("D1")?.roleCode, "stay_roller");
+  assert.equal(roles.get("D5")?.roleCode, "contain_ball");
+});
+
+test("S07 keeps original matchups while D1 goes under and O1 reaches a pull-up window", () => {
+  const simulation = new PnrSimulation(makeScenarioConfig("under_screen_pullup_window"));
+  let minimumD1O5Gap = Number.POSITIVE_INFINITY;
+
+  for (let i = 0; i < 600 && !simulation.world.terminal; i += 1) {
+    simulation.step();
+    const d1 = simulation.world.players.D1;
+    const o5 = simulation.world.players.O5;
+    minimumD1O5Gap = Math.min(
+      minimumD1O5Gap,
+      Math.hypot(d1.pos.x - o5.pos.x, d1.pos.y - o5.pos.y) - d1.radius - o5.radius,
+    );
+  }
+
+  const under = simulation.eventLog.find((event) => event.type === "under_committed");
+  const cleared = simulation.eventLog.find((event) => event.type === "screen_cleared");
+  const window = simulation.eventLog.find((event) => event.type === "pullup_window");
+  const initialDefense = simulation.planningLog.find((record) => record.team === "defense");
+  const roles = new Map(simulation.getRoles().map((role) => [role.playerId, role]));
+
+  assert.ok(under);
+  assert.ok(cleared);
+  assert.ok(window);
+  assert.equal(initialDefense?.chosen, "UNDER");
+  assert.ok(under.tick < cleared.tick);
+  assert.ok(cleared.tick < window.tick);
+  assert.equal(simulation.planningLog.some((record) => record.chosen === "SWITCH"), false);
+  assert.equal(simulation.eventLog.some((event) => event.type === "switch_completed"), false);
+  assert.equal(simulation.world.facts.matchupExchange, false);
+  assert.equal(simulation.world.under.active, true);
+  assert.equal(simulation.world.under.pullupWindow, true);
+  assert.equal(simulation.world.under.d1Recovered, false);
+  assert.ok(simulation.world.under.d1O1Distance >= 1.08);
+  assert.ok(simulation.world.under.d5O5Distance <= 1.02);
+  assert.ok(minimumD1O5Gap >= -0.01);
+  assert.equal(simulation.world.ballOwner, "O1");
+  assert.equal(simulation.world.terminal?.reason, "under_pullup_window");
+  assert.equal(roles.get("D1")?.roleCode, "navigate_under");
+  assert.equal(roles.get("D5")?.roleCode, "under_hold_roller");
+});
+
+test("S08 waits for local reject help before O1 passes to the slipping O5", () => {
+  const simulation = new PnrSimulation(makeScenarioConfig("reject_help_slip_catch"));
+  let helpSnapshot;
+  let windowSnapshot;
+  let previousBall = { ...simulation.world.ball.pos };
+  let maxPassStep = 0;
+  let sawFlight = false;
+
+  for (let i = 0; i < 600 && !simulation.world.terminal; i += 1) {
+    simulation.step();
+    if (!helpSnapshot && simulation.eventLog.some((event) => event.type === "reject_help_committed")) {
+      helpSnapshot = {
+        d5O1Distance: simulation.world.reject.d5O1Distance,
+        d5O5Distance: simulation.world.reject.d5O5Distance,
+      };
+    }
+    if (!windowSnapshot && simulation.eventLog.some((event) => event.type === "reject_pass_window_open")) {
+      windowSnapshot = { clearance: simulation.world.reject.passLaneClearance };
+    }
+    const ballStep = Math.hypot(
+      simulation.world.ball.pos.x - previousBall.x,
+      simulation.world.ball.pos.y - previousBall.y,
+    );
+    previousBall = { ...simulation.world.ball.pos };
+    if (simulation.world.ball.inFlight && simulation.world.ball.kind === "slip_pass") {
+      sawFlight = true;
+      maxPassStep = Math.max(maxPassStep, ballStep);
+      assert.equal(simulation.world.ballOwner, null);
+    }
+  }
+
+  const laneGained = simulation.eventLog.find((event) => event.type === "reject_lane_gained");
+  const help = simulation.eventLog.find((event) => event.type === "reject_help_committed");
+  const window = simulation.eventLog.find((event) => event.type === "reject_pass_window_open");
+  const launch = simulation.eventLog.find((event) => event.type === "reject_pass_launched");
+  const caught = simulation.eventLog.find((event) => event.type === "reject_pass_caught");
+  const firstSlipPlan = simulation.planningLog.find(
+    (record) => record.team === "offense" && record.chosen === "REJECT_SLIP_PASS",
+  );
+  const preHelpOffense = simulation.planningLog.find(
+    (record) => record.team === "offense" && record.tick >= laneGained.availableAtTick,
+  );
+  const preHelpSlip = preHelpOffense?.candidates.find((candidate) => candidate.id === "REJECT_SLIP_PASS");
+  const roles = new Map(simulation.getRoles().map((role) => [role.playerId, role]));
+
+  assert.ok(laneGained);
+  assert.ok(help);
+  assert.ok(window);
+  assert.ok(launch);
+  assert.ok(caught);
+  assert.ok(firstSlipPlan);
+  assert.ok(laneGained.tick < help.tick);
+  assert.ok(help.tick < window.tick);
+  assert.ok(window.tick < launch.tick);
+  assert.ok(launch.tick < caught.tick);
+  assert.equal(preHelpOffense?.chosen, "REJECT_LEFT");
+  assert.equal(preHelpSlip?.feasible, false);
+  assert.ok(preHelpSlip?.vetoes.some((veto) => veto.includes("禁止预判")));
+  assert.ok(firstSlipPlan.tick >= help.availableAtTick);
+  assert.equal(
+    simulation.planningLog.some(
+      (record) => record.team === "offense" && record.chosen === "REJECT_SLIP_PASS" && record.tick < help.availableAtTick,
+    ),
+    false,
+  );
+  assert.ok(helpSnapshot);
+  assert.ok(helpSnapshot.d5O1Distance <= 1.5);
+  assert.ok(helpSnapshot.d5O5Distance >= 1);
+  assert.ok(windowSnapshot);
+  assert.ok(windowSnapshot.clearance > 0.08);
+  assert.equal(sawFlight, true);
+  assert.ok(maxPassStep <= 11.4 * FIXED_DT + 0.007);
+  assert.equal(simulation.eventLog.some((event) => event.type === "switch_completed"), false);
+  assert.equal(simulation.world.facts.matchupExchange, false);
+  assert.equal(simulation.world.ballOwner, "O5");
+  assert.equal(simulation.world.ball.kind, "slip_pass");
+  assert.equal(simulation.world.ball.outcome, "caught");
+  assert.equal(simulation.world.terminal?.reason, "reject_slip_caught");
+  assert.equal(roles.get("O1")?.roleCode, "reject_slip_passer");
+  assert.equal(roles.get("O5")?.roleCode, "reject_slip_receiver");
+  assert.equal(roles.get("D1")?.roleCode, "chase_reject");
+  assert.equal(roles.get("D5")?.roleCode, "tag_reject_drive");
 });
 
 test("same input reproduces the identical state and explanation trace", () => {

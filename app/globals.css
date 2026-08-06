@@ -775,6 +775,28 @@ select:focus-visible {
   color: #ffb18f;
 }
 
+.coverage-strip {
+  background: rgba(123, 177, 255, 0.035);
+}
+
+.coverage-strip.is-under {
+  background: rgba(98, 151, 255, 0.1);
+}
+
+.coverage-strip.is-under > span,
+.coverage-strip.is-under strong {
+  color: #b7ceff;
+}
+
+.coverage-strip.is-open {
+  background: rgba(107, 211, 199, 0.11);
+}
+
+.coverage-strip.is-open > span,
+.coverage-strip.is-open strong {
+  color: #a9eadf;
+}
+
 .inspector {
   overflow: hidden;
 }

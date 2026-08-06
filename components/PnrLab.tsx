@@ -59,6 +59,9 @@ const PLAN_SHORT: Record<string, string> = {
   PRESSURE_MISMATCH: "PRESSURE · 贴身施压",
   POST_FINISH: "FINISH · O5 转身攻筐",
   KICK_OUT: "KICK · O5 分回 O1",
+  REJECT_SLIP_PASS: "SLIP · 拒绝后分 O5",
+  UNDER: "UNDER · D1 走下方",
+  TAG_REJECT: "TAG · D5 协防拒绝",
 };
 
 function clonePlan(plan: TeamPlan): TeamPlan {
@@ -79,6 +82,8 @@ function takeSnapshot(simulation: PnrSimulation): UiSnapshot {
       mismatch: { ...simulation.world.mismatch },
       seal: { ...simulation.world.seal },
       postCatch: { ...simulation.world.postCatch },
+      under: { ...simulation.world.under },
+      reject: { ...simulation.world.reject },
       ball: {
         ...simulation.world.ball,
         pos: { ...simulation.world.ball.pos },
@@ -132,6 +137,15 @@ function lowSideDigPoint(o5: Vec2, o1: Vec2): Vec2 {
   const useA = sideA.x * hoop.x + sideA.y * hoop.y >= sideB.x * hoop.x + sideB.y * hoop.y;
   const lowSide = useA ? sideA : sideB;
   return { x: o5.x + lowSide.x * 0.82, y: o5.y + lowSide.y * 0.82 };
+}
+
+function towardHoop(from: Vec2, distance: number): Vec2 {
+  const delta = { x: COURT.hoop.x - from.x, y: COURT.hoop.y - from.y };
+  const magnitude = Math.hypot(delta.x, delta.y) || 1;
+  return {
+    x: from.x + (delta.x / magnitude) * distance,
+    y: from.y + (delta.y / magnitude) * distance,
+  };
 }
 
 function drawCourt(
@@ -310,7 +324,8 @@ function drawCourt(
   } else if (
     simulation.offensePlan.id === "ATTACK_BIG" ||
     simulation.offensePlan.id === "FEED_SEAL" ||
-    simulation.offensePlan.id === "RESET_MISMATCH"
+    simulation.offensePlan.id === "RESET_MISMATCH" ||
+    simulation.offensePlan.id === "REJECT_SLIP_PASS"
   ) {
     drawPlanPath(
       [o1Now, simulation.offensePlan.primaryTarget ?? COURT.hoop],
@@ -320,18 +335,36 @@ function drawCourt(
       [o5Now, simulation.offensePlan.secondaryTarget ?? o5Now],
       "rgba(255, 194, 139, 0.9)",
     );
-    if (simulation.offensePlan.id === "FEED_SEAL") {
+    if (
+      simulation.offensePlan.id === "FEED_SEAL" ||
+      simulation.offensePlan.id === "REJECT_SLIP_PASS"
+    ) {
       drawPlanPath([o1Now, o5Now], "rgba(247, 220, 142, 0.82)");
     }
   } else {
     drawPlanPath(
       simulation.offensePlan.id === "REJECT_LEFT"
-        ? [o1Now, COURT.rejectGate, { x: 4.46, y: 1.08 }]
+        ? simulation.offensePlan.primaryTarget
+          ? [o1Now, simulation.offensePlan.primaryTarget]
+          : [o1Now, COURT.rejectGate, { x: 4.46, y: 1.08 }]
         : [o1Now, ...remainingArc, COURT.useGate, { x: 5.72, y: 1.05 }],
       "#fff3df",
     );
   }
-  if (simulation.defensePlan.id === "SWITCH") {
+  if (simulation.defensePlan.id === "UNDER") {
+    drawPlanPath([current.D1, towardHoop(current.O5, 0.86), current.O1], "rgba(46, 91, 181, 0.78)");
+    drawPlanPath([current.D5, towardHoop(current.O5, 0.42)], "rgba(46, 91, 181, 0.78)");
+  } else if (simulation.defensePlan.id === "TAG_REJECT") {
+    drawPlanPath([current.D1, current.O1], "rgba(46, 91, 181, 0.78)");
+    drawPlanPath(
+      [
+        current.D5,
+        { x: current.O5.x - 0.58, y: current.O5.y + 0.78 },
+        simulation.defensePlan.primaryTarget ?? current.O1,
+      ],
+      "rgba(46, 91, 181, 0.78)",
+    );
+  } else if (simulation.defensePlan.id === "SWITCH") {
     drawPlanPath([current.D1, current.O5], "rgba(46, 91, 181, 0.78)");
     drawPlanPath([current.D5, current.O1], "rgba(46, 91, 181, 0.78)");
   } else if (simulation.defensePlan.id === "STAY_HOME") {
@@ -772,6 +805,8 @@ export default function PnrLab() {
   const mismatch = snapshot.world.mismatch;
   const seal = snapshot.world.seal;
   const postCatch = snapshot.world.postCatch;
+  const under = snapshot.world.under;
+  const reject = snapshot.world.reject;
   const ball = snapshot.world.ball;
   const causalGateOpen = facts.pnrLinked && (facts.contact || facts.routeExposure);
   const planCommitRemaining = Math.max(
@@ -938,6 +973,8 @@ export default function PnrLab() {
               "handoff-strip " +
               (facts.matchupExchange
                 ? "is-complete"
+                : under.active || snapshot.defensePlan.id === "UNDER"
+                  ? "is-stay"
                 : facts.ballHandlerClearedScreen
                   ? "is-exchanging"
                   : snapshot.world.branch === "reject"
@@ -949,13 +986,19 @@ export default function PnrLab() {
             <strong>
               {facts.matchupExchange
                 ? "换防完成 · D1→O5 / D5→O1"
+                : under.active || snapshot.defensePlan.id === "UNDER"
+                  ? "走下方覆盖 · 保持 D1→O1 / D5→O5"
                 : facts.ballHandlerClearedScreen
                   ? "O1 已越肩 · 正在交换对位"
                   : snapshot.world.branch === "reject"
                     ? "拒绝掩护 · 保持 D1→O1 / D5→O5"
                     : "等待 O1 通过 O5 外肩"}
             </strong>
-            <p>越肩事实在下一决策边界消费；换防前后始终保持四名球员单一角色所有权。</p>
+            <p>
+              {under.active || snapshot.defensePlan.id === "UNDER"
+                ? "D1 从 O5 与篮筐之间绕行，D5 留守 O5；越肩不会自动触发对位交换。"
+                : "越肩事实在下一决策边界消费；换防前后始终保持四名球员单一角色所有权。"}
+            </p>
           </div>
           <div
             className={
@@ -987,6 +1030,52 @@ export default function PnrLab() {
               {mismatch.active
                 ? `O1–D5 ${mismatch.o1D5Separation.toFixed(2)}m · D5 篮筐侧 ${mismatch.d5GoalSide ? "是" : "否"} · ${mismatch.elapsed.toFixed(2)}s`
                 : "只读取公开坐标与速度；不读取任一球队隐藏计划。"}
+              </p>
+            </div>
+          <div
+            className={
+              "post-catch-strip coverage-strip " +
+              (ball.kind === "slip_pass" && ball.outcome === "caught"
+                ? "is-open"
+                : ball.kind === "slip_pass" && ball.inFlight
+                  ? "is-open"
+                  : reject.passWindow || under.pullupWindow
+                    ? "is-open"
+                    : reject.d5HelpCommitted
+                      ? "is-help"
+                      : under.active
+                        ? "is-under"
+                        : reject.d1Beaten
+                          ? "is-active"
+                          : "")
+            }
+          >
+            <span>{reject.active ? "REJECT HELP / SLIP" : "SCREEN COVERAGE"}</span>
+            <strong>
+              {ball.kind === "slip_pass" && ball.outcome === "caught"
+                ? "O5 已合法接到拒绝后分球"
+                : ball.kind === "slip_pass" && ball.inFlight
+                  ? "顺下分球飞行中 · 球权为空"
+                  : reject.passWindow
+                    ? "O1–O5 顺下传球窗已开放"
+                    : reject.d5HelpCommitted
+                      ? "D5 已真实协防 · O1 读取 O5 顺下"
+                      : reject.d1Beaten
+                        ? "D1 已落后拒绝路线 · 等待 D5 响应"
+                        : under.pullupWindow
+                          ? "D1 尚未追回 · O1 获得急停处理窗"
+                          : under.active
+                            ? "D1 走下方 · D5 短收并留守 O5"
+                            : snapshot.defensePlan.id === "UNDER"
+                              ? "D1 已准备从掩护下方通过"
+                              : "等待公开覆盖或拒绝协防事实"}
+            </strong>
+            <p>
+              {reject.active
+                ? `强踩右资格 ${reject.helpEligible ? "是" : "否"} · D5–O1 ${reject.d5O1Distance.toFixed(2)}m · D5–O5 ${reject.d5O5Distance.toFixed(2)}m · 净空 ${reject.passLaneClearance.toFixed(2)}m`
+                : under.active || snapshot.defensePlan.id === "UNDER"
+                  ? `D1–O1 ${under.d1O1Distance.toFixed(2)}m · D5–O5 ${under.d5O5Distance.toFixed(2)}m · 原子换防 ${facts.matchupExchange ? "是" : "否"}`
+                  : "覆盖判断只读取公开起手深度、局部距离、速度与已解析事件。"}
             </p>
           </div>
           <div
@@ -1007,9 +1096,21 @@ export default function PnrLab() {
                           : "")
             }
           >
-            <span>{ball.kind === "kick_out" ? "KICKOUT PASS" : "SEAL / LOB ENTRY"}</span>
+            <span>
+              {ball.kind === "kick_out"
+                ? "KICKOUT PASS"
+                : ball.kind === "slip_pass"
+                  ? "REJECT SLIP PASS"
+                  : "SEAL / LOB ENTRY"}
+            </span>
             <strong>
-              {ball.kind === "kick_out" && ball.outcome === "caught"
+              {ball.kind === "slip_pass" && ball.outcome === "caught"
+                ? "O5 合法接到拒绝后分球"
+                : ball.kind === "slip_pass" && ball.outcome === "deflected"
+                  ? "防守先触球 · 顺下分球被破坏"
+                  : ball.kind === "slip_pass" && ball.inFlight
+                    ? "O1 已分球 · 顺下传球飞行中"
+              : ball.kind === "kick_out" && ball.outcome === "caught"
                 ? "O1 合法接到回传"
                 : ball.kind === "kick_out" && ball.outcome === "deflected"
                   ? "防守先触球 · 回传被破坏"
@@ -1038,6 +1139,8 @@ export default function PnrLab() {
             <p>
               {ball.kind === "kick_out"
                 ? `回传净空 ${postCatch.kickoutLaneClearance.toFixed(2)}m · D5–O5 ${postCatch.d5O5Distance.toFixed(2)}m · 飞行时球权为空`
+                : ball.kind === "slip_pass"
+                  ? `顺下净空 ${reject.passLaneClearance.toFixed(2)}m · D5–O1 ${reject.d5O1Distance.toFixed(2)}m · 飞行时球权为空`
                 : seal.established
                 ? `绕前 ETA ${seal.frontEta.toFixed(3)}s / 高吊 ${seal.entryFlightTime.toFixed(3)}s · ${seal.frontFeasible ? "可行" : "否决"} · 反应 ${seal.frontReactionDelay.toFixed(2)}s`
                 : seal.active
@@ -1155,7 +1258,7 @@ export default function PnrLab() {
         <div className="architecture-node offense">
           <span>01 · HIDDEN FROM DEFENSE</span>
           <strong>进攻队级规划器</strong>
-          <p>攻击大个 / 喂卡位候选、硬约束、短推演、O1/O5 角色承诺</p>
+          <p>攻击大个 / 喂卡位 / 拒绝后顺下候选、硬约束、短推演、O1/O5 角色承诺</p>
         </div>
         <div className="public-channel">
           <span>公开坐标 · 速度 · 球权 · 已解析事件</span>
@@ -1164,7 +1267,7 @@ export default function PnrLab() {
         <div className="architecture-node neutral">
           <span>FIXED 16.67ms</span>
           <strong>中立世界与运动解析器</strong>
-          <p>运动、边界、接触、传球飞行、先触球、球权与错位结果；不替球队选方案</p>
+          <p>运动、边界、接触、覆盖几何、传球飞行、先触球与球权；不替球队选方案</p>
         </div>
         <div className="public-channel reverse">
           <span>下一决策边界才可消费</span>
@@ -1173,14 +1276,14 @@ export default function PnrLab() {
         <div className="architecture-node defense">
           <span>03 · HIDDEN FROM OFFENSE</span>
           <strong>防守队级规划器</strong>
-          <p>换防、遏制与 D1 绕前候选、硬约束、短推演、D1/D5 原子角色交换</p>
+          <p>换防、走下方、拒绝协防与遏制候选、硬约束、短推演、D1/D5 单一角色责任</p>
         </div>
       </section>
 
       <footer>
         <p>
           <strong>可替换假设：</strong>
-          半场坐标近似米制；O1 给低位 O5 使用可越过近身 D5 的固定速度高吊球，D1 仍可绕前破坏；不模拟球的真实高度、投篮、犯规或更多战术。
+          半场坐标近似米制；高吊、回传与拒绝后顺下分球使用固定二维速度，防守仍可按局部触球顺序破坏；不模拟球的真实高度、投篮、犯规或更多人数。
         </p>
         <span>Observer UI · disposable shell</span>
       </footer>
