@@ -21,6 +21,13 @@ import {
   makeG01Config,
   scanG01SpeedBoundary,
 } from "../lib/pnr-generalization.ts";
+import {
+  G02_BASE_CONFIG,
+  G02_DELAYS,
+  createG02Replay,
+  makeG02Config,
+  scanG02FrontReactionBoundary,
+} from "../lib/pnr-g02-generalization.ts";
 
 function runToStop(cue = "neutral") {
   const simulation = new PnrSimulation({ cue });
@@ -181,6 +188,165 @@ test("all G01 samples preserve the core world and causality invariants", () => {
         assert.ok(record.tick >= event.availableAtTick);
       }
     }
+  }
+});
+
+test("G02 scans 17 reaction delays twice and finds one real-touch boundary", () => {
+  const audit = scanG02FrontReactionBoundary();
+
+  assert.deepEqual(
+    G02_DELAYS,
+    Array.from({ length: 17 }, (_, index) => Number((index * 0.01).toFixed(2))),
+  );
+  assert.equal(audit.rows.length, 17);
+  assert.equal(audit.deterministic, true);
+  assert.equal(audit.monotonic, true);
+  assert.equal(audit.passed, true);
+  assert.deepEqual(audit.failureIntervals, []);
+  assert.deepEqual(audit.transitions, [
+    {
+      fromDelay: 0.01,
+      fromOutcome: "D1_DEFLECTION",
+      toDelay: 0.02,
+      toOutcome: "O5_CATCH",
+    },
+  ]);
+  assert.equal(audit.lastDeflectionDelay, 0.01);
+  assert.equal(audit.firstCatchDelay, 0.02);
+  assert.deepEqual(
+    audit.replays.map(({ id, delay, outcome }) => ({ id, delay, outcome })),
+    [
+      { id: "last-deflection", delay: 0.01, outcome: "D1_DEFLECTION" },
+      { id: "first-catch", delay: 0.02, outcome: "O5_CATCH" },
+      { id: "stable-catch", delay: 0.12, outcome: "O5_CATCH" },
+    ],
+  );
+  assert.deepEqual(
+    audit.rows.map((row) => row.outcome),
+    [
+      "D1_DEFLECTION",
+      "D1_DEFLECTION",
+      ...Array.from({ length: 15 }, () => "O5_CATCH"),
+    ],
+  );
+
+  for (const row of audit.rows) {
+    const d1Wins = row.outcome === "D1_DEFLECTION";
+    assert.equal(row.deterministic, true);
+    assert.equal(row.sealTick, 179);
+    assert.equal(row.decisionTick, 180);
+    assert.equal(row.launchTick, 181);
+    assert.equal(row.touchTick, d1Wins ? 191 : 192);
+    assert.equal(row.frontEta, Number((0.189 + row.delay).toFixed(3)));
+    assert.equal(row.entryFlightTime, 0.21);
+    assert.equal(row.frontFeasible, d1Wins);
+    assert.equal(row.front.feasible, d1Wins);
+    assert.equal(row.backside.feasible, !d1Wins);
+    assert.equal(row.chosen, d1Wins ? "FRONT_SEAL" : "BACKSIDE_CONTEST");
+    assert.equal(row.actualFirstToucher, d1Wins ? "D1" : "O5");
+    assert.equal(row.ballOutcome, d1Wins ? "deflected" : "caught");
+    assert.equal(row.front.score, d1Wins ? 5.228 : null);
+    assert.equal(row.backside.score, d1Wins ? null : 5.048);
+    assert.equal(row.localTouch, true);
+    assert.ok(row.touchDistance <= row.touchThreshold + 1e-9);
+    assert.ok(row.flightSteps >= 10);
+    assert.ok(row.flightDistance > 1.4);
+    assert.ok(row.maxBallStep <= 9.2 * FIXED_DT + 0.007);
+    assert.ok(row.launchTick < row.touchTick);
+    if (d1Wins) {
+      assert.deepEqual(row.front.vetoes, []);
+      assert.ok(row.backside.vetoes.some((veto) => veto.includes("绕前窗口仍然充足")));
+    } else {
+      assert.deepEqual(row.backside.vetoes, []);
+      assert.ok(row.front.vetoes.some((veto) => veto.includes("合法绕前 ETA")));
+    }
+  }
+
+  for (const delay of G02_DELAYS) {
+    const { d1FrontReactionDelay, ...fixed } = makeG02Config(delay);
+    const { d1FrontReactionDelay: baselineDelay, ...baseline } = G02_BASE_CONFIG;
+    assert.equal(d1FrontReactionDelay, delay);
+    assert.equal(baselineDelay, 0);
+    assert.deepEqual(fixed, baseline);
+  }
+});
+
+test("G02 outcomes come from full local ball paths while core invariants stay legal", () => {
+  for (const delay of G02_DELAYS) {
+    const simulation = createG02Replay(delay);
+    let sawFlight = false;
+    let previousBall = { ...simulation.world.ball.pos };
+    let maxBallStep = 0;
+
+    for (let index = 0; index < 600 && !simulation.world.terminal; index += 1) {
+      const roles = simulation.getRoles();
+      assert.equal(roles.length, 4);
+      assert.deepEqual(
+        [...new Set(roles.map((role) => role.playerId))].sort(),
+        [...PLAYER_IDS].sort(),
+      );
+
+      simulation.step();
+      const ballStep = Math.hypot(
+        simulation.world.ball.pos.x - previousBall.x,
+        simulation.world.ball.pos.y - previousBall.y,
+      );
+      maxBallStep = Math.max(maxBallStep, ballStep);
+      previousBall = { ...simulation.world.ball.pos };
+      if (simulation.world.ball.inFlight) {
+        sawFlight = true;
+        assert.equal(simulation.world.ballOwner, null);
+        assert.equal(simulation.world.ball.kind, "lob_entry");
+      }
+      assert.equal(
+        simulation.world.time,
+        Math.round(simulation.world.tick * FIXED_DT * 1e6) / 1e6,
+      );
+      assert.ok(simulation.world.lastStepMaxDisplacement <= 0.15);
+      if (simulation.world.facts.impeded) {
+        assert.ok(simulation.world.facts.contact || simulation.world.facts.routeExposure);
+      }
+      for (const id of PLAYER_IDS) {
+        const player = simulation.world.players[id];
+        assert.ok(player.pos.x >= player.radius - 1e-9);
+        assert.ok(player.pos.x <= COURT.width - player.radius + 1e-9);
+        assert.ok(player.pos.y >= player.radius - 1e-9);
+        assert.ok(player.pos.y <= COURT.height - player.radius + 1e-9);
+      }
+    }
+
+    const seal = simulation.eventLog.find((event) => event.type === "seal_established");
+    const launch = simulation.eventLog.find((event) => event.type === "pass_launched");
+    const touch = simulation.eventLog.find(
+      (event) => event.type === "pass_caught" || event.type === "pass_denied",
+    );
+    const decision = simulation.planningLog.find(
+      (record) => record.team === "defense" && seal && record.triggerEventIds.includes(seal.id),
+    );
+    assert.ok(seal);
+    assert.ok(decision);
+    assert.ok(launch);
+    assert.ok(touch);
+    assert.ok(decision.tick >= seal.availableAtTick);
+    assert.ok(launch.tick > decision.tick);
+    assert.ok(touch.tick > launch.tick);
+    assert.equal(sawFlight, true);
+    assert.ok(maxBallStep <= 9.2 * FIXED_DT + 0.007);
+
+    const owner = simulation.world.ballOwner;
+    assert.ok(owner === "D1" || owner === "O5");
+    const toucher = simulation.world.players[owner];
+    const localLimit =
+      toucher.radius +
+      simulation.world.ball.radius +
+      (owner === "O5" ? 0.075 : 0.045) +
+      1e-9;
+    assert.ok(
+      Math.hypot(
+        simulation.world.ball.pos.x - toucher.pos.x,
+        simulation.world.ball.pos.y - toucher.pos.y,
+      ) <= localLimit,
+    );
   }
 });
 

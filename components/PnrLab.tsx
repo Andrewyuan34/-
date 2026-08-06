@@ -30,6 +30,14 @@ import {
   type G01ReplayId,
   type G01ScanRow,
 } from "@/lib/pnr-generalization";
+import {
+  G02_BASE_CONFIG,
+  createG02Replay,
+  scanG02FrontReactionBoundary,
+  type G02AuditResult,
+  type G02ReplayId,
+  type G02ScanRow,
+} from "@/lib/pnr-g02-generalization";
 
 interface UiSnapshot {
   world: WorldState;
@@ -42,7 +50,7 @@ interface UiSnapshot {
 
 type PositionMap = Record<PlayerId, Vec2>;
 type TrailMap = Record<PlayerId, Vec2[]>;
-type LabMode = "scenarios" | "g01";
+type LabMode = "scenarios" | "g01" | "g02";
 
 const PLAYER_COLORS: Record<PlayerId, string> = {
   O1: "#ff6b35",
@@ -74,6 +82,7 @@ const PLAN_SHORT: Record<string, string> = {
 };
 
 const G01_AUDIT = scanG01SpeedBoundary();
+const G02_AUDIT = scanG02FrontReactionBoundary();
 
 function clonePlan(plan: TeamPlan): TeamPlan {
   return {
@@ -840,10 +849,184 @@ function G01ProbePanel({
   );
 }
 
+function G02CandidateDetail({
+  label,
+  candidate,
+}: {
+  label: string;
+  candidate: G02ScanRow["front"];
+}) {
+  return (
+    <div className={"g01-candidate " + (candidate.feasible ? "is-feasible" : "is-vetoed")}>
+      <span>{label}</span>
+      <strong>
+        {candidate.feasible && candidate.score !== null
+          ? candidate.score.toFixed(3)
+          : "VETO"}
+      </strong>
+      <small>
+        {candidate.vetoes.length > 0
+          ? candidate.vetoes.join(" · ")
+          : `可行 · ${candidate.evidence.slice(1, 3).join(" · ")}`}
+      </small>
+    </div>
+  );
+}
+
+function G02ProbePanel({
+  audit,
+  activeReplayId,
+  onReplaySelect,
+}: {
+  audit: G02AuditResult;
+  activeReplayId: G02ReplayId;
+  onReplaySelect: (id: G02ReplayId) => void;
+}) {
+  const activeReplay =
+    audit.replays.find((replay) => replay.id === activeReplayId) ?? audit.replays[0];
+  const activeRow = audit.rows.find((row) => row.delay === activeReplay?.delay) ?? audit.rows[0];
+  const outcomeLabel = (row: G02ScanRow): string =>
+    row.outcome === "D1_DEFLECTION" ? "D1 真实先触球" : "O5 真实接球";
+
+  return (
+    <section className="g01-probe g02-probe" aria-label="G02 D1 绕前反应时间边界泛化探针">
+      <div className="g01-probe__head">
+        <div>
+          <span className="eyebrow">G02 · GENERALIZATION PROBE · NOT A SAVED SCENARIO</span>
+          <h2>{audit.label}</h2>
+          <p>
+            neutral · seed {G02_BASE_CONFIG.seed} · O1 {G02_BASE_CONFIG.o1MaxSpeed.toFixed(2)}m/s ·
+            仅改变 D1 绕前反应成本
+          </p>
+        </div>
+        <span className={"g01-status " + (audit.passed ? "is-pass" : "is-fail")}>
+          {audit.passed ? "AUDIT PASS" : "AUDIT FAIL"}
+        </span>
+      </div>
+
+      <div className="g01-summary">
+        <div>
+          <span>扫描</span>
+          <strong>0.00–0.16s</strong>
+          <small>步长 0.01 · 17 样本 × 2 次</small>
+        </div>
+        <div>
+          <span>最后破坏</span>
+          <strong>{audit.lastDeflectionDelay?.toFixed(2) ?? "—"}s · D1</strong>
+          <small>合法绕前后真实先触球</small>
+        </div>
+        <div>
+          <span>首次接球</span>
+          <strong>{audit.firstCatchDelay?.toFixed(2) ?? "—"}s · O5</strong>
+          <small>D1 留在身后，O5 走完球路</small>
+        </div>
+        <div>
+          <span>稳定性</span>
+          <strong>{audit.deterministic && audit.monotonic ? "逐 tick 复现 · 无回跳" : "发现失败区间"}</strong>
+          <small>ETA 不直接指定最终触球者</small>
+        </div>
+      </div>
+
+      <div className="g01-replays" aria-label="G02 三个可播放回放">
+        {audit.replays.map((replay) => (
+          <button
+            className={replay.id === activeReplayId ? "is-active" : ""}
+            key={replay.id}
+            onClick={() => onReplaySelect(replay.id)}
+            type="button"
+            aria-pressed={replay.id === activeReplayId}
+          >
+            <span>{replay.label}</span>
+            <strong>{replay.delay.toFixed(2)}s · {replay.outcome === "D1_DEFLECTION" ? "D1 破坏" : "O5 接球"}</strong>
+            <small>{replay.note}</small>
+          </button>
+        ))}
+      </div>
+
+      <div className="g01-table-wrap">
+        <table className="g01-table g02-table">
+          <thead>
+            <tr>
+              <th>delay</th>
+              <th>防守方案</th>
+              <th>绕前 ETA</th>
+              <th>高吊 ETA</th>
+              <th>FRONT</th>
+              <th>BEHIND</th>
+              <th>实际第一触球</th>
+              <th>关键 ticks</th>
+              <th>复现</th>
+            </tr>
+          </thead>
+          <tbody>
+            {audit.rows.map((row) => (
+              <tr
+                className={row.delay === activeRow.delay ? "is-selected" : ""}
+                key={row.delay.toFixed(2)}
+              >
+                <td>{row.delay.toFixed(2)}s</td>
+                <td>
+                  <span className={"g01-plan " + (row.chosen === "FRONT_SEAL" ? "front" : "behind")}>
+                    {row.chosen}
+                  </span>
+                </td>
+                <td>{row.frontEta.toFixed(3)}s</td>
+                <td>{row.entryFlightTime.toFixed(3)}s</td>
+                <td title={row.front.vetoes.join(" · ")}>{row.front.score?.toFixed(3) ?? "VETO"}</td>
+                <td title={row.backside.vetoes.join(" · ")}>{row.backside.score?.toFixed(3) ?? "VETO"}</td>
+                <td><span className={"g02-touch " + (row.actualFirstToucher === "D1" ? "defense" : "offense")}>{outcomeLabel(row)}</span></td>
+                <td>{row.sealTick} → {row.decisionTick} → {row.launchTick} → {row.touchTick}</td>
+                <td>{row.deterministic ? "2 / 2" : "失败"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="g02-path-read">
+        <div>
+          <span className="eyebrow">REAL BALL PATH · {activeRow.delay.toFixed(2)}s</span>
+          <strong>
+            seal {activeRow.sealTick} → decision {activeRow.decisionTick} → launch {activeRow.launchTick} → touch {activeRow.touchTick}
+          </strong>
+        </div>
+        <p>
+          {outcomeLabel(activeRow)} · 飞行 {activeRow.flightSteps} ticks / {activeRow.flightDistance.toFixed(2)}m ·
+          触球距离 {activeRow.touchDistance.toFixed(3)}m ≤ 局部阈值 {activeRow.touchThreshold.toFixed(3)}m
+        </p>
+      </div>
+
+      <div className="g01-active-read">
+        <div>
+          <span className="eyebrow">FIRST FRONT READ · DELAY {activeRow.delay.toFixed(2)}s</span>
+          <strong>
+            绕前 ETA {activeRow.frontEta.toFixed(3)}s / 高吊 ETA {activeRow.entryFlightTime.toFixed(3)}s ·
+            可行 {activeRow.frontFeasible ? "是" : "否"}
+          </strong>
+          <small>ETA 只约束防守方案；实际结果仍由后续逐 tick 球路与局部触球解析。</small>
+        </div>
+        <G02CandidateDetail label="FRONT_SEAL" candidate={activeRow.front} />
+        <G02CandidateDetail label="BACKSIDE_CONTEST" candidate={activeRow.backside} />
+      </div>
+
+      {!audit.passed && (
+        <div className="g01-failures">
+          {audit.failureIntervals.map((failure) => (
+            <p key={`${failure.fromDelay}-${failure.toDelay}-${failure.reason}`}>
+              {failure.fromDelay.toFixed(2)}–{failure.toDelay.toFixed(2)}s · {failure.reason}
+            </p>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
 export default function PnrLab() {
   const [labMode, setLabMode] = useState<LabMode>("scenarios");
   const [scenarioId, setScenarioId] = useState<ScenarioId>(DEFAULT_SCENARIO_ID);
   const [g01ReplayId, setG01ReplayId] = useState<G01ReplayId>("stable-high");
+  const [g02ReplayId, setG02ReplayId] = useState<G02ReplayId>("last-deflection");
   const [initialSimulation] = useState(
     () => new PnrSimulation(makeScenarioConfig(DEFAULT_SCENARIO_ID)),
   );
@@ -890,13 +1073,29 @@ export default function PnrLab() {
     installSimulation(createG01Replay(replay.speed), shouldPlay);
   }, [installSimulation]);
 
+  const replaceG02Simulation = useCallback((nextReplayId: G02ReplayId, shouldPlay: boolean): void => {
+    const replay = G02_AUDIT.replays.find((candidate) => candidate.id === nextReplayId);
+    if (!replay) throw new Error(`Unknown G02 replay: ${nextReplayId}`);
+    installSimulation(createG02Replay(replay.delay), shouldPlay);
+  }, [installSimulation]);
+
   const replaceCurrentSimulation = useCallback((shouldPlay: boolean): void => {
     if (labMode === "g01") {
       replaceG01Simulation(g01ReplayId, shouldPlay);
+    } else if (labMode === "g02") {
+      replaceG02Simulation(g02ReplayId, shouldPlay);
     } else {
       replaceSimulation(scenarioId, shouldPlay);
     }
-  }, [g01ReplayId, labMode, replaceG01Simulation, replaceSimulation, scenarioId]);
+  }, [
+    g01ReplayId,
+    g02ReplayId,
+    labMode,
+    replaceG01Simulation,
+    replaceG02Simulation,
+    replaceSimulation,
+    scenarioId,
+  ]);
 
   useEffect(() => {
     let frameId = 0;
@@ -996,6 +1195,8 @@ export default function PnrLab() {
   const currentScenario = getPnrScenario(scenarioId);
   const currentG01Replay =
     G01_AUDIT.replays.find((replay) => replay.id === g01ReplayId) ?? G01_AUDIT.replays[0];
+  const currentG02Replay =
+    G02_AUDIT.replays.find((replay) => replay.id === g02ReplayId) ?? G02_AUDIT.replays[0];
 
   return (
     <main className="lab-shell">
@@ -1011,6 +1212,7 @@ export default function PnrLab() {
           <span><i className="signal-dot" /> 固定步长 {(FIXED_DT * 1000).toFixed(2)}ms</span>
           <span>SEED 17</span>
           {labMode === "g01" && <span>G01 · O1 {currentG01Replay.speed.toFixed(2)}m/s</span>}
+          {labMode === "g02" && <span>G02 · D1 delay {currentG02Replay.delay.toFixed(2)}s</span>}
           <span>HASH {snapshot.world.stateHash}</span>
         </div>
       </header>
@@ -1037,6 +1239,17 @@ export default function PnrLab() {
           type="button"
         >
           G01 · 速度边界探针
+        </button>
+        <button
+          aria-pressed={labMode === "g02"}
+          className={labMode === "g02" ? "is-active" : ""}
+          onClick={() => {
+            setLabMode("g02");
+            replaceG02Simulation(g02ReplayId, false);
+          }}
+          type="button"
+        >
+          G02 · 绕前时间边界
         </button>
       </nav>
 
@@ -1066,13 +1279,22 @@ export default function PnrLab() {
             <small aria-live="polite">{currentScenario.expected}</small>
           </label>
         </section>
-      ) : (
+      ) : labMode === "g01" ? (
         <G01ProbePanel
           activeReplayId={g01ReplayId}
           audit={G01_AUDIT}
           onReplaySelect={(nextReplayId) => {
             setG01ReplayId(nextReplayId);
             replaceG01Simulation(nextReplayId, false);
+          }}
+        />
+      ) : (
+        <G02ProbePanel
+          activeReplayId={g02ReplayId}
+          audit={G02_AUDIT}
+          onReplaySelect={(nextReplayId) => {
+            setG02ReplayId(nextReplayId);
+            replaceG02Simulation(nextReplayId, false);
           }}
         />
       )}

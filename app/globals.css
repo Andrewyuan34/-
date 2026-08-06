@@ -227,6 +227,11 @@ select:focus-visible {
   padding: 15px;
 }
 
+.g02-probe {
+  background: linear-gradient(140deg, rgba(79, 140, 255, 0.065), rgba(255, 159, 84, 0.025) 52%, rgba(255, 255, 255, 0.018));
+  border-color: rgba(79, 140, 255, 0.26);
+}
+
 .g01-probe__head {
   align-items: start;
   display: flex;
@@ -333,6 +338,16 @@ select:focus-visible {
   box-shadow: inset 3px 0 #ff9f54;
 }
 
+.g02-probe .g01-replays button:hover,
+.g02-probe .g01-replays button.is-active {
+  border-color: rgba(79, 140, 255, 0.58);
+}
+
+.g02-probe .g01-replays button.is-active {
+  background: rgba(79, 140, 255, 0.085);
+  box-shadow: inset 3px 0 #4f8cff;
+}
+
 .g01-replays span {
   color: #91a1ad;
   font-family: var(--font-geist-mono), monospace;
@@ -409,6 +424,68 @@ select:focus-visible {
   color: #cce774;
 }
 
+.g01-plan.front {
+  background: rgba(79, 140, 255, 0.12);
+  color: #8cb5ff;
+}
+
+.g01-plan.behind {
+  background: rgba(255, 159, 84, 0.1);
+  color: #ffb176;
+}
+
+.g02-table {
+  min-width: 1040px;
+}
+
+.g02-touch {
+  border-radius: 999px;
+  display: inline-block;
+  font-size: 8px;
+  font-weight: 900;
+  padding: 3px 6px;
+}
+
+.g02-touch.defense {
+  background: rgba(79, 140, 255, 0.12);
+  color: #8cb5ff;
+}
+
+.g02-touch.offense {
+  background: rgba(255, 159, 84, 0.1);
+  color: #ffb176;
+}
+
+.g02-path-read {
+  align-items: center;
+  background: rgba(8, 14, 20, 0.7);
+  border: 1px solid rgba(79, 140, 255, 0.2);
+  border-radius: 9px;
+  display: grid;
+  gap: 14px;
+  grid-template-columns: minmax(260px, 0.8fr) 1fr;
+  padding: 9px 10px;
+}
+
+.g02-path-read > div {
+  display: grid;
+  gap: 4px;
+}
+
+.g02-path-read strong {
+  color: #e3e9ee;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 9px;
+}
+
+.g02-path-read p {
+  color: #8193a1;
+  font-size: 9px;
+  line-height: 1.45;
+  margin: 0;
+  text-align: right;
+}
+
 .g01-active-read {
   align-items: stretch;
   display: grid;
@@ -430,6 +507,12 @@ select:focus-visible {
   color: #e7ebe4;
   font-size: 10px;
   line-height: 1.45;
+}
+
+.g01-active-read > div:first-child small {
+  color: #728390;
+  font-size: 8px;
+  line-height: 1.4;
 }
 
 .g01-candidate {
@@ -1575,7 +1658,7 @@ footer > span {
 
   .catalog-tabs {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: repeat(3, 1fr);
   }
 
   .catalog-tabs button {
@@ -1603,6 +1686,15 @@ footer > span {
 
   .g01-active-read > div:first-child {
     grid-column: auto;
+  }
+
+  .g02-path-read {
+    gap: 7px;
+    grid-template-columns: 1fr;
+  }
+
+  .g02-path-read p {
+    text-align: left;
   }
 
   .scenario-picker {
