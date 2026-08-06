@@ -14,6 +14,13 @@ import {
   PNR_SCENARIOS,
   makeScenarioConfig,
 } from "../lib/pnr-scenarios.ts";
+import {
+  G01_BASE_CONFIG,
+  G01_SPEEDS,
+  createG01Replay,
+  makeG01Config,
+  scanG01SpeedBoundary,
+} from "../lib/pnr-generalization.ts";
 
 function runToStop(cue = "neutral") {
   const simulation = new PnrSimulation({ cue });
@@ -61,6 +68,119 @@ test("saved scenario presets are unique, deterministic, and contain inputs rathe
     assert.equal(first.world.branch, scenario.checkpoint.branch);
     assert.equal(first.world.terminal?.reason, scenario.checkpoint.terminalReason);
     assert.equal(first.world.ballOwner, scenario.checkpoint.ballOwner);
+  }
+});
+
+test("G01 scans 19 speed-only samples twice and finds one deterministic decision boundary", () => {
+  const audit = scanG01SpeedBoundary();
+
+  assert.deepEqual(
+    G01_SPEEDS,
+    Array.from({ length: 19 }, (_, index) => Number((3.72 + index * 0.02).toFixed(2))),
+  );
+  assert.equal(audit.rows.length, 19);
+  assert.equal(audit.deterministic, true);
+  assert.equal(audit.monotonic, true);
+  assert.equal(audit.passed, true);
+  assert.equal(audit.failureIntervals.length, 0);
+  assert.deepEqual(audit.transitions, [
+    {
+      fromSpeed: 3.98,
+      fromPlan: "FEED_SEAL",
+      toSpeed: 4,
+      toPlan: "ATTACK_BIG",
+    },
+  ]);
+  assert.equal(audit.lastFeedSpeed, 3.98);
+  assert.equal(audit.firstAttackSpeed, 4);
+  assert.deepEqual(
+    audit.replays.map(({ id, speed, chosen }) => ({ id, speed, chosen })),
+    [
+      { id: "stable-high", speed: 4.08, chosen: "ATTACK_BIG" },
+      { id: "last-feed", speed: 3.98, chosen: "FEED_SEAL" },
+      { id: "first-attack", speed: 4, chosen: "ATTACK_BIG" },
+    ],
+  );
+
+  const expectedChoices = [
+    ...Array.from({ length: 14 }, () => "FEED_SEAL"),
+    ...Array.from({ length: 5 }, () => "ATTACK_BIG"),
+  ];
+  assert.deepEqual(audit.rows.map((row) => row.chosen), expectedChoices);
+  for (const row of audit.rows) {
+    assert.equal(row.deterministic, true);
+    assert.equal(row.decisionTick, 145);
+    assert.ok(row.decisionTick > row.switchTick);
+    assert.equal(row.attack.feasible, true);
+    assert.equal(row.feed.feasible, true);
+    assert.deepEqual(row.attack.vetoes, []);
+    assert.deepEqual(row.feed.vetoes, []);
+    assert.ok(row.attack.score !== null);
+    assert.ok(row.feed.score !== null);
+    assert.equal(row.chosen, row.attack.score > row.feed.score ? "ATTACK_BIG" : "FEED_SEAL");
+  }
+
+  const fixedInputs = G01_SPEEDS.map((speed) => {
+    const { o1MaxSpeed, ...fixed } = makeG01Config(speed);
+    assert.equal(o1MaxSpeed, speed);
+    return fixed;
+  });
+  for (const fixed of fixedInputs) {
+    const { o1MaxSpeed, ...baseline } = G01_BASE_CONFIG;
+    assert.equal(o1MaxSpeed, 3.72);
+    assert.deepEqual(fixed, baseline);
+  }
+});
+
+test("all G01 samples preserve the core world and causality invariants", () => {
+  for (const speed of G01_SPEEDS) {
+    const simulation = createG01Replay(speed);
+    for (let index = 0; index < 600 && !simulation.world.terminal; index += 1) {
+      const roles = simulation.getRoles();
+      assert.equal(roles.length, 4);
+      assert.deepEqual(
+        [...new Set(roles.map((role) => role.playerId))].sort(),
+        [...PLAYER_IDS].sort(),
+      );
+
+      simulation.step();
+      assert.equal(
+        simulation.world.time,
+        Math.round(simulation.world.tick * FIXED_DT * 1e6) / 1e6,
+      );
+      assert.ok(simulation.world.lastStepMaxDisplacement <= 0.15);
+      assert.equal(simulation.world.ball.inFlight, simulation.world.ballOwner === null);
+      if (simulation.world.facts.impeded) {
+        assert.ok(simulation.world.facts.contact || simulation.world.facts.routeExposure);
+      }
+      for (const id of PLAYER_IDS) {
+        const player = simulation.world.players[id];
+        assert.ok(player.pos.x >= player.radius - 1e-9);
+        assert.ok(player.pos.x <= COURT.width - player.radius + 1e-9);
+        assert.ok(player.pos.y >= player.radius - 1e-9);
+        assert.ok(player.pos.y <= COURT.height - player.radius + 1e-9);
+      }
+    }
+
+    const switchEvent = simulation.eventLog.find((event) => event.type === "switch_completed");
+    const decision = simulation.planningLog.find(
+      (record) =>
+        record.team === "offense" &&
+        switchEvent &&
+        record.triggerEventIds.includes(switchEvent.id),
+    );
+    assert.ok(switchEvent);
+    assert.ok(decision);
+    assert.ok(decision.tick >= switchEvent.availableAtTick);
+
+    const eventsById = new Map(simulation.eventLog.map((event) => [event.id, event]));
+    for (const record of simulation.planningLog) {
+      for (const id of record.triggerEventIds) {
+        const event = eventsById.get(id);
+        assert.ok(event);
+        assert.ok(record.tick >= event.availableAtTick);
+      }
+    }
   }
 });
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   COURT,
   FIXED_DT,
@@ -22,6 +22,14 @@ import {
   makeScenarioConfig,
   type ScenarioId,
 } from "@/lib/pnr-scenarios";
+import {
+  G01_BASE_CONFIG,
+  createG01Replay,
+  scanG01SpeedBoundary,
+  type G01AuditResult,
+  type G01ReplayId,
+  type G01ScanRow,
+} from "@/lib/pnr-generalization";
 
 interface UiSnapshot {
   world: WorldState;
@@ -34,6 +42,7 @@ interface UiSnapshot {
 
 type PositionMap = Record<PlayerId, Vec2>;
 type TrailMap = Record<PlayerId, Vec2[]>;
+type LabMode = "scenarios" | "g01";
 
 const PLAYER_COLORS: Record<PlayerId, string> = {
   O1: "#ff6b35",
@@ -63,6 +72,8 @@ const PLAN_SHORT: Record<string, string> = {
   UNDER: "UNDER · D1 走下方",
   TAG_REJECT: "TAG · D5 协防拒绝",
 };
+
+const G01_AUDIT = scanG01SpeedBoundary();
 
 function clonePlan(plan: TeamPlan): TeamPlan {
   return {
@@ -679,8 +690,160 @@ function EventItem({ event }: { event: WorldEvent }) {
   );
 }
 
+function G01CandidateDetail({
+  label,
+  candidate,
+}: {
+  label: string;
+  candidate: G01ScanRow["attack"];
+}) {
+  return (
+    <div className={"g01-candidate " + (candidate.feasible ? "is-feasible" : "is-vetoed")}>
+      <span>{label}</span>
+      <strong>
+        {candidate.feasible && candidate.score !== null
+          ? candidate.score.toFixed(3)
+          : "VETO"}
+      </strong>
+      <small>
+        {candidate.vetoes.length > 0
+          ? candidate.vetoes.join(" · ")
+          : `可行 · ${candidate.evidence.slice(1, 3).join(" · ")}`}
+      </small>
+    </div>
+  );
+}
+
+function G01ProbePanel({
+  audit,
+  activeReplayId,
+  onReplaySelect,
+}: {
+  audit: G01AuditResult;
+  activeReplayId: G01ReplayId;
+  onReplaySelect: (id: G01ReplayId) => void;
+}) {
+  const activeReplay =
+    audit.replays.find((replay) => replay.id === activeReplayId) ?? audit.replays[0];
+  const activeRow = audit.rows.find((row) => row.speed === activeReplay?.speed) ?? audit.rows[0];
+
+  return (
+    <section className="g01-probe" aria-label="G01 O1 速度决策边界泛化探针">
+      <div className="g01-probe__head">
+        <div>
+          <span className="eyebrow">G01 · GENERALIZATION PROBE · NOT A SAVED SCENARIO</span>
+          <h2>{audit.label}</h2>
+          <p>
+            neutral · seed {G01_BASE_CONFIG.seed} · D1 绕前反应 {G01_BASE_CONFIG.d1FrontReactionDelay.toFixed(2)}s ·
+            仅改变 O1 最高速度
+          </p>
+        </div>
+        <span className={"g01-status " + (audit.passed ? "is-pass" : "is-fail")}>
+          {audit.passed ? "AUDIT PASS" : "AUDIT FAIL"}
+        </span>
+      </div>
+
+      <div className="g01-summary">
+        <div>
+          <span>扫描</span>
+          <strong>3.72–4.08 m/s</strong>
+          <small>步长 0.02 · 19 样本 × 2 次</small>
+        </div>
+        <div>
+          <span>低侧</span>
+          <strong>≤ {audit.lastFeedSpeed?.toFixed(2) ?? "—"} FEED_SEAL</strong>
+          <small>最后一个喂 O5 样本</small>
+        </div>
+        <div>
+          <span>高侧</span>
+          <strong>≥ {audit.firstAttackSpeed?.toFixed(2) ?? "—"} ATTACK_BIG</strong>
+          <small>第一个攻击 D5 样本</small>
+        </div>
+        <div>
+          <span>稳定性</span>
+          <strong>{audit.deterministic && audit.monotonic ? "逐 tick 复现 · 无回跳" : "发现失败区间"}</strong>
+          <small>决策只在换防事件后的边界读取</small>
+        </div>
+      </div>
+
+      <div className="g01-replays" aria-label="G01 三个可播放回放">
+        {audit.replays.map((replay) => (
+          <button
+            className={replay.id === activeReplayId ? "is-active" : ""}
+            key={replay.id}
+            onClick={() => onReplaySelect(replay.id)}
+            type="button"
+            aria-pressed={replay.id === activeReplayId}
+          >
+            <span>{replay.label}</span>
+            <strong>{replay.speed.toFixed(2)} m/s · {replay.chosen}</strong>
+            <small>{replay.note}</small>
+          </button>
+        ))}
+      </div>
+
+      <div className="g01-table-wrap">
+        <table className="g01-table">
+          <thead>
+            <tr>
+              <th>O1 m/s</th>
+              <th>首次换防后选择</th>
+              <th>ATTACK_BIG</th>
+              <th>FEED_SEAL</th>
+              <th>可行性 / 否决</th>
+              <th>tick</th>
+              <th>复现</th>
+            </tr>
+          </thead>
+          <tbody>
+            {audit.rows.map((row) => (
+              <tr
+                className={row.speed === activeRow.speed ? "is-selected" : ""}
+                key={row.speed.toFixed(2)}
+              >
+                <td>{row.speed.toFixed(2)}</td>
+                <td><span className={"g01-plan " + (row.chosen === "ATTACK_BIG" ? "attack" : "feed")}>{row.chosen}</span></td>
+                <td>{row.attack.score?.toFixed(3) ?? "VETO"}</td>
+                <td>{row.feed.score?.toFixed(3) ?? "VETO"}</td>
+                <td title={[...row.attack.vetoes, ...row.feed.vetoes].join(" · ")}>
+                  {row.attack.feasible && row.feed.feasible
+                    ? "A / F 均可行"
+                    : [...row.attack.vetoes, ...row.feed.vetoes].join(" · ")}
+                </td>
+                <td>{row.decisionTick}</td>
+                <td>{row.deterministic ? "2 / 2" : "失败"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="g01-active-read">
+        <div>
+          <span className="eyebrow">SELECTED REPLAY · {activeRow.speed.toFixed(2)}m/s</span>
+          <strong>{activeRow.chosen} · switch tick {activeRow.switchTick} → decision tick {activeRow.decisionTick}</strong>
+        </div>
+        <G01CandidateDetail label="ATTACK_BIG" candidate={activeRow.attack} />
+        <G01CandidateDetail label="FEED_SEAL" candidate={activeRow.feed} />
+      </div>
+
+      {!audit.passed && (
+        <div className="g01-failures">
+          {audit.failureIntervals.map((failure) => (
+            <p key={`${failure.fromSpeed}-${failure.toSpeed}-${failure.reason}`}>
+              {failure.fromSpeed.toFixed(2)}–{failure.toSpeed.toFixed(2)}m/s · {failure.reason}
+            </p>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
 export default function PnrLab() {
+  const [labMode, setLabMode] = useState<LabMode>("scenarios");
   const [scenarioId, setScenarioId] = useState<ScenarioId>(DEFAULT_SCENARIO_ID);
+  const [g01ReplayId, setG01ReplayId] = useState<G01ReplayId>("stable-high");
   const [initialSimulation] = useState(
     () => new PnrSimulation(makeScenarioConfig(DEFAULT_SCENARIO_ID)),
   );
@@ -707,8 +870,7 @@ export default function PnrLab() {
     setSnapshot(takeSnapshot(simulationRef.current));
   };
 
-  const replaceSimulation = (nextScenarioId: ScenarioId, shouldPlay: boolean): void => {
-    const simulation = new PnrSimulation(makeScenarioConfig(nextScenarioId));
+  const installSimulation = useCallback((simulation: PnrSimulation, shouldPlay: boolean): void => {
     simulationRef.current = simulation;
     previousRef.current = copyPositions(simulation);
     currentRef.current = copyPositions(simulation);
@@ -716,7 +878,25 @@ export default function PnrLab() {
     playingRef.current = shouldPlay;
     setPlaying(shouldPlay);
     setSnapshot(takeSnapshot(simulation));
-  };
+  }, []);
+
+  const replaceSimulation = useCallback((nextScenarioId: ScenarioId, shouldPlay: boolean): void => {
+    installSimulation(new PnrSimulation(makeScenarioConfig(nextScenarioId)), shouldPlay);
+  }, [installSimulation]);
+
+  const replaceG01Simulation = useCallback((nextReplayId: G01ReplayId, shouldPlay: boolean): void => {
+    const replay = G01_AUDIT.replays.find((candidate) => candidate.id === nextReplayId);
+    if (!replay) throw new Error(`Unknown G01 replay: ${nextReplayId}`);
+    installSimulation(createG01Replay(replay.speed), shouldPlay);
+  }, [installSimulation]);
+
+  const replaceCurrentSimulation = useCallback((shouldPlay: boolean): void => {
+    if (labMode === "g01") {
+      replaceG01Simulation(g01ReplayId, shouldPlay);
+    } else {
+      replaceSimulation(scenarioId, shouldPlay);
+    }
+  }, [g01ReplayId, labMode, replaceG01Simulation, replaceSimulation, scenarioId]);
 
   useEffect(() => {
     let frameId = 0;
@@ -785,12 +965,12 @@ export default function PnrLab() {
         });
       }
       if (event.key.toLowerCase() === "r") {
-        replaceSimulation(scenarioId, true);
+        replaceCurrentSimulation(true);
       }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [scenarioId]);
+  }, [replaceCurrentSimulation]);
 
   const latestOffense = useMemo(
     () => [...snapshot.planning].reverse().find((record) => record.team === "offense"),
@@ -814,6 +994,8 @@ export default function PnrLab() {
     Math.min(snapshot.offensePlan.commitUntil, snapshot.defensePlan.commitUntil) - snapshot.world.time,
   );
   const currentScenario = getPnrScenario(scenarioId);
+  const currentG01Replay =
+    G01_AUDIT.replays.find((replay) => replay.id === g01ReplayId) ?? G01_AUDIT.replays[0];
 
   return (
     <main className="lab-shell">
@@ -828,35 +1010,72 @@ export default function PnrLab() {
         <div className="run-signals" aria-label="运行状态">
           <span><i className="signal-dot" /> 固定步长 {(FIXED_DT * 1000).toFixed(2)}ms</span>
           <span>SEED 17</span>
+          {labMode === "g01" && <span>G01 · O1 {currentG01Replay.speed.toFixed(2)}m/s</span>}
           <span>HASH {snapshot.world.stateHash}</span>
         </div>
       </header>
 
-      <section className="read-selector" aria-label="挡拆场景目录">
-        <div className="scenario-copy">
-          <span className="eyebrow">SCENARIO CATALOG · {PNR_SCENARIOS.length} SAVED</span>
-          <p>{currentScenario.question}</p>
-        </div>
-        <label className="scenario-picker" htmlFor="scenario-select">
-          <span>选择保留局面</span>
-          <select
-            id="scenario-select"
-            value={scenarioId}
-            onChange={(event) => {
-              const nextScenario = getPnrScenario(event.currentTarget.value);
-              setScenarioId(nextScenario.id);
-              replaceSimulation(nextScenario.id, false);
-            }}
-          >
-            {PNR_SCENARIOS.map((scenario) => (
-              <option key={scenario.id} value={scenario.id}>
-                {scenario.code} · {scenario.label}
-              </option>
-            ))}
-          </select>
-          <small aria-live="polite">{currentScenario.expected}</small>
-        </label>
-      </section>
+      <nav className="catalog-tabs" aria-label="场景与泛化探针">
+        <button
+          aria-pressed={labMode === "scenarios"}
+          className={labMode === "scenarios" ? "is-active" : ""}
+          onClick={() => {
+            setLabMode("scenarios");
+            replaceSimulation(scenarioId, false);
+          }}
+          type="button"
+        >
+          S01–S08 · 保留场景
+        </button>
+        <button
+          aria-pressed={labMode === "g01"}
+          className={labMode === "g01" ? "is-active" : ""}
+          onClick={() => {
+            setLabMode("g01");
+            replaceG01Simulation(g01ReplayId, false);
+          }}
+          type="button"
+        >
+          G01 · 速度边界探针
+        </button>
+      </nav>
+
+      {labMode === "scenarios" ? (
+        <section className="read-selector" aria-label="挡拆场景目录">
+          <div className="scenario-copy">
+            <span className="eyebrow">SCENARIO CATALOG · {PNR_SCENARIOS.length} SAVED</span>
+            <p>{currentScenario.question}</p>
+          </div>
+          <label className="scenario-picker" htmlFor="scenario-select">
+            <span>选择保留局面</span>
+            <select
+              id="scenario-select"
+              value={scenarioId}
+              onChange={(event) => {
+                const nextScenario = getPnrScenario(event.currentTarget.value);
+                setScenarioId(nextScenario.id);
+                replaceSimulation(nextScenario.id, false);
+              }}
+            >
+              {PNR_SCENARIOS.map((scenario) => (
+                <option key={scenario.id} value={scenario.id}>
+                  {scenario.code} · {scenario.label}
+                </option>
+              ))}
+            </select>
+            <small aria-live="polite">{currentScenario.expected}</small>
+          </label>
+        </section>
+      ) : (
+        <G01ProbePanel
+          activeReplayId={g01ReplayId}
+          audit={G01_AUDIT}
+          onReplaySelect={(nextReplayId) => {
+            setG01ReplayId(nextReplayId);
+            replaceG01Simulation(nextReplayId, false);
+          }}
+        />
+      )}
 
       <div className="workspace-grid">
         <section className="court-panel">
@@ -883,7 +1102,7 @@ export default function PnrLab() {
                 <span className="eyebrow">LOOP CLOSED · {snapshot.world.time.toFixed(2)}s</span>
                 <strong>{snapshot.world.terminal.label}</strong>
                 <p>世界已冻结在第一个判断点；重放可验证相同输入是否复现。</p>
-                <button onClick={() => replaceSimulation(scenarioId, true)} type="button">从头重放</button>
+                <button onClick={() => replaceCurrentSimulation(true)} type="button">从头重放</button>
               </div>
             )}
           </div>
@@ -902,8 +1121,8 @@ export default function PnrLab() {
               <span>{playing ? "Ⅱ" : "▶"}</span>
               {playing ? "暂停" : "播放"}
             </button>
-            <button onClick={() => replaceSimulation(scenarioId, true)} type="button">↻ 重放</button>
-            <button onClick={() => replaceSimulation(scenarioId, false)} type="button">重置</button>
+            <button onClick={() => replaceCurrentSimulation(true)} type="button">↻ 重放</button>
+            <button onClick={() => replaceCurrentSimulation(false)} type="button">重置</button>
             <button
               disabled={playing || Boolean(snapshot.world.terminal)}
               onClick={() => {
