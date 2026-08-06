@@ -28,6 +28,13 @@ import {
   makeG02Config,
   scanG02FrontReactionBoundary,
 } from "../lib/pnr-g02-generalization.ts";
+import {
+  G03_BASE_CONFIG,
+  G03_DELAYS,
+  createG03Replay,
+  makeG03Config,
+  scanG03PostCatchRecoveryBoundary,
+} from "../lib/pnr-g03-generalization.ts";
 
 function runToStop(cue = "neutral") {
   const simulation = new PnrSimulation({ cue });
@@ -347,6 +354,291 @@ test("G02 outcomes come from full local ball paths while core invariants stay le
         simulation.world.ball.pos.y - toucher.pos.y,
       ) <= localLimit,
     );
+  }
+});
+
+test("G03 scans 21 post-catch recovery delays with one stable defense and outcome boundary", () => {
+  const audit = scanG03PostCatchRecoveryBoundary();
+
+  assert.deepEqual(
+    G03_DELAYS,
+    Array.from({ length: 21 }, (_, index) => Number((index * 0.03).toFixed(2))),
+  );
+  assert.equal(audit.rows.length, 21);
+  assert.equal(audit.deterministic, true);
+  assert.equal(audit.sharedCatchPrefix, true);
+  assert.equal(audit.commonCatchTick, 192);
+  assert.equal(audit.commonStopRule, "FIRST_FINISH_WINDOW_OR_KICKOUT_CAUGHT");
+  assert.equal(audit.monotonic, true);
+  assert.equal(audit.passed, true);
+  assert.deepEqual(audit.failureIntervals, []);
+  assert.deepEqual(audit.transitions, [
+    {
+      fromDelay: 0.18,
+      fromPlan: "STAY_HOME_POST",
+      toDelay: 0.21,
+      toPlan: "DIG_POST",
+    },
+  ]);
+  assert.equal(audit.lastStayDelay, 0.18);
+  assert.equal(audit.firstDigDelay, 0.21);
+  assert.deepEqual(audit.transitionBandDelays, []);
+  assert.deepEqual(
+    audit.replays.map(({ id, delay, phase, outcome }) => ({ id, delay, phase, outcome })),
+    [
+      {
+        id: "last-stay",
+        delay: 0.18,
+        phase: "STAY_FINISH",
+        outcome: "POST_FINISH_WINDOW",
+      },
+      {
+        id: "first-dig",
+        delay: 0.21,
+        phase: "DIG_HELP_KICKOUT",
+        outcome: "KICKOUT_CAUGHT",
+      },
+      {
+        id: "s05-baseline",
+        delay: 0.36,
+        phase: "DIG_HELP_KICKOUT",
+        outcome: "KICKOUT_CAUGHT",
+      },
+    ],
+  );
+  assert.deepEqual(
+    audit.rows.map((row) => row.firstDefense.chosen),
+    [
+      ...Array.from({ length: 7 }, () => "STAY_HOME_POST"),
+      ...Array.from({ length: 14 }, () => "DIG_POST"),
+    ],
+  );
+  assert.deepEqual(
+    audit.rows.map((row) => row.outcome),
+    [
+      ...Array.from({ length: 7 }, () => "POST_FINISH_WINDOW"),
+      ...Array.from({ length: 14 }, () => "KICKOUT_CAUGHT"),
+    ],
+  );
+
+  for (const row of audit.rows) {
+    const dig = row.delay >= 0.21;
+    assert.equal(row.deterministic, true);
+    assert.equal(row.catchTick, 192);
+    assert.equal(row.firstDefense.tick, 193);
+    assert.equal(row.firstOffense.tick, 193);
+    assert.equal(row.firstOffense.chosen, "POST_FINISH");
+    assert.equal(row.firstOffense.helpObserved, false);
+    assert.equal(row.firstOffense.kickout.feasible, false);
+    assert.ok(row.firstOffense.kickout.vetoes.some((veto) => veto.includes("禁止预判")));
+    assert.equal(row.postCatchAttackTick, 197);
+    assert.equal(row.firstDefense.stay.feasible, true);
+    assert.equal(row.firstDefense.dig.feasible, true);
+    assert.equal(row.firstDefense.d1RoleCode, "rear_contest_post");
+    assert.equal(
+      row.firstDefense.d1PursuitState,
+      row.delay === 0 ? "CHASE_READY" : "RECOVERING_REAR_CONTEST",
+    );
+    assert.equal(row.recoveryReadyTime, Number((row.recoveryReadyTick / 60).toFixed(6)));
+    assert.equal(row.firstDefense.chosen, dig ? "DIG_POST" : "STAY_HOME_POST");
+    assert.ok(
+      dig
+        ? row.firstDefense.dig.score > row.firstDefense.stay.score
+        : row.firstDefense.stay.score > row.firstDefense.dig.score,
+    );
+    assert.equal(
+      row.defenseDecisions.every((decision) => decision.chosen === row.firstDefense.chosen),
+      true,
+    );
+
+    if (dig) {
+      assert.equal(row.phase, "DIG_HELP_KICKOUT");
+      assert.equal(row.digDecided, true);
+      assert.equal(row.helpCommitted, true);
+      assert.equal(row.helpWasLocal, true);
+      assert.equal(row.helpCommittedTick, 231);
+      assert.ok(row.helpD5O5Distance <= 1.12);
+      assert.ok(row.helpD5O1Distance >= 1.28);
+      assert.equal(row.kickoutChosen, true);
+      assert.equal(row.kickoutAfterHelp, true);
+      assert.equal(row.firstKickoutDecisionTick, 232);
+      assert.equal(row.kickoutWindowTick, 258);
+      assert.equal(row.kickoutLaunchedTick, 260);
+      assert.equal(row.kickoutCaughtTick, 273);
+      assert.equal(row.finishWindowTick, null);
+      assert.equal(row.stopTick, 273);
+      assert.deepEqual(
+        row.offenseDecisions.map(({ tick, chosen, helpObserved }) => ({ tick, chosen, helpObserved })),
+        [
+          { tick: 193, chosen: "POST_FINISH", helpObserved: false },
+          { tick: 225, chosen: "POST_FINISH", helpObserved: false },
+          { tick: 232, chosen: "KICK_OUT", helpObserved: true },
+          { tick: 259, chosen: "KICK_OUT", helpObserved: true },
+        ],
+      );
+    } else {
+      assert.equal(row.phase, "STAY_FINISH");
+      assert.equal(row.digDecided, false);
+      assert.equal(row.helpCommitted, false);
+      assert.equal(row.kickoutChosen, false);
+      assert.equal(row.helpCommittedTick, null);
+      assert.equal(row.firstKickoutDecisionTick, null);
+      assert.equal(row.finishWindowTick, 228);
+      assert.equal(row.kickoutCaughtTick, null);
+      assert.equal(row.stopTick, 228);
+    }
+  }
+
+  for (const delay of G03_DELAYS) {
+    const { d1PostCatchRecoveryDelay, ...fixed } = makeG03Config(delay);
+    const { d1PostCatchRecoveryDelay: baselineDelay, ...baseline } = G03_BASE_CONFIG;
+    assert.equal(d1PostCatchRecoveryDelay, delay);
+    assert.equal(baselineDelay, 0);
+    assert.deepEqual(fixed, baseline);
+    assert.equal(fixed.horizon, "post_catch_resolution");
+  }
+});
+
+test("G03 keeps DIG intent, real D5 help, and observed KICK_OUT as three causal layers", () => {
+  for (const delay of G03_DELAYS) {
+    const simulation = createG03Replay(delay);
+    const offenseObservation = createPlannerObservation(simulation.world, "offense", []);
+    const defenseObservation = createPlannerObservation(simulation.world, "defense", []);
+    assert.equal(Object.hasOwn(offenseObservation, "horizon"), false);
+    assert.equal(Object.hasOwn(defenseObservation, "horizon"), false);
+    assert.equal(JSON.stringify(offenseObservation).includes("defensePlan"), false);
+    assert.equal(JSON.stringify(defenseObservation).includes("offensePlan"), false);
+
+    let previousBall = { ...simulation.world.ball.pos };
+    let sawKickoutFlight = false;
+    let maxKickoutStep = 0;
+    let helpSnapshot = null;
+
+    for (let index = 0; index < 600 && !simulation.world.terminal; index += 1) {
+      const roles = simulation.getRoles();
+      assert.equal(roles.length, 4);
+      assert.deepEqual(
+        [...new Set(roles.map((role) => role.playerId))].sort(),
+        [...PLAYER_IDS].sort(),
+      );
+      for (const role of roles) {
+        assert.equal(
+          role.owner,
+          role.playerId.startsWith("O") ? "offense-planner" : "defense-planner",
+        );
+      }
+
+      simulation.step();
+      const ballStep = Math.hypot(
+        simulation.world.ball.pos.x - previousBall.x,
+        simulation.world.ball.pos.y - previousBall.y,
+      );
+      previousBall = { ...simulation.world.ball.pos };
+      if (simulation.world.ball.inFlight) {
+        assert.equal(simulation.world.ballOwner, null);
+      }
+      if (simulation.world.ball.inFlight && simulation.world.ball.kind === "kick_out") {
+        sawKickoutFlight = true;
+        maxKickoutStep = Math.max(maxKickoutStep, ballStep);
+      }
+      if (!helpSnapshot && simulation.eventLog.some((event) => event.type === "help_committed")) {
+        helpSnapshot = {
+          d5O1Distance: simulation.world.postCatch.d5O1Distance,
+          d5O5Distance: simulation.world.postCatch.d5O5Distance,
+        };
+      }
+
+      assert.equal(
+        simulation.world.time,
+        Math.round(simulation.world.tick * FIXED_DT * 1e6) / 1e6,
+      );
+      assert.ok(simulation.world.lastStepMaxDisplacement <= 0.15);
+      if (simulation.world.facts.impeded) {
+        assert.ok(simulation.world.facts.contact || simulation.world.facts.routeExposure);
+      }
+      for (const id of PLAYER_IDS) {
+        const player = simulation.world.players[id];
+        assert.ok(player.pos.x >= player.radius - 1e-9);
+        assert.ok(player.pos.x <= COURT.width - player.radius + 1e-9);
+        assert.ok(player.pos.y >= player.radius - 1e-9);
+        assert.ok(player.pos.y <= COURT.height - player.radius + 1e-9);
+      }
+    }
+
+    const catchEvent = simulation.eventLog.find((event) => event.type === "pass_caught");
+    const help = simulation.eventLog.find((event) => event.type === "help_committed");
+    const finish = simulation.eventLog.find((event) => event.type === "finish_window");
+    const launch = simulation.eventLog.find((event) => event.type === "kickout_launched");
+    const caught = simulation.eventLog.find((event) => event.type === "kickout_caught");
+    const firstDefense = simulation.planningLog.find(
+      (record) =>
+        record.team === "defense" &&
+        catchEvent &&
+        record.tick >= catchEvent.availableAtTick &&
+        (record.chosen === "STAY_HOME_POST" || record.chosen === "DIG_POST"),
+    );
+    const firstKickout = simulation.planningLog.find(
+      (record) => record.team === "offense" && record.chosen === "KICK_OUT",
+    );
+    assert.ok(catchEvent);
+    assert.ok(firstDefense);
+    assert.equal(catchEvent.tick, 192);
+    assert.equal(firstDefense.tick, 193);
+
+    const eventsById = new Map(simulation.eventLog.map((event) => [event.id, event]));
+    for (const record of simulation.planningLog) {
+      for (const id of record.triggerEventIds) {
+        const source = eventsById.get(id);
+        assert.ok(source);
+        assert.ok(record.tick >= source.availableAtTick);
+      }
+    }
+
+    if (delay < 0.21) {
+      assert.equal(firstDefense.chosen, "STAY_HOME_POST");
+      assert.ok(finish);
+      assert.equal(help, undefined);
+      assert.equal(firstKickout, undefined);
+      assert.equal(simulation.world.terminal?.reason, "post_catch_finish_window");
+      assert.equal(simulation.world.ballOwner, "O5");
+      assert.equal(sawKickoutFlight, false);
+    } else {
+      assert.equal(firstDefense.chosen, "DIG_POST");
+      assert.ok(help);
+      assert.ok(helpSnapshot);
+      assert.ok(helpSnapshot.d5O5Distance <= 1.12);
+      assert.ok(helpSnapshot.d5O1Distance >= 1.28);
+      assert.ok(firstKickout);
+      assert.ok(firstKickout.tick >= help.availableAtTick);
+      assert.equal(
+        simulation.planningLog.some(
+          (record) =>
+            record.team === "offense" &&
+            record.chosen === "KICK_OUT" &&
+            record.tick < help.availableAtTick,
+        ),
+        false,
+      );
+      assert.ok(launch);
+      assert.ok(caught);
+      assert.ok(help.tick < launch.tick);
+      assert.ok(launch.tick < caught.tick);
+      assert.equal(finish, undefined);
+      assert.equal(sawKickoutFlight, true);
+      assert.ok(maxKickoutStep <= 13.6 * FIXED_DT + 0.007);
+      assert.equal(simulation.world.terminal?.reason, "post_catch_kickout_caught");
+      assert.equal(simulation.world.ballOwner, "O1");
+      assert.equal(simulation.world.ball.outcome, "caught");
+      const o1 = simulation.world.players.O1;
+      assert.ok(
+        Math.hypot(
+          simulation.world.ball.pos.x - o1.pos.x,
+          simulation.world.ball.pos.y - o1.pos.y,
+        ) <= o1.radius + simulation.world.ball.radius + 0.075 + 1e-9,
+      );
+    }
+    assert.equal(simulation.eventLog.some((event) => event.type.includes("shot")), false);
+    assert.equal(simulation.eventLog.some((event) => event.type === "pass_denied"), false);
   }
 });
 

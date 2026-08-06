@@ -38,6 +38,15 @@ import {
   type G02ReplayId,
   type G02ScanRow,
 } from "@/lib/pnr-g02-generalization";
+import {
+  G03_BASE_CONFIG,
+  createG03Replay,
+  scanG03PostCatchRecoveryBoundary,
+  type G03AuditResult,
+  type G03CandidateAudit,
+  type G03ReplayId,
+  type G03ScanRow,
+} from "@/lib/pnr-g03-generalization";
 
 interface UiSnapshot {
   world: WorldState;
@@ -50,7 +59,7 @@ interface UiSnapshot {
 
 type PositionMap = Record<PlayerId, Vec2>;
 type TrailMap = Record<PlayerId, Vec2[]>;
-type LabMode = "scenarios" | "g01" | "g02";
+type LabMode = "scenarios" | "g01" | "g02" | "g03";
 
 const PLAYER_COLORS: Record<PlayerId, string> = {
   O1: "#ff6b35",
@@ -83,6 +92,7 @@ const PLAN_SHORT: Record<string, string> = {
 
 const G01_AUDIT = scanG01SpeedBoundary();
 const G02_AUDIT = scanG02FrontReactionBoundary();
+const G03_AUDIT = scanG03PostCatchRecoveryBoundary();
 
 function clonePlan(plan: TeamPlan): TeamPlan {
   return {
@@ -1022,11 +1032,241 @@ function G02ProbePanel({
   );
 }
 
+function G03CandidateDetail({
+  label,
+  candidate,
+}: {
+  label: string;
+  candidate: G03CandidateAudit;
+}) {
+  return (
+    <div className={"g01-candidate " + (candidate.feasible ? "is-feasible" : "is-vetoed")}>
+      <span>{label}</span>
+      <strong>
+        {candidate.feasible && candidate.score !== null
+          ? candidate.score.toFixed(3)
+          : "VETO"}
+      </strong>
+      <small>
+        {candidate.vetoes.length > 0
+          ? candidate.vetoes.join(" · ")
+          : `可行 · ${candidate.evidence.slice(0, 2).join(" · ")}`}
+      </small>
+    </div>
+  );
+}
+
+function G03ProbePanel({
+  audit,
+  activeReplayId,
+  onReplaySelect,
+}: {
+  audit: G03AuditResult;
+  activeReplayId: G03ReplayId;
+  onReplaySelect: (id: G03ReplayId) => void;
+}) {
+  const activeReplay =
+    audit.replays.find((replay) => replay.id === activeReplayId) ?? audit.replays[0];
+  const activeRow = audit.rows.find((row) => row.delay === activeReplay?.delay) ?? audit.rows[0];
+  const firstKickoutDecision = activeRow.offenseDecisions.find(
+    (decision) => decision.chosen === "KICK_OUT",
+  );
+  const outcomeLabel = (row: G03ScanRow): string =>
+    row.outcome === "POST_FINISH_WINDOW" ? "O5 终结窗口" : "O1 接回传";
+
+  return (
+    <section className="g01-probe g03-probe" aria-label="G03 D1 接球后恢复时间边界泛化探针">
+      <div className="g01-probe__head">
+        <div>
+          <span className="eyebrow">G03 · GENERALIZATION PROBE · NOT A SAVED SCENARIO</span>
+          <h2>{audit.label}</h2>
+          <p>
+            neutral · seed {G03_BASE_CONFIG.seed} · O1 {G03_BASE_CONFIG.o1MaxSpeed.toFixed(2)}m/s ·
+            绕前反应 {G03_BASE_CONFIG.d1FrontReactionDelay.toFixed(2)}s · 仅改变 D1 接球后恢复成本
+          </p>
+        </div>
+        <span className={"g01-status " + (audit.passed ? "is-pass" : "is-fail")}>
+          {audit.passed ? "AUDIT PASS" : "AUDIT FAIL"}
+        </span>
+      </div>
+
+      <div className="g01-summary">
+        <div>
+          <span>扫描</span>
+          <strong>0.00–0.60s</strong>
+          <small>步长 0.03 · 21 样本 × 2 次</small>
+        </div>
+        <div>
+          <span>防守边界</span>
+          <strong>{audit.lastStayDelay?.toFixed(2) ?? "—"}s → {audit.firstDigDelay?.toFixed(2) ?? "—"}s</strong>
+          <small>STAY_HOME_POST → DIG_POST</small>
+        </div>
+        <div>
+          <span>共同前缀 / 停止</span>
+          <strong>{audit.sharedCatchPrefix ? `接球 tick ${audit.commonCatchTick}` : "前缀失败"}</strong>
+          <small>首次 finish window 或 kickout catch</small>
+        </div>
+        <div>
+          <span>稳定性</span>
+          <strong>{audit.deterministic && audit.monotonic ? "逐 tick 复现 · 无回跳" : "发现失败区间"}</strong>
+          <small>{audit.transitionBandDelays.length === 0 ? "本次扫描无中间过渡带" : `${audit.transitionBandDelays.length} 个真实帮助未形成样本`}</small>
+        </div>
+      </div>
+
+      <div className="g01-replays" aria-label="G03 三个可播放回放">
+        {audit.replays.map((replay) => (
+          <button
+            className={replay.id === activeReplayId ? "is-active" : ""}
+            key={replay.id}
+            onClick={() => onReplaySelect(replay.id)}
+            type="button"
+            aria-pressed={replay.id === activeReplayId}
+          >
+            <span>{replay.label}</span>
+            <strong>{replay.delay.toFixed(2)}s · {replay.phase}</strong>
+            <small>{replay.note}</small>
+          </button>
+        ))}
+      </div>
+
+      <div className="g01-table-wrap">
+        <table className="g01-table g03-table">
+          <thead>
+            <tr>
+              <th>delay</th>
+              <th>D1 恢复 / 状态</th>
+              <th>首次防守</th>
+              <th>STAY</th>
+              <th>DIG</th>
+              <th>真实帮助</th>
+              <th>进攻重规划</th>
+              <th>结果</th>
+              <th>关键 ticks</th>
+              <th>复现</th>
+            </tr>
+          </thead>
+          <tbody>
+            {audit.rows.map((row) => (
+              <tr
+                className={row.delay === activeRow.delay ? "is-selected" : ""}
+                key={row.delay.toFixed(2)}
+              >
+                <td>{row.delay.toFixed(2)}s</td>
+                <td>
+                  t{row.recoveryReadyTick} · {row.firstDefense.d1PursuitState === "CHASE_READY" ? "可全速追防" : "身后恢复中"}
+                </td>
+                <td>
+                  <span className={"g01-plan " + (row.firstDefense.chosen === "DIG_POST" ? "dig" : "stay")}>
+                    {row.firstDefense.chosen}
+                  </span>
+                </td>
+                <td title={row.firstDefense.stay.vetoes.join(" · ")}>{row.firstDefense.stay.score?.toFixed(3) ?? "VETO"}</td>
+                <td title={row.firstDefense.dig.vetoes.join(" · ")}>{row.firstDefense.dig.score?.toFixed(3) ?? "VETO"}</td>
+                <td>
+                  {row.helpCommitted
+                    ? `是 · t${row.helpCommittedTick} · ${row.helpD5O5Distance?.toFixed(3)}m`
+                    : row.digDecided
+                      ? "DIG 已选 / 尚未到位"
+                      : "否 · D5 留守"}
+                </td>
+                <td title={row.offenseDecisions.map((decision) => `t${decision.tick} ${decision.chosen} · help ${decision.helpObserved ? "yes" : "no"}`).join(" → ")}>
+                  {row.offenseDecisions.map((decision) => `t${decision.tick} ${decision.chosen === "POST_FINISH" ? "FINISH" : "KICK"}`).join(" → ")}
+                </td>
+                <td>{outcomeLabel(row)}</td>
+                <td>
+                  catch {row.catchTick} → {row.helpCommittedTick ? `help ${row.helpCommittedTick} → ` : ""}
+                  stop {row.stopTick}
+                </td>
+                <td>{row.deterministic ? "2 / 2" : "失败"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="g03-layer-strip" aria-label="G03 三层独立因果状态">
+        <div className="g03-layer is-active">
+          <span>01 · 防守意图</span>
+          <strong>{activeRow.firstDefense.chosen}</strong>
+          <small>
+            tick {activeRow.firstDefense.tick} · D1 {activeRow.firstDefense.d1PursuitState === "CHASE_READY" ? "恢复就绪" : `还需 ${activeRow.firstDefense.d1RecoveryReadyIn.toFixed(3)}s`}
+          </small>
+        </div>
+        <i>→</i>
+        <div className={"g03-layer " + (activeRow.helpCommitted ? "is-active" : "")}>
+          <span>02 · 真实局部帮助</span>
+          <strong>{activeRow.helpCommitted ? `D5 到位 · tick ${activeRow.helpCommittedTick}` : "未形成 help"}</strong>
+          <small>
+            {activeRow.helpCommitted
+              ? `D5–O5 ${activeRow.helpD5O5Distance?.toFixed(3)}m / D5–O1 ${activeRow.helpD5O1Distance?.toFixed(3)}m`
+              : `停止时 D5–O5 ${activeRow.stopD5O5Distance.toFixed(3)}m / D5–O1 ${activeRow.stopD5O1Distance.toFixed(3)}m`}
+          </small>
+        </div>
+        <i>→</i>
+        <div className={"g03-layer " + (activeRow.kickoutChosen ? "is-active" : "")}>
+          <span>03 · 进攻观察后选择</span>
+          <strong>{activeRow.kickoutChosen ? `KICK_OUT · tick ${activeRow.firstKickoutDecisionTick}` : "POST_FINISH"}</strong>
+          <small>
+            {activeRow.kickoutChosen
+              ? `help ${activeRow.helpCommittedTick} → launch ${activeRow.kickoutLaunchedTick} → catch ${activeRow.kickoutCaughtTick}`
+              : `attack ${activeRow.postCatchAttackTick} → finish ${activeRow.finishWindowTick}`}
+          </small>
+        </div>
+      </div>
+
+      <div className="g01-active-read">
+        <div>
+          <span className="eyebrow">FIRST DEFENSE READ · DELAY {activeRow.delay.toFixed(2)}s</span>
+          <strong>
+            catch {activeRow.catchTick} → defense {activeRow.firstDefense.tick} · {activeRow.firstDefense.d1RoleCode}
+          </strong>
+          <small>方案选择只产生队内意图；是否形成 help 仍由后续 D5 实际距离解析。</small>
+        </div>
+        <G03CandidateDetail label="STAY_HOME_POST" candidate={activeRow.firstDefense.stay} />
+        <G03CandidateDetail label="DIG_POST" candidate={activeRow.firstDefense.dig} />
+      </div>
+
+      <div className="g01-active-read">
+        <div>
+          <span className="eyebrow">FIRST OFFENSE READ · TICK {activeRow.firstOffense.tick}</span>
+          <strong>{activeRow.firstOffense.chosen} · help observed {activeRow.firstOffense.helpObserved ? "YES" : "NO"}</strong>
+          <small>
+            {firstKickoutDecision
+              ? `真实帮助后 tick ${firstKickoutDecision.tick} 才首次选择 KICK_OUT。`
+              : "本样本从未观察到真实帮助，因此分球持续被硬否决。"}
+          </small>
+        </div>
+        <G03CandidateDetail label="POST_FINISH" candidate={activeRow.firstOffense.finish} />
+        <G03CandidateDetail label="KICK_OUT" candidate={activeRow.firstOffense.kickout} />
+      </div>
+
+      <div className="g03-replans" aria-label="选中样本的接球后进攻重规划">
+        {activeRow.offenseDecisions.map((decision) => (
+          <span key={`${decision.tick}-${decision.chosen}`} title={decision.kickout.vetoes.join(" · ")}>
+            t{decision.tick} · {decision.chosen} · help {decision.helpObserved ? "seen" : "not seen"}
+          </span>
+        ))}
+      </div>
+
+      {!audit.passed && (
+        <div className="g01-failures">
+          {audit.failureIntervals.map((failure) => (
+            <p key={`${failure.fromDelay}-${failure.toDelay}-${failure.reason}`}>
+              {failure.fromDelay.toFixed(2)}–{failure.toDelay.toFixed(2)}s · {failure.reason}
+            </p>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
 export default function PnrLab() {
   const [labMode, setLabMode] = useState<LabMode>("scenarios");
   const [scenarioId, setScenarioId] = useState<ScenarioId>(DEFAULT_SCENARIO_ID);
   const [g01ReplayId, setG01ReplayId] = useState<G01ReplayId>("stable-high");
   const [g02ReplayId, setG02ReplayId] = useState<G02ReplayId>("last-deflection");
+  const [g03ReplayId, setG03ReplayId] = useState<G03ReplayId>("last-stay");
   const [initialSimulation] = useState(
     () => new PnrSimulation(makeScenarioConfig(DEFAULT_SCENARIO_ID)),
   );
@@ -1079,20 +1319,30 @@ export default function PnrLab() {
     installSimulation(createG02Replay(replay.delay), shouldPlay);
   }, [installSimulation]);
 
+  const replaceG03Simulation = useCallback((nextReplayId: G03ReplayId, shouldPlay: boolean): void => {
+    const replay = G03_AUDIT.replays.find((candidate) => candidate.id === nextReplayId);
+    if (!replay) throw new Error(`Unknown G03 replay: ${nextReplayId}`);
+    installSimulation(createG03Replay(replay.delay), shouldPlay);
+  }, [installSimulation]);
+
   const replaceCurrentSimulation = useCallback((shouldPlay: boolean): void => {
     if (labMode === "g01") {
       replaceG01Simulation(g01ReplayId, shouldPlay);
     } else if (labMode === "g02") {
       replaceG02Simulation(g02ReplayId, shouldPlay);
+    } else if (labMode === "g03") {
+      replaceG03Simulation(g03ReplayId, shouldPlay);
     } else {
       replaceSimulation(scenarioId, shouldPlay);
     }
   }, [
     g01ReplayId,
     g02ReplayId,
+    g03ReplayId,
     labMode,
     replaceG01Simulation,
     replaceG02Simulation,
+    replaceG03Simulation,
     replaceSimulation,
     scenarioId,
   ]);
@@ -1197,6 +1447,8 @@ export default function PnrLab() {
     G01_AUDIT.replays.find((replay) => replay.id === g01ReplayId) ?? G01_AUDIT.replays[0];
   const currentG02Replay =
     G02_AUDIT.replays.find((replay) => replay.id === g02ReplayId) ?? G02_AUDIT.replays[0];
+  const currentG03Replay =
+    G03_AUDIT.replays.find((replay) => replay.id === g03ReplayId) ?? G03_AUDIT.replays[0];
 
   return (
     <main className="lab-shell">
@@ -1213,6 +1465,7 @@ export default function PnrLab() {
           <span>SEED 17</span>
           {labMode === "g01" && <span>G01 · O1 {currentG01Replay.speed.toFixed(2)}m/s</span>}
           {labMode === "g02" && <span>G02 · D1 delay {currentG02Replay.delay.toFixed(2)}s</span>}
+          {labMode === "g03" && <span>G03 · recovery {currentG03Replay.delay.toFixed(2)}s</span>}
           <span>HASH {snapshot.world.stateHash}</span>
         </div>
       </header>
@@ -1251,6 +1504,17 @@ export default function PnrLab() {
         >
           G02 · 绕前时间边界
         </button>
+        <button
+          aria-pressed={labMode === "g03"}
+          className={labMode === "g03" ? "is-active" : ""}
+          onClick={() => {
+            setLabMode("g03");
+            replaceG03Simulation(g03ReplayId, false);
+          }}
+          type="button"
+        >
+          G03 · 接球后恢复边界
+        </button>
       </nav>
 
       {labMode === "scenarios" ? (
@@ -1288,13 +1552,22 @@ export default function PnrLab() {
             replaceG01Simulation(nextReplayId, false);
           }}
         />
-      ) : (
+      ) : labMode === "g02" ? (
         <G02ProbePanel
           activeReplayId={g02ReplayId}
           audit={G02_AUDIT}
           onReplaySelect={(nextReplayId) => {
             setG02ReplayId(nextReplayId);
             replaceG02Simulation(nextReplayId, false);
+          }}
+        />
+      ) : (
+        <G03ProbePanel
+          activeReplayId={g03ReplayId}
+          audit={G03_AUDIT}
+          onReplaySelect={(nextReplayId) => {
+            setG03ReplayId(nextReplayId);
+            replaceG03Simulation(nextReplayId, false);
           }}
         />
       )}

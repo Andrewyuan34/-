@@ -21,6 +21,7 @@ export type SimulationHorizon =
   | "pnr_resolution"
   | "post_catch_finish"
   | "post_catch_kickout"
+  | "post_catch_resolution"
   | "mismatch_attack"
   | "under_pullup"
   | "reject_slip";
@@ -3371,7 +3372,8 @@ export class PnrSimulation {
         at: this.world.time,
       };
     } else if (
-      this.config.horizon === "post_catch_kickout" &&
+      (this.config.horizon === "post_catch_kickout" ||
+        this.config.horizon === "post_catch_resolution") &&
       this.world.ball.kind === "kick_out" &&
       this.world.ball.outcome === "caught" &&
       this.world.ballOwner === "O1"
@@ -3382,7 +3384,8 @@ export class PnrSimulation {
         at: this.world.time,
       };
     } else if (
-      this.config.horizon === "post_catch_finish" &&
+      (this.config.horizon === "post_catch_finish" ||
+        this.config.horizon === "post_catch_resolution") &&
       this.world.postCatch.finishWindow
     ) {
       terminal = {
