@@ -1,44 +1,44 @@
 # 当前交接快照
 
 > 快照日期：2026-08-07
-> 当前分支：`prototype/pnr-formation-loop`
+> 当前 F 收口分支：`prototype/pnr-formation-loop`
 > 远程分支：`origin/prototype/pnr-formation-loop`
-> F00/F00-R2 行为提交：`fb9bea56e9b14c7532e6684acbdb2b39e61c470e`
+> F01/F02 冻结核心：`90631359ba5a52eacfdbfc1434d657f8743df45e`
+> F03 manifest：`ba39ef025f29d181af8c7d137d6807f7825c9717`
+> F03 审计与回放：`f8163c2`
 > 稳定 Policy 基线：`c4ada7d`
 
 这份文件只回答“现在在哪里、接下来做什么”。阶段历史和决策原因分别放在[进度账本](./2026-08-06-generalization-goals-plan-progress.md)与[决策索引](./DECISIONS.md)。接手前仍须运行 `git status --short`，不得把本快照当作覆盖本地事实的许可。
 
 ## 一句话状态
 
-S01–S08、G01–G08、P00–P03 与 F00/F00-R2 已封存。用户已验收固定偏移 Formation、D1 身体外恢复和真实 deep-retreat pull-up；下一批准增量是合并完成 F01–F03，尚未开始，也不得提前进入 A 自动选边。
+S01–S08、G01–G08、P00–P03 与 Formation F00–F03 已封存并由用户验收。下一批准增量是在新分支 `prototype/pnr-autonomous-setup` 连续完成 A00 自动选掩护侧与 A01 自动生成合法 anchor/安全退出；A00 自动门失败时不得开始 A01，A01 完成后停止等待人眼验收，不开始 T。
 
-## F00 封存事实
+## F 阶段封存事实
 
-- `form_pnr` 仍为显式 opt-in；缺省 `preset_pnr` 与既有 170 输入保持原语义。
-- O1/O5 联合就绪后才在下一合法边界接入旧挡拆；D1/D5 在 Formation 中保持原责任。
-- UNDER 的清屏前/后路线属于双方各自的私有 `TeamPlan`；中立世界只凭真实坐标、速度、接触和公开事件确认 `screen_cleared`、恢复、遏制与 pull-up。
-- F00 回放终止于 `under_drive_advantage@277`；deep 正证人为 `screen_cleared@98 → pullup_window@133`，O1 清屏后向筐推进 `0.758m` 并无碰撞减速。
-- 用户已完成两条完整回放复验；行为提交为 `fb9bea56e9b14c7532e6684acbdb2b39e61c470e`。
-- 提交前门为 `npm test` 63/63、lint、build 与 `git diff --check` 全部通过。170 个批准输入中只有 `S/S07` 与 `G07/scenario/S07` 按通用 UNDER 语义改变；其余 168 个逐 tick 不变，G08 manifest 未修改。
+- F00/F00-R2 行为提交为 `fb9bea56e9b14c7532e6684acbdb2b39e61c470e`；`form_pnr` 仍为显式 opt-in，旧 `preset_pnr` 与 170 个批准输入保持既有语义。
+- F01 冻结 8 个规范起手并运行真实左右镜像：16 个世界中 14 个合法形成、2 个安全退出。
+- F02 使用 seed `20260809`，16/16 个输入按公开几何接受；32 个镜像世界各双运行通过。冻结输入 hash 为 `sha256:9e92f30216aba6d76be9ba9a54197e511a03015dff68bf2b814fd54aa35f63b6`。
+- F03 frozen core 为 `90631359ba5a52eacfdbfc1434d657f8743df45e`；输入-only manifest 在揭示前以 `ba39ef025f29d181af8c7d137d6807f7825c9717` 锁定，hash 为 `sha256:7d7331992d4855d0d43704f926da97a0698e4c80a3da6b494ca4f350f3eb5b68`。
+- F03 运行 16 个 manifest 世界及其 16 个未标注对应镜像：32 个世界中 28 个合法形成、4 个安全退出，各双运行、镜像与核心不变量全部通过。
+- 用户已人眼验收 `F01-C02 · RIGHT`、`F02-S15 · RIGHT`、`F03-R03 · RIGHT` 安全退出与 `F03-L04 · LEFT`。Formation F00–F03 正式完成。
+- F 最终自动门为 `npm test` 72/72、lint、build 与 `git diff --check` 全部通过；G08 manifest、F03 manifest 与已封存输入均未改写。
 
-## 下一批准增量：F01–F03
+## 当前批准增量：A00–A01
 
-用户批准把剩余 Formation 工作放在同一个增量内连续完成，但三段必须依次通过内部停止门：
-
-1. **F01：少量结构化形成起手。** 只扩大距离和方向等公开 Formation 输入，验证同一角色、相对地标、分段路径与安全失败原语可复用；不得按样本 ID 增加路线或结果补丁。
-2. **F02：有界 seed 随机合法位置。** 只有 F01 通过后，才能从 F01 已证明的合法域采样；生成器只能按输入几何拒绝，不能按方案、终局或“是否好看”筛选。
-3. **F03：冻结 Formation held-out。** 只有 F02 通过并冻结输入域后，才以新 seed 生成不含输出标签的 manifest；必须在运行任何 held-out 世界前锁定并提交 manifest。揭示后失败则保留输入和核心，不能按 case ID 修补同一批样本。
-
-F01 失败即停止；F02 失败即停止；F03 失败按 held-out 协议报告。三段全部完成后提供少量代表回放并等待用户验收，不自动开始 A00/A01。
+1. **A00：自动选择掩护侧。** 在同一合法规划边界比较 left/right 的公开几何、ETA、边界、身体净空、连续路线、走廊与有限 watchdog；硬不可行先 veto，再以公开、确定的标量分数选择。继续使用单一 `FORM_SCREEN`，side 只进入进攻私有 `TeamPlan` payload。
+2. **A01：自动生成合法 anchor。** 只有 A00 自动门通过后，才比较少量、全局固定、左右共享的 canonical side × anchor 组合；所有组合被 veto 时提交明确 formation abort/reset intent，并由中立世界在真实有限条件成立后发布安全终止。
+3. **输入契约。** 新增显式 `explicit | auto` setup 模式，缺省仍为 `explicit`；所有 S/G/P/F00–F03 逐 tick 不变。`auto` 只接受四人合法初始位置、seed、双方策略、固定角色职责与 Formation 域版本；不得携带 side、anchor 或预期结果，冲突字段必须拒绝。
+4. **信息边界。** 防守只能根据 O1/O5 的公开运动及后续公开 commit 事实响应，不能读取进攻私有 side、anchor、等待点或 use/reject gate；中立解析器不评分、不选 side/anchor，也不从隐藏 target 宣布成功。
+5. **运行锁定。** 输入深拷贝且不可变；播放或单步后样本锁定，只有重置新回合才解锁。策略 adjustment 在自动 Formation 阶段保持 0，不增加策略菜单。
 
 ## 不可扩大范围
 
-- F02 不代表任意半场站位；不增加拖拽或手动控制。
-- 不自动选择掩护侧或生成任意 anchor；这些属于 A 阶段。
-- 不新增 drop、chase、ICE、夹击等战术原语；最小战术词汇属于 T 阶段。
+- A 只在 F01/F02/F03 已批准的 Formation 输入域工作，不等于任意半场站位；不增加拖拽、手动控制或任意角色识别。
+- 不新增 drop、chase、ICE、夹击等战术原语；它们属于后续 T 阶段，且本轮不得启动。
 - 不模拟投篮命中率、篮板、犯规、完整比赛、更多人数或 5v5。
-- 不重开 P04，不改写 G08 manifest，不增加 ML/RL 或生产级 UI。
+- 不重开 P04，不改写 G08/F03 manifest，不增加 ML/RL 或生产级 UI。
 
 ## 下一停止点
 
-F01–F03 的自动门、冻结证据和代表回放形成后立即停止，等待用户判断结构化与有界随机起手是否仍像同一套 Formation。未经确认，不 commit/push 最终审计结果，也不开始 A 阶段。
+在首个完整、可观看的 A00–A01 闭环、输入-only 审计集、严格镜像、零行为回归和独立“A · 自动组织挡拆”页面入口全部通过后立即停止。A 阶段最终实现、测试与 UI 在用户验收前不得 commit/push；只交付四条由审计事实选出的代表回放，不开始 T00。

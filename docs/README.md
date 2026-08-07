@@ -30,21 +30,20 @@
 
 ## 按任务选择上下文
 
-### 开始 F01–F03 Formation 泛化合并增量
+### 开始 A00–A01 Autonomous Setup 合并增量
 
 读取：
 
 - `AGENTS.md`
 - `CURRENT.md`
-- `lib/pnr-f00-formation.ts`
-- `lib/pnr-under-r2.ts`
-- `lib/pnr-core.ts` 中 Formation 类型、planner observation、形成计划、readiness 与交接相关函数
-- `lib/pnr-core.ts` 中 UNDER 私有 route、screen-cleared 重规划与中立真实性门
-- `tests/pnr-core.test.mjs` 中 F00-R2 测试与 170 输入回归入口
-- `DECISIONS.md` 的 D009、D011–D014
-- 进度账本中“阶段 E”与“F 之后的批准主线”
+- `lib/pnr-formation-domain.ts`、`pnr-formation-audit.ts` 与冻结 F01/F02/F03 输入入口
+- `lib/pnr-core.ts` 中 SimulationConfig、planner observation、Formation 候选/计划、路径、readiness、事件与终止相关函数
+- `lib/pnr-strategy.ts` 中硬 veto、base score、零 adjustment 与球队信息所有权入口
+- `tests/pnr-core.test.mjs` 中 F00–F03、170 输入、镜像和核心不变量回归入口
+- `DECISIONS.md` 的 D001–D003、D005–D006、D011–D015
+- 进度账本中“F 之后的批准主线”与“当前判断与下一停止点”
 
-F01、F02、F03 必须依次通过内部停止门；暂时不要读取全部 S01–P03 说明，只有旧回归失败时再定位对应阶段。不得提前开始 A 自动选边。
+A00 必须先用输入-only 固定审计集证明自动选边、双运行、镜像、最短承诺和滞回；失败即停止，不开始 A01。A01 只比较少量全局 canonical side × anchor 组合，完成后交用户验收，不开始 T。暂时不要读取全部 S01–P03 历史，只有旧回归失败时再定位对应阶段。
 
 ### 调查旧 S/G/P 回归
 
