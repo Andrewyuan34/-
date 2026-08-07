@@ -1,3 +1,14 @@
+import {
+  DEFAULT_TEAM_STRATEGY_SELECTION,
+  copyTeamStrategySelection,
+  resolveRegisteredTeamStrategy,
+  scoreCandidateWithStrategy,
+  type DecisionPhase,
+  type TeamStrategyProfile,
+  type TeamStrategyReference,
+  type TeamStrategySelection,
+} from "./pnr-strategy.ts";
+
 export const FIXED_DT = 1 / 60;
 
 export const COURT = {
@@ -233,7 +244,12 @@ export interface CandidateEvaluation {
   id: PlanId;
   label: string;
   feasible: boolean;
+  /** Backward-compatible alias of effectiveScore. */
   score: number | null;
+  baseScore: number | null;
+  strategyAdjustment: number;
+  effectiveScore: number | null;
+  strategyReason: string;
   vetoes: string[];
   evidence: string[];
 }
@@ -246,6 +262,9 @@ export interface PlanningRecord {
   triggerEventIds: string[];
   chosen: PlanId;
   chosenLabel: string;
+  decisionPhase: DecisionPhase;
+  strategy: TeamStrategyReference & { team: Team };
+  strategyBoundary: string;
   candidates: CandidateEvaluation[];
   observationBoundary: string;
 }
@@ -259,6 +278,7 @@ export interface SimulationConfig {
   d1PostCatchRecoveryDelay: number;
   o1MaxSpeed: number;
   horizon: SimulationHorizon;
+  strategies?: TeamStrategySelection;
 }
 
 export interface PublicObservation {
@@ -832,14 +852,22 @@ export function validateInitialPlayerPositions(input: unknown): InitialPlayerPos
   return copyInitialPlayerPositions(positions);
 }
 
-function initialWorld(config: SimulationConfig): WorldState {
-  const positions = config.initialPositions;
+interface WorldInitializationInput {
+  initialPositions: InitialPlayerPositions;
+  screenSide: ScreenSide;
+  o1MaxSpeed: number;
+  d1FrontReactionDelay: number;
+  d1PostCatchRecoveryDelay: number;
+}
+
+function initialWorld(input: WorldInitializationInput): WorldState {
+  const positions = input.initialPositions;
   return {
     tick: 0,
     time: 0,
-    screenSide: config.screenSide,
+    screenSide: input.screenSide,
     players: {
-      O1: makePlayer("O1", "offense", positions.O1, config.o1MaxSpeed),
+      O1: makePlayer("O1", "offense", positions.O1, input.o1MaxSpeed),
       O5: makePlayer("O5", "offense", positions.O5, 2.92),
       D1: makePlayer("D1", "defense", positions.D1, 3.64),
       D5: makePlayer("D5", "defense", positions.D5, 3.22),
@@ -860,11 +888,11 @@ function initialWorld(config: SimulationConfig): WorldState {
     branch: "undecided",
     facts: { ...EMPTY_FACTS },
     mismatch: { ...EMPTY_MISMATCH },
-    seal: { ...EMPTY_SEAL, frontReactionDelay: config.d1FrontReactionDelay },
+    seal: { ...EMPTY_SEAL, frontReactionDelay: input.d1FrontReactionDelay },
     postCatch: {
       ...EMPTY_POST_CATCH,
-      d1RecoveryDelay: config.d1PostCatchRecoveryDelay,
-      d1RecoveryReadyIn: config.d1PostCatchRecoveryDelay,
+      d1RecoveryDelay: input.d1PostCatchRecoveryDelay,
+      d1RecoveryReadyIn: input.d1PostCatchRecoveryDelay,
     },
     under: { ...EMPTY_UNDER },
     reject: { ...EMPTY_REJECT },
@@ -1203,9 +1231,27 @@ function offenseRollout(
   };
 }
 
+function offenseDecisionPhase(observation: PublicObservation): DecisionPhase {
+  if (observation.ballOwner === "O5" || observation.postCatch.active) {
+    return "offense_post_catch";
+  }
+  if (observation.facts.matchupExchange) return "offense_mismatch";
+  return "offense_initial_read";
+}
+
+function defenseDecisionPhase(observation: PublicObservation): DecisionPhase {
+  if (observation.ballOwner === "O5" || observation.postCatch.active) {
+    return "defense_post_catch";
+  }
+  if (observation.facts.matchupExchange) return "defense_mismatch";
+  return "defense_initial_coverage";
+}
+
 function evaluateOffenseCandidates(
   observation: PublicObservation,
   currentPlan: TeamPlan | null,
+  strategy: TeamStrategyProfile,
+  decisionPhase: DecisionPhase,
 ): CandidateEvaluation[] {
   const screenOnRight = COURT.screenSpot.x > observation.players.O1.pos.x;
   const o1OwnsBall = observation.ballOwner === "O1";
@@ -1259,7 +1305,12 @@ function evaluateOffenseCandidates(
 
     const rollout = offenseRollout(id, observation);
     const hysteresis = currentPlan?.id === id ? 0.34 : currentPlan ? -0.18 : 0;
-    const score = vetoes.length === 0 ? round(rollout.score + hysteresis) : null;
+    const baseScore = vetoes.length === 0 ? round(rollout.score + hysteresis) : null;
+    const strategyScore = scoreCandidateWithStrategy(strategy, decisionPhase, {
+      planId: id,
+      feasible: vetoes.length === 0,
+      baseScore,
+    });
     return {
       id,
       label:
@@ -1279,7 +1330,8 @@ function evaluateOffenseCandidates(
                       ? "O5 分回 O1"
                       : "拒绝后分给 O5 顺下",
       feasible: vetoes.length === 0,
-      score,
+      score: strategyScore.effectiveScore,
+      ...strategyScore,
       vetoes,
       evidence: [
         ...rollout.evidence,
@@ -1526,6 +1578,8 @@ function defenseRollout(
 function evaluateDefenseCandidates(
   observation: PublicObservation,
   currentPlan: TeamPlan | null,
+  strategy: TeamStrategyProfile,
+  decisionPhase: DecisionPhase,
 ): CandidateEvaluation[] {
   const ids: DefensePlanId[] = [
     "SWITCH_READY",
@@ -1624,6 +1678,12 @@ function evaluateDefenseCandidates(
 
     const rollout = defenseRollout(id, observation);
     const hysteresis = currentPlan?.id === id ? 0.28 : currentPlan ? -0.14 : 0;
+    const baseScore = vetoes.length === 0 ? round(rollout.score + hysteresis) : null;
+    const strategyScore = scoreCandidateWithStrategy(strategy, decisionPhase, {
+      planId: id,
+      feasible: vetoes.length === 0,
+      baseScore,
+    });
     return {
       id,
       label:
@@ -1649,7 +1709,8 @@ function evaluateDefenseCandidates(
                         ? "D5 下沉协防 O5"
                   : "贴身施压 O1",
       feasible: vetoes.length === 0,
-      score: vetoes.length === 0 ? round(rollout.score + hysteresis) : null,
+      score: strategyScore.effectiveScore,
+      ...strategyScore,
       vetoes,
       evidence: [
         ...rollout.evidence,
@@ -1660,9 +1721,13 @@ function evaluateDefenseCandidates(
 }
 
 function chooseCandidate(candidates: CandidateEvaluation[]): CandidateEvaluation {
-  const feasible = candidates.filter((candidate) => candidate.feasible && candidate.score !== null);
+  const feasible = candidates.filter(
+    (candidate) => candidate.feasible && candidate.effectiveScore !== null,
+  );
   if (feasible.length === 0) throw new Error("No feasible team plan");
-  return [...feasible].sort((a, b) => (b.score ?? -Infinity) - (a.score ?? -Infinity))[0];
+  return [...feasible].sort(
+    (a, b) => (b.effectiveScore ?? -Infinity) - (a.effectiveScore ?? -Infinity),
+  )[0];
 }
 
 function makeOffensePlan(
@@ -2495,7 +2560,7 @@ function clonePlayer(player: PlayerState): PlayerState {
 }
 
 export class PnrSimulation {
-  readonly config: SimulationConfig;
+  readonly config: SimulationConfig & { strategies: TeamStrategySelection };
   world: WorldState;
   offensePlan: TeamPlan;
   defensePlan: TeamPlan;
@@ -2505,6 +2570,9 @@ export class PnrSimulation {
   private defenseQueue: WorldEvent[] = [];
   private offenseVersion = 0;
   private defenseVersion = 0;
+  private readonly offenseStrategyProfile: TeamStrategyProfile;
+  private readonly defenseStrategyProfile: TeamStrategyProfile;
+  private roundStarted = false;
 
   constructor(config: SimulationConfig) {
     const initialPositions = validateInitialPlayerPositions(config?.initialPositions);
@@ -2512,6 +2580,17 @@ export class PnrSimulation {
     if (screenSide !== "right" && screenSide !== "left") {
       throw new Error(`screenSide must be "right" or "left"; received ${String(screenSide)}`);
     }
+    const strategies = copyTeamStrategySelection(
+      config.strategies ?? DEFAULT_TEAM_STRATEGY_SELECTION,
+    );
+    this.offenseStrategyProfile = resolveRegisteredTeamStrategy(
+      strategies.offense,
+      "offense",
+    );
+    this.defenseStrategyProfile = resolveRegisteredTeamStrategy(
+      strategies.defense,
+      "defense",
+    );
     this.config = {
       initialPositions,
       screenSide,
@@ -2521,8 +2600,15 @@ export class PnrSimulation {
       d1PostCatchRecoveryDelay: clamp(config.d1PostCatchRecoveryDelay ?? 0, 0, 0.6),
       o1MaxSpeed: clamp(config.o1MaxSpeed ?? 3.72, 3.4, 4.4),
       horizon: config.horizon ?? "pnr_resolution",
+      strategies,
     };
-    this.world = initialWorld(this.config);
+    this.world = initialWorld({
+      initialPositions: this.config.initialPositions,
+      screenSide: this.config.screenSide,
+      o1MaxSpeed: this.config.o1MaxSpeed,
+      d1FrontReactionDelay: this.config.d1FrontReactionDelay,
+      d1PostCatchRecoveryDelay: this.config.d1PostCatchRecoveryDelay,
+    });
     this.offensePlan = this.replanOffense("初始边界", []);
     this.defensePlan = this.replanDefense("初始边界", []);
     this.world.stateHash = this.computeStateHash();
@@ -2534,7 +2620,13 @@ export class PnrSimulation {
     const current = this.offenseVersion > 0
       ? transformPlanFrame(this.offensePlan, this.config.screenSide)
       : null;
-    const candidates = evaluateOffenseCandidates(observation, current);
+    const decisionPhase = offenseDecisionPhase(observation);
+    const candidates = evaluateOffenseCandidates(
+      observation,
+      current,
+      this.offenseStrategyProfile,
+      decisionPhase,
+    );
     const chosen = chooseCandidate(candidates);
     this.offenseVersion += 1;
     const tacticalPlan = makeOffensePlan(chosen, tacticalWorld, this.offenseVersion);
@@ -2547,6 +2639,13 @@ export class PnrSimulation {
       triggerEventIds: triggerEvents.map((event) => event.id),
       chosen: chosen.id,
       chosenLabel: chosen.label,
+      decisionPhase,
+      strategy: {
+        id: this.offenseStrategyProfile.id,
+        version: this.offenseStrategyProfile.version,
+        team: "offense",
+      },
+      strategyBoundary: `只读取进攻策略 ${this.offenseStrategyProfile.id}@${this.offenseStrategyProfile.version}；不含防守策略`,
       candidates,
       observationBoundary: "公开世界事实 + 自队角色；不含防守隐藏计划/未来",
     });
@@ -2559,7 +2658,13 @@ export class PnrSimulation {
     const current = this.defenseVersion > 0
       ? transformPlanFrame(this.defensePlan, this.config.screenSide)
       : null;
-    const candidates = evaluateDefenseCandidates(observation, current);
+    const decisionPhase = defenseDecisionPhase(observation);
+    const candidates = evaluateDefenseCandidates(
+      observation,
+      current,
+      this.defenseStrategyProfile,
+      decisionPhase,
+    );
     const chosen = chooseCandidate(candidates);
     this.defenseVersion += 1;
     const tacticalPlan = makeDefensePlan(chosen, tacticalWorld, this.defenseVersion);
@@ -2572,6 +2677,13 @@ export class PnrSimulation {
       triggerEventIds: triggerEvents.map((event) => event.id),
       chosen: chosen.id,
       chosenLabel: chosen.label,
+      decisionPhase,
+      strategy: {
+        id: this.defenseStrategyProfile.id,
+        version: this.defenseStrategyProfile.version,
+        team: "defense",
+      },
+      strategyBoundary: `只读取防守策略 ${this.defenseStrategyProfile.id}@${this.defenseStrategyProfile.version}；不含进攻策略`,
       candidates,
       observationBoundary: "公开世界事实 + 自队角色；不含进攻隐藏计划/未来",
     });
@@ -3685,6 +3797,7 @@ export class PnrSimulation {
   }
 
   step(count = 1): void {
+    if (count > 0 && !this.world.terminal) this.roundStarted = true;
     for (let iteration = 0; iteration < count; iteration += 1) {
       if (this.world.terminal) return;
       this.deliverEvents();
@@ -3756,6 +3869,14 @@ export class PnrSimulation {
       ...(Object.values(this.offensePlan.roles) as RoleAssignment[]),
       ...(Object.values(this.defensePlan.roles) as RoleAssignment[]),
     ];
+  }
+
+  get strategyLocked(): boolean {
+    return this.roundStarted;
+  }
+
+  getStrategyProfile(team: Team): TeamStrategyProfile {
+    return team === "offense" ? this.offenseStrategyProfile : this.defenseStrategyProfile;
   }
 
   getPlayerCopies(): Record<PlayerId, PlayerState> {

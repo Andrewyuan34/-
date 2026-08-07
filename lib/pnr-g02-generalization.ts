@@ -8,6 +8,10 @@ import {
   type SealFacts,
   type SimulationConfig,
 } from "./pnr-core.ts";
+import {
+  DEFAULT_TEAM_STRATEGY_SELECTION,
+  copyTeamStrategySelection,
+} from "./pnr-strategy.ts";
 import { makeInitialPositionsForCue } from "./pnr-scenarios.ts";
 
 export const G02_DELAYS = Object.freeze(
@@ -15,6 +19,7 @@ export const G02_DELAYS = Object.freeze(
 );
 
 export const G02_BASE_CONFIG = Object.freeze({
+  strategies: DEFAULT_TEAM_STRATEGY_SELECTION,
   initialPositions: makeInitialPositionsForCue("neutral"),
   screenSide: "right",
   seed: 17,
@@ -108,6 +113,7 @@ export function makeG02Config(delay: number): SimulationConfig {
   }
   return {
     ...G02_BASE_CONFIG,
+    strategies: copyTeamStrategySelection(G02_BASE_CONFIG.strategies),
     initialPositions: makeInitialPositionsForCue("neutral"),
     d1FrontReactionDelay: delay,
   };

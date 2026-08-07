@@ -5,6 +5,10 @@ import {
   type PlanningRecord,
   type SimulationConfig,
 } from "./pnr-core.ts";
+import {
+  DEFAULT_TEAM_STRATEGY_SELECTION,
+  copyTeamStrategySelection,
+} from "./pnr-strategy.ts";
 import { makeInitialPositionsForCue } from "./pnr-scenarios.ts";
 
 export const G01_SPEEDS = Object.freeze(
@@ -12,6 +16,7 @@ export const G01_SPEEDS = Object.freeze(
 );
 
 export const G01_BASE_CONFIG = Object.freeze({
+  strategies: DEFAULT_TEAM_STRATEGY_SELECTION,
   initialPositions: makeInitialPositionsForCue("neutral"),
   screenSide: "right",
   seed: 17,
@@ -89,6 +94,7 @@ export function makeG01Config(speed: number): SimulationConfig {
   }
   return {
     ...G01_BASE_CONFIG,
+    strategies: copyTeamStrategySelection(G01_BASE_CONFIG.strategies),
     initialPositions: makeInitialPositionsForCue("neutral"),
     o1MaxSpeed: speed,
   };

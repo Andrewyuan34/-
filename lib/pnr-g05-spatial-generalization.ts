@@ -16,6 +16,10 @@ import {
   type TerminalState,
   type WorldEvent,
 } from "./pnr-core.ts";
+import {
+  DEFAULT_TEAM_STRATEGY_SELECTION,
+  copyTeamStrategySelection,
+} from "./pnr-strategy.ts";
 import { makeInitialPositionsForCue } from "./pnr-scenarios.ts";
 
 export type G05Coordinate = "x" | "y";
@@ -197,6 +201,7 @@ export const G05_CANDIDATES = Object.freeze([
 ] satisfies G05CandidateSpec[]);
 
 export const G05_BASE_CONFIG = Object.freeze({
+  strategies: DEFAULT_TEAM_STRATEGY_SELECTION,
   initialPositions: makeInitialPositionsForCue("neutral"),
   screenSide: "right",
   seed: 17,
@@ -230,6 +235,7 @@ export function makeG05Config(id: string): SimulationConfig {
   const spec = getCandidateSpec(id);
   return {
     ...G05_BASE_CONFIG,
+    strategies: copyTeamStrategySelection(G05_BASE_CONFIG.strategies),
     initialPositions: makePositions(spec),
   };
 }

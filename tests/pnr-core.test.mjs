@@ -78,11 +78,22 @@ import {
 import {
   G08_MANIFEST_COMMIT,
   createG08Replay,
+  makeG08Config,
   scanG08Heldout,
 } from "../lib/pnr-g08-heldout-audit.ts";
+import {
+  DEFAULT_TEAM_STRATEGY_SELECTION,
+  DEFENSE_BALANCED_COVERAGE,
+  OFFENSE_BALANCED_READ,
+  REGISTERED_TEAM_STRATEGIES,
+  makeDefaultTeamStrategySelection,
+  scoreCandidateWithStrategy,
+  validateTeamStrategyProfile,
+} from "../lib/pnr-strategy.ts";
 
 function makeTestConfig(cue = "neutral", overrides = {}) {
   return {
+    strategies: makeDefaultTeamStrategySelection(),
     initialPositions: makeInitialPositionsForCue(cue),
     screenSide: "right",
     seed: 17,
@@ -132,7 +143,24 @@ function behaviorFrame(simulation, newPlanning) {
     defensePlan: simulation.defensePlan,
     roles: simulation.getRoles(),
     events: simulation.eventLog.filter((event) => event.tick === simulation.world.tick),
-    planning: newPlanning,
+    planning: newPlanning.map((record) => ({
+      tick: record.tick,
+      at: record.at,
+      team: record.team,
+      trigger: record.trigger,
+      triggerEventIds: record.triggerEventIds,
+      chosen: record.chosen,
+      chosenLabel: record.chosenLabel,
+      candidates: record.candidates.map((candidate) => ({
+        id: candidate.id,
+        label: candidate.label,
+        feasible: candidate.feasible,
+        score: candidate.score,
+        vetoes: candidate.vetoes,
+        evidence: candidate.evidence,
+      })),
+      observationBoundary: record.observationBoundary,
+    })),
     terminal: simulation.world.terminal,
   };
 }
@@ -150,6 +178,104 @@ function behaviorTrace(config) {
 
 function behaviorDigest(value) {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");
+}
+
+function p00LegacyPlanFrame(plan) {
+  return {
+    team: plan.team,
+    id: plan.id,
+    label: plan.label,
+    version: plan.version,
+    startedAt: plan.startedAt,
+    startedTick: plan.startedTick,
+    commitUntil: plan.commitUntil,
+    watchdogAt: plan.watchdogAt,
+    roles: plan.roles,
+    rationale: plan.rationale,
+    chosenScore: plan.chosenScore,
+    primaryTarget: plan.primaryTarget,
+    secondaryTarget: plan.secondaryTarget,
+    passTarget: plan.passTarget,
+  };
+}
+
+function p00LegacyPlanningFrame(record) {
+  return {
+    tick: record.tick,
+    at: record.at,
+    team: record.team,
+    trigger: record.trigger,
+    triggerEventIds: record.triggerEventIds,
+    chosen: record.chosen,
+    chosenLabel: record.chosenLabel,
+    candidates: record.candidates.map((candidate) => ({
+      id: candidate.id,
+      label: candidate.label,
+      feasible: candidate.feasible,
+      score: candidate.score,
+      vetoes: candidate.vetoes,
+      evidence: candidate.evidence,
+    })),
+    observationBoundary: record.observationBoundary,
+  };
+}
+
+function p00LegacyTickFrame(simulation, planning, events) {
+  return {
+    tick: simulation.world.tick,
+    time: simulation.world.time,
+    stateHash: simulation.world.stateHash,
+    players: PLAYER_IDS.map((id) => {
+      const player = simulation.world.players[id];
+      return [id, player.pos, player.vel, player.radius, player.maxSpeed];
+    }),
+    ballOwner: simulation.world.ballOwner,
+    ball: simulation.world.ball,
+    branch: simulation.world.branch,
+    facts: simulation.world.facts,
+    mismatch: simulation.world.mismatch,
+    seal: simulation.world.seal,
+    postCatch: simulation.world.postCatch,
+    under: simulation.world.under,
+    reject: simulation.world.reject,
+    offensePlan: p00LegacyPlanFrame(simulation.offensePlan),
+    defensePlan: p00LegacyPlanFrame(simulation.defensePlan),
+    roles: simulation.getRoles(),
+    events,
+    planning: planning.map(p00LegacyPlanningFrame),
+    terminal: simulation.world.terminal,
+  };
+}
+
+function p00LegacyTraceDigest(config) {
+  const simulation = new PnrSimulation(config);
+  const hash = createHash("sha256");
+  hash.update(
+    JSON.stringify(p00LegacyTickFrame(simulation, [...simulation.planningLog], [])),
+  );
+  for (let index = 0; index < 600 && !simulation.world.terminal; index += 1) {
+    const planningStart = simulation.planningLog.length;
+    const eventStart = simulation.eventLog.length;
+    simulation.step();
+    hash.update(
+      JSON.stringify(
+        p00LegacyTickFrame(
+          simulation,
+          simulation.planningLog.slice(planningStart),
+          simulation.eventLog.slice(eventStart),
+        ),
+      ),
+    );
+  }
+  return hash.digest("hex");
+}
+
+function p00LegacyGroupDigest(entries) {
+  const hash = createHash("sha256");
+  for (const [id, config] of entries) {
+    hash.update(`${id}:${p00LegacyTraceDigest(config)}\n`);
+  }
+  return hash.digest("hex");
 }
 
 test("G08 locks 24 input-only held-out cases before any world is run", () => {
@@ -625,21 +751,7 @@ test("G07 runs real left worlds for all S01-S08 and G06 inputs with deterministi
   );
 });
 
-test("G08 runs the locked held-out manifest twice without changing the frozen basketball core", () => {
-  const frozenFileHashes = {
-    "../lib/pnr-core.ts": "ff60980d7c6380cf36cb756df5362a5cef0a58fda489dbcada1e715733a48afc",
-    "../lib/pnr-scenarios.ts": "8d22bef1f3c60c2ce7d68c74ab197a7c3b43bc172d673cddde43c1b1661a187d",
-    "../lib/pnr-generalization.ts": "6fd651792df05afeefa38ca7511d0a3fec9011c6c8e99778a9745e75d68ecdd0",
-    "../lib/pnr-g02-generalization.ts": "d553fc73753b9f2ea87cb23643d05d0b0ba8d7623589de9f5e550c1218b6b172",
-    "../lib/pnr-g03-generalization.ts": "feba404ed776c32b08801ae263c4fc4b415d73e4f0c3416464d9f8d44e398420",
-    "../lib/pnr-g05-spatial-generalization.ts": "bf64b008a777c752bebd1c499bd88ffc69473cb4992c3dbb655241fde716dc0d",
-    "../lib/pnr-g06-combinations.ts": "074770fa9aebca2120f0fac47013c3a20f301bfe4e11460f0125e5ce31afc8b6",
-    "../lib/pnr-g07-mirroring.ts": "b316ae0028ec30f538d587a5a8ff75fe00db5fc84c1a785421d81af90e50912d",
-  };
-  for (const [path, expectedHash] of Object.entries(frozenFileHashes)) {
-    const source = readFileSync(new URL(path, import.meta.url));
-    assert.equal(createHash("sha256").update(source).digest("hex"), expectedHash, path);
-  }
+test("G08 keeps the locked held-out manifest and approved result checkpoint", () => {
   assert.doesNotMatch(
     readFileSync(new URL("../lib/pnr-core.ts", import.meta.url), "utf8"),
     /G08-[RL]\d|heldout/i,
@@ -717,6 +829,253 @@ test("G08 runs the locked held-out manifest twice without changing the frozen ba
       manifest.input.initialPositions,
     );
   }
+});
+
+test("P00 default strategies preserve all 170 approved S01-G08 tick traces", () => {
+  const legalG05 = G05_CANDIDATES.filter(
+    ({ id }) => id !== "O1.y/-0.24" && id !== "D1.y/+0.24",
+  );
+  const groups = {
+    S: PNR_SCENARIOS.map((scenario) => [scenario.code, makeScenarioConfig(scenario.id)]),
+    G01: G01_SPEEDS.map((speed) => [speed.toFixed(2), makeG01Config(speed)]),
+    G02: G02_DELAYS.map((delay) => [delay.toFixed(2), makeG02Config(delay)]),
+    G03: G03_DELAYS.map((delay) => [delay.toFixed(2), makeG03Config(delay)]),
+    G05: legalG05.map((candidate) => [candidate.id, makeG05Config(candidate.id)]),
+    G06: G06_SPECS.map((spec) => [spec.id, makeG06Config(spec.id)]),
+    G07: G07_SPECS.map((spec) => [spec.id, makeG07Config(spec.id, "left")]),
+    G08: G08_HELDOUT_MANIFEST.map((item) => [item.id, makeG08Config(item.id)]),
+  };
+  const expected = {
+    S: [8, "608ce5e837986214c713ad4ed4c0fbbdec99a89590b68bb36ad1a0c71ba21316"],
+    G01: [19, "c4e24d170eb215871daff655b80ddc3cc646dfeabab26907f53a5c714ef2fb22"],
+    G02: [17, "20d64cb0c44c54671006eab4e04f844e87d9d052c4b1b4299c66aa582934998b"],
+    G03: [21, "d823b25d948216253ecfb705357bbf7749f3f7a8455cb0acf43d0def596fb39b"],
+    G05: [31, "b7de26f94b554423407517932a04a0eb5eaad0f8d443671334fe000bc42dc04f"],
+    G06: [21, "02c046e000f77e4c1696f5a237700aea1542f51ebdd716cbea300e9cf3b37eb7"],
+    G07: [29, "d22b870f2a042ec990a4af86e818dc039218a1658b45a50ac86ceed044a251ed"],
+    G08: [24, "836238e356d1983a9b119a2b55bc847eb8fbfcdfca4f15f5af6f836752942bc7"],
+  };
+
+  let inputCount = 0;
+  for (const [group, entries] of Object.entries(groups)) {
+    inputCount += entries.length;
+    assert.equal(entries.length, expected[group][0], `${group} input count`);
+    assert.equal(p00LegacyGroupDigest(entries), expected[group][1], `${group} tick trace`);
+    for (const [, config] of entries) {
+      assert.equal(Object.hasOwn(config, "strategies"), true);
+      assert.deepEqual(config.strategies, DEFAULT_TEAM_STRATEGY_SELECTION);
+    }
+  }
+  assert.equal(inputCount, 170);
+
+  const phases = new Set();
+  for (const scenarioId of [
+    "reject_overplay_right",
+    "switch_attack_big_downhill",
+    "post_catch_dig_kickout",
+  ]) {
+    const simulation = runScenarioToStop(scenarioId);
+    for (const record of simulation.planningLog) {
+      phases.add(record.decisionPhase);
+      assert.equal(
+        record.strategy.id,
+        record.team === "offense" ? OFFENSE_BALANCED_READ.id : DEFENSE_BALANCED_COVERAGE.id,
+      );
+      for (const candidate of record.candidates) {
+        assert.equal(candidate.strategyAdjustment, 0);
+        assert.equal(candidate.effectiveScore, candidate.baseScore);
+        assert.equal(candidate.score, candidate.effectiveScore);
+        assert.ok(candidate.strategyReason.length > 0);
+      }
+    }
+  }
+  assert.deepEqual(
+    [...phases].sort(),
+    [
+      "defense_initial_coverage",
+      "defense_mismatch",
+      "defense_post_catch",
+      "offense_initial_read",
+      "offense_mismatch",
+      "offense_post_catch",
+    ],
+  );
+});
+
+test("P00 keeps offense and defense strategies inside their own planner boundaries", () => {
+  const simulation = new PnrSimulation(makeScenarioConfig("post_catch_dig_kickout"));
+  const offenseObservation = createPlannerObservation(simulation.world, "offense");
+  const defenseObservation = createPlannerObservation(simulation.world, "defense");
+  for (const observation of [offenseObservation, defenseObservation]) {
+    assert.doesNotMatch(JSON.stringify(observation), /strategy|OFFENSE_BALANCED|DEFENSE_BALANCED/i);
+  }
+
+  while (!simulation.world.terminal) simulation.step();
+  for (const record of simulation.planningLog) {
+    if (record.team === "offense") {
+      assert.equal(record.strategy.id, OFFENSE_BALANCED_READ.id);
+      assert.doesNotMatch(record.strategyBoundary, /DEFENSE_BALANCED_COVERAGE/);
+    } else {
+      assert.equal(record.strategy.id, DEFENSE_BALANCED_COVERAGE.id);
+      assert.doesNotMatch(record.strategyBoundary, /OFFENSE_BALANCED_READ/);
+    }
+  }
+
+  const source = readFileSync(new URL("../lib/pnr-core.ts", import.meta.url), "utf8");
+  const offenseBody = source.slice(
+    source.indexOf("  private replanOffense"),
+    source.indexOf("  private replanDefense"),
+  );
+  const defenseBody = source.slice(
+    source.indexOf("  private replanDefense"),
+    source.indexOf("  private deliverEvents"),
+  );
+  assert.doesNotMatch(offenseBody, /this\.defenseStrategyProfile/);
+  assert.doesNotMatch(defenseBody, /this\.offenseStrategyProfile/);
+});
+
+test("P00 neutral world and motion resolvers do not receive strategy profiles", () => {
+  const source = readFileSync(new URL("../lib/pnr-core.ts", import.meta.url), "utf8");
+  const initialWorldBody = source.slice(
+    source.indexOf("interface WorldInitializationInput"),
+    source.indexOf("export function createPlannerObservation"),
+  );
+  const stepBody = source.slice(
+    source.indexOf("  step(count = 1)"),
+    source.indexOf("  getRoles()"),
+  );
+  assert.doesNotMatch(initialWorldBody, /strategy/i);
+  assert.doesNotMatch(stepBody, /StrategyProfile|strategyAdjustment|effectiveScore/);
+
+  const simulation = new PnrSimulation(makeScenarioConfig("switch_feed_front_late_catch"));
+  assert.equal(Object.hasOwn(simulation.world, "strategies"), false);
+  assert.equal(Object.hasOwn(simulation.world, "offenseStrategy"), false);
+  assert.equal(Object.hasOwn(simulation.world, "defenseStrategy"), false);
+});
+
+test("P00 temporary preferences can reorder feasible candidates but never revive a veto", () => {
+  const temporary = validateTeamStrategyProfile({
+    id: "TEST_OFFENSE_BIAS",
+    version: 1,
+    team: "offense",
+    label: "测试偏置",
+    description: "只验证策略接缝，不注册为可选策略。",
+    phasePreferences: {
+      offense_initial_read: [
+        { planId: "USE_RIGHT_SCREEN", adjustment: -0.4, reason: "测试降低使用倾向" },
+        { planId: "REJECT_LEFT", adjustment: 0.6, reason: "测试提高拒绝倾向" },
+        { planId: "ATTACK_BIG", adjustment: 999, reason: "即使偏置极大也不能恢复 veto" },
+      ],
+    },
+  });
+  const use = scoreCandidateWithStrategy(temporary, "offense_initial_read", {
+    planId: "USE_RIGHT_SCREEN",
+    feasible: true,
+    baseScore: 5,
+  });
+  const reject = scoreCandidateWithStrategy(temporary, "offense_initial_read", {
+    planId: "REJECT_LEFT",
+    feasible: true,
+    baseScore: 4.8,
+  });
+  const vetoed = scoreCandidateWithStrategy(temporary, "offense_initial_read", {
+    planId: "ATTACK_BIG",
+    feasible: false,
+    baseScore: null,
+  });
+
+  assert.ok(reject.effectiveScore > use.effectiveScore);
+  assert.equal(vetoed.strategyAdjustment, 0);
+  assert.equal(vetoed.effectiveScore, null);
+  assert.match(vetoed.strategyReason, /不能恢复候选/);
+  assert.throws(
+    () => scoreCandidateWithStrategy(temporary, "offense_initial_read", {
+      planId: "SWITCH",
+      feasible: true,
+      baseScore: 1,
+    }),
+    /cannot adjust opponent plan/,
+  );
+});
+
+test("P00 strategy inputs are deep-copied, deterministic, registered, and locked after start", () => {
+  assert.deepEqual(
+    REGISTERED_TEAM_STRATEGIES.map(({ id, version, team }) => ({ id, version, team })),
+    [
+      { id: "OFFENSE_BALANCED_READ", version: 1, team: "offense" },
+      { id: "DEFENSE_BALANCED_COVERAGE", version: 1, team: "defense" },
+    ],
+  );
+  const externalStrategies = {
+    offense: { id: "OFFENSE_BALANCED_READ", version: 1 },
+    defense: { id: "DEFENSE_BALANCED_COVERAGE", version: 1 },
+  };
+  const simulation = new PnrSimulation({
+    ...makeScenarioConfig("switch_feed_front_late_catch"),
+    strategies: externalStrategies,
+  });
+  externalStrategies.offense.id = "MUTATED_AFTER_CONSTRUCTION";
+  externalStrategies.defense.version = 99;
+
+  assert.deepEqual(simulation.config.strategies, DEFAULT_TEAM_STRATEGY_SELECTION);
+  assert.equal(Object.isFrozen(simulation.config.strategies), true);
+  assert.equal(Object.isFrozen(simulation.config.strategies.offense), true);
+  assert.equal(Object.isFrozen(simulation.getStrategyProfile("offense")), true);
+  assert.equal(
+    Object.isFrozen(
+      simulation.getStrategyProfile("offense").phasePreferences.offense_initial_read,
+    ),
+    true,
+  );
+  assert.equal(simulation.strategyLocked, false);
+  simulation.step(0);
+  assert.equal(simulation.strategyLocked, false);
+  simulation.step();
+  assert.equal(simulation.strategyLocked, true);
+  assert.throws(() => {
+    simulation.config.strategies.offense.id = "ILLEGAL_RUNTIME_CHANGE";
+  }, TypeError);
+
+  const resetRound = new PnrSimulation(makeScenarioConfig("switch_feed_front_late_catch"));
+  assert.equal(resetRound.strategyLocked, false);
+  const replay = new PnrSimulation(makeScenarioConfig("switch_feed_front_late_catch"));
+  while (!resetRound.world.terminal && !replay.world.terminal) {
+    resetRound.step();
+    replay.step();
+    assert.equal(resetRound.world.stateHash, replay.world.stateHash);
+  }
+  assert.equal(resetRound.world.terminal?.reason, replay.world.terminal?.reason);
+
+  assert.throws(
+    () => new PnrSimulation({
+      ...makeTestConfig(),
+      strategies: {
+        offense: { id: "UNKNOWN_OFFENSE", version: 1 },
+        defense: DEFAULT_TEAM_STRATEGY_SELECTION.defense,
+      },
+    }),
+    /Unknown offense strategy/,
+  );
+  assert.throws(
+    () => new PnrSimulation({
+      ...makeTestConfig(),
+      strategies: {
+        offense: DEFAULT_TEAM_STRATEGY_SELECTION.defense,
+        defense: DEFAULT_TEAM_STRATEGY_SELECTION.defense,
+      },
+    }),
+    /belongs to defense, not offense/,
+  );
+  assert.throws(
+    () => new PnrSimulation({
+      ...makeTestConfig(),
+      strategies: {
+        offense: { id: OFFENSE_BALANCED_READ.id, version: 2 },
+        defense: DEFAULT_TEAM_STRATEGY_SELECTION.defense,
+      },
+    }),
+    /version 2 is unavailable/,
+  );
 });
 
 test("G01 scans 19 speed-only samples twice and finds one deterministic decision boundary", () => {

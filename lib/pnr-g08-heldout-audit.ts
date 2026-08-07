@@ -21,6 +21,7 @@ import {
   type Vec2,
   type WorldEvent,
 } from "./pnr-core.ts";
+import { makeDefaultTeamStrategySelection } from "./pnr-strategy.ts";
 import {
   G08_FROZEN_CORE_COMMIT,
   G08_HELDOUT_MANIFEST,
@@ -220,6 +221,7 @@ export function makeG08Config(id: string): SimulationConfig {
   const item = getManifestItem(id);
   return {
     ...item.input,
+    strategies: makeDefaultTeamStrategySelection(),
     initialPositions: copyInitialPlayerPositions(item.input.initialPositions),
   };
 }
