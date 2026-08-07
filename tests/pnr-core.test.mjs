@@ -71,6 +71,15 @@ import {
   findF03ProhibitedOutputFields,
 } from "../lib/pnr-f03-heldout-manifest.ts";
 import {
+  F03_MANIFEST_COMMIT,
+  createF03Replay,
+  scanF03Heldout,
+} from "../lib/pnr-f03-heldout-audit.ts";
+import {
+  makeFormationGeneralizationReplayConfig,
+  scanFormationGeneralization,
+} from "../lib/pnr-formation-generalization-results.ts";
+import {
   UNDER_R2_AUDIT,
   UNDER_R2_DEEP_RETREAT_RIGHT_INITIAL_POSITIONS,
   UNDER_R2_FALSE_POSITIVE_DEEP_RIGHT_INITIAL_POSITIONS,
@@ -2572,6 +2581,114 @@ test("F02 latches a published joint-ready fact through the exact next planner bo
       1,
       sampleId,
     );
+  }
+});
+
+test("F03 audits every locked held-out input twice plus its unlabeled corresponding mirror", () => {
+  const audit = scanF03Heldout();
+  assert.equal(F03_MANIFEST_COMMIT, "ba39ef025f29d181af8c7d137d6807f7825c9717");
+  assert.equal(audit.frozenCoreCommit, F03_FROZEN_CORE_COMMIT);
+  assert.equal(audit.manifestCommit, F03_MANIFEST_COMMIT);
+  assert.equal(audit.manifestHash, F03_MANIFEST_HASH);
+  assert.equal(audit.manifestCount, 16);
+  assert.equal(audit.executedCount, 16);
+  assert.equal(audit.primaryWorldCount, 16);
+  assert.equal(audit.correspondingMirrorWorldCount, 16);
+  assert.equal(audit.executionsPerWorld, 2);
+  assert.equal(audit.successfulFormationWorlds, 28);
+  assert.equal(audit.safeExitWorlds, 4);
+  assert.equal(audit.deterministic, true);
+  assert.equal(audit.mirrored, true);
+  assert.equal(audit.invariantsPassed, true);
+  assert.equal(audit.passed, true);
+  assert.deepEqual(audit.failedCaseIds, []);
+  assert.deepEqual(audit.failureReasons, []);
+
+  for (const [index, row] of audit.rows.entries()) {
+    const manifestItem = F03_HELDOUT_MANIFEST[index];
+    assert.equal(row.id, manifestItem.id);
+    assert.equal(row.side, manifestItem.side);
+    assert.equal(row.primary.side, manifestItem.side);
+    assert.notEqual(row.correspondingMirror.side, manifestItem.side);
+    assert.equal(row.passed, true, row.id);
+    assert.equal(row.pair.mirrorPassed, true, row.id);
+    assert.ok(row.pair.mirrorMaximumError <= 1e-9, row.id);
+    assert.deepEqual(row.primary.failures, [], row.id);
+    assert.deepEqual(row.correspondingMirror.failures, [], row.id);
+    assert.equal(row.earliestFailureTick, null, row.id);
+    assert.equal(row.minimumFailureTrace, null, row.id);
+    assert.equal(row.primary.deterministic, true, row.id);
+    assert.equal(row.correspondingMirror.deterministic, true, row.id);
+    assert.equal(row.primary.terminalReason, row.correspondingMirror.terminalReason, row.id);
+    assert.equal(row.primary.terminalTick, row.correspondingMirror.terminalTick, row.id);
+    if (row.primary.safeExitReason) {
+      assert.equal(row.primary.safeExitReason, "formation_timeout");
+      assert.equal(row.primary.eventTicks.jointReady, null);
+      assert.equal(row.primary.eventTicks.branch, null);
+    } else {
+      assert.ok(row.primary.eventTicks.screenSet <= row.primary.eventTicks.jointReady);
+      assert.ok(row.primary.eventTicks.jointReady < row.primary.eventTicks.branch);
+      assert.ok(row.primary.eventTicks.branch < row.primary.eventTicks.terminal);
+    }
+
+    const replay = createF03Replay(row.id, row.side);
+    assert.deepEqual(replay.config.initialPositions, manifestItem.input.initialPositions);
+    assert.deepEqual(
+      replay.config.formationLandmarkOffsets,
+      manifestItem.input.formationLandmarkOffsets,
+    );
+  }
+});
+
+test("F01-F03 representative replays are selected only from completed public audit statistics", () => {
+  const summary = scanFormationGeneralization();
+  assert.equal(summary.passed, true);
+  assert.deepEqual(summary.stageStatus, { F01: "PASS", F02: "PASS", F03: "PASS" });
+  assert.equal(summary.f02Seed, 20260809);
+  assert.equal(summary.f02InputHash, F02_INPUT_HASH);
+  assert.equal(summary.f03FrozenCoreCommit, F03_FROZEN_CORE_COMMIT);
+  assert.equal(summary.f03ManifestCommit, F03_MANIFEST_COMMIT);
+  assert.equal(summary.f03ManifestSeed, F03_MANIFEST_SEED);
+  assert.equal(summary.f03ManifestHash, F03_MANIFEST_HASH);
+  assert.deepEqual(
+    summary.replays.map(({ id, stage, sampleId, side }) => ({ id, stage, sampleId, side })),
+    [
+      {
+        id: "longest-f01-arrival",
+        stage: "F01",
+        sampleId: "F01-C02",
+        side: "right",
+      },
+      {
+        id: "tightest-f02-clearance",
+        stage: "F02",
+        sampleId: "F02-S15",
+        side: "right",
+      },
+      {
+        id: "longest-or-safe-exit",
+        stage: "F03",
+        sampleId: "F03-R03",
+        side: "right",
+      },
+      {
+        id: "diverse-heldout",
+        stage: "F03",
+        sampleId: "F03-L04",
+        side: "left",
+      },
+    ],
+  );
+  assert.equal(summary.replays[0].formationTimeSeconds > 0, true);
+  assert.equal(summary.replays[1].initialMinimumBodyGap < 0.03, true);
+  assert.equal(summary.replays[2].terminalCategory, "formation_timeout");
+  assert.equal(summary.replays[3].side, "left");
+  assert.notEqual(summary.replays[3].terminalCategory, summary.replays[2].terminalCategory);
+
+  for (const replay of summary.replays) {
+    const config = makeFormationGeneralizationReplayConfig(replay);
+    assert.equal(config.screenSide, replay.side);
+    assert.equal(config.startMode, "form_pnr");
   }
 });
 

@@ -118,6 +118,14 @@ import {
   makeUnderR2ReplayConfig,
   type UnderR2ReplayId,
 } from "@/lib/pnr-under-r2";
+import {
+  makeFormationGeneralizationReplayConfig,
+  scanFormationGeneralization,
+  type FormationGeneralizationReplay,
+  type FormationGeneralizationReplayId,
+  type FormationGeneralizationSummary,
+} from "@/lib/pnr-formation-generalization-results";
+import type { FormationSideAudit } from "@/lib/pnr-formation-audit";
 
 interface UiSnapshot {
   world: WorldState;
@@ -134,7 +142,7 @@ interface UiSnapshot {
 
 type PositionMap = Record<PlayerId, Vec2>;
 type TrailMap = Record<PlayerId, Vec2[]>;
-type LabMode = "scenarios" | "g01" | "g02" | "g03" | "g05" | "g06" | "g07" | "g08" | "p00" | "p01" | "p03" | "f00";
+type LabMode = "scenarios" | "g01" | "g02" | "g03" | "g05" | "g06" | "g07" | "g08" | "p00" | "p01" | "p03" | "f00" | "formation";
 type P00ReplayId = "initial-read" | "mismatch-read" | "post-catch-read";
 
 const P00_REPLAYS = Object.freeze([
@@ -205,6 +213,7 @@ const G08_AUDIT = scanG08Heldout();
 const P01_AUDIT = scanP01Calibration();
 const P02_AUDIT = scanP02DefenseCalibration();
 const P03_AUDIT = scanP03PolicyMatrix();
+const FORMATION_GENERALIZATION_AUDIT = scanFormationGeneralization();
 
 function planShort(id: string, side: ScreenSide): string {
   if (side === "left" && id === "USE_RIGHT_SCREEN") return "USE · 左侧使用";
@@ -3181,6 +3190,216 @@ function F00FormationPanel({
   );
 }
 
+function auditedFormationWorld(
+  summary: FormationGeneralizationSummary,
+  replay: FormationGeneralizationReplay,
+): FormationSideAudit {
+  if (replay.stage === "F01" || replay.stage === "F02") {
+    const audit = replay.stage === "F01" ? summary.f01 : summary.f02;
+    const row = audit.rows.find((candidate) => candidate.id === replay.sampleId);
+    if (!row) throw new Error(`Missing ${replay.stage} audit row: ${replay.sampleId}`);
+    return replay.side === "right" ? row.right : row.left;
+  }
+  const row = summary.f03.rows.find((candidate) => candidate.id === replay.sampleId);
+  if (!row) throw new Error(`Missing F03 audit row: ${replay.sampleId}`);
+  return row.primary.side === replay.side ? row.primary : row.correspondingMirror;
+}
+
+function FormationGeneralizationPanel({
+  activeReplayId,
+  locked,
+  onReplaySelect,
+  snapshot,
+  summary,
+}: {
+  activeReplayId: FormationGeneralizationReplayId;
+  locked: boolean;
+  onReplaySelect: (replayId: FormationGeneralizationReplayId) => void;
+  snapshot: UiSnapshot;
+  summary: FormationGeneralizationSummary;
+}) {
+  const activeReplay = summary.replays.find((replay) => replay.id === activeReplayId) ??
+    summary.replays[0];
+  if (!activeReplay) return null;
+  const auditedWorld = auditedFormationWorld(summary, activeReplay);
+  const config = makeFormationGeneralizationReplayConfig(activeReplay);
+  const ticks = auditedWorld.eventTicks;
+  const keyEvents = auditedWorld.events.filter((event) => [
+    "screen_set",
+    "formation_ready",
+    "branch_use",
+    "branch_reject",
+    "screen_cleared",
+    "formation_timeout",
+    "terminal",
+  ].includes(event.type));
+  const displayMeters = (value: number): string =>
+    (Math.abs(value) < 0.0005 ? 0 : value).toFixed(3);
+  const routePhase = (plan: TeamPlan): string => {
+    if (!plan.route) return "none";
+    return Object.values(plan.route.tracks).flatMap((track) => {
+      if (!track) return [];
+      const segment = track.segments[track.segmentIndex];
+      return segment
+        ? [`${track.playerId}:${segment.phase}[${track.segmentIndex + 1}/${track.segments.length}]`]
+        : [`${track.playerId}:complete`];
+    }).join(" · ") || plan.route.kind;
+  };
+  const observerSummary = (team: "offense" | "defense"): string =>
+    auditedWorld.observerPlans
+      .filter((plan) => plan.team === team)
+      .map((plan) => {
+        const phases = [...new Set(plan.segments.map(
+          (segment) => `${segment.playerId}:${segment.phase}`,
+        ))];
+        const route = plan.routeKind
+          ? `${plan.routeKind} · ${phases.join("/")}`
+          : "no-private-route";
+        return `${plan.planId} [${route}]`;
+      })
+      .filter((entry, index, entries) => index === 0 || entry !== entries[index - 1])
+      .join(" → ");
+  const failureReasons = [
+    ...summary.f01.failureReasons,
+    ...summary.f02.failureReasons,
+    ...summary.f03.failureReasons,
+  ];
+
+  return (
+    <section
+      className="g01-probe g08-probe formation-generalization"
+      aria-label="F01 到 F03 Formation 泛化审计"
+    >
+      <div className="g01-probe__head">
+        <div>
+          <span className="eyebrow">F01–F03 · STRUCTURED → BOUNDED RANDOM → LOCKED HELD-OUT</span>
+          <h2>Formation 泛化</h2>
+          <p>同一组 FORM_SCREEN / TRACK_FORMATION 原语；公开几何输入先验合法，真实运动决定形成、旧挡拆分支或明确安全退出。</p>
+        </div>
+        <span className={"g01-status " + (summary.passed ? "is-pass" : "is-fail")}>
+          {summary.passed ? "F01–F03 AUDIT PASS" : "F01–F03 AUDIT FAIL"}
+        </span>
+      </div>
+
+      <div className="g01-summary formation-stage-summary">
+        <div>
+          <span>F01 · STRUCTURED</span>
+          <strong>{summary.stageStatus.F01} · {summary.f01.canonicalInputCount} inputs / {summary.f01.worldCount} worlds</strong>
+          <small>{summary.f01.successfulFormationWorlds} formed · {summary.f01.safeExitWorlds} safe exits · each world ×{summary.f01.executionsPerWorld}</small>
+        </div>
+        <div>
+          <span>F02 · BOUNDED RANDOM</span>
+          <strong>{summary.stageStatus.F02} · {summary.f02.canonicalInputCount} inputs / {summary.f02.worldCount} worlds</strong>
+          <small>{summary.f02.successfulFormationWorlds} formed · {summary.f02.safeExitWorlds} safe exits · seed {summary.f02Seed}</small>
+        </div>
+        <div>
+          <span>F03 · HELD-OUT</span>
+          <strong>{summary.stageStatus.F03} · {summary.f03.executedCount}/{summary.f03.manifestCount}</strong>
+          <small>{summary.f03.successfulFormationWorlds} formed · {summary.f03.safeExitWorlds} safe exits · {summary.f03.primaryWorldCount} manifest + {summary.f03.correspondingMirrorWorldCount} mirrors · each world ×{summary.f03.executionsPerWorld}</small>
+        </div>
+        <div>
+          <span>CURRENT LOCK</span>
+          <strong>{activeReplay.stage} · {activeReplay.sampleId} · {activeReplay.side.toUpperCase()}</strong>
+          <small>{locked ? "RUNNING · sample/side locked" : "READY · choose one audited replay"}</small>
+        </div>
+      </div>
+
+      <div className="g01-replays formation-replays" aria-label="四个审计后代表回放">
+        {summary.replays.map((replay) => (
+          <button
+            aria-pressed={replay.id === activeReplay.id}
+            className={replay.id === activeReplay.id ? "is-active" : ""}
+            disabled={locked}
+            key={replay.id}
+            onClick={() => onReplaySelect(replay.id)}
+            type="button"
+          >
+            <span>{replay.label}</span>
+            <strong>{replay.sampleId} · {replay.side.toUpperCase()}</strong>
+            <small>{replay.note}</small>
+          </button>
+        ))}
+      </div>
+
+      <div className="formation-lock-grid">
+        <div>
+          <span>F02 SEED / INPUT HASH</span>
+          <strong>{summary.f02Seed} · {summary.f02Generation.acceptedCount}/{summary.f02Generation.candidateCount}</strong>
+          <small className="formation-hash" title={summary.f02InputHash}>{summary.f02InputHash}</small>
+        </div>
+        <div>
+          <span>F03 FROZEN CORE</span>
+          <strong title={summary.f03FrozenCoreCommit}>{summary.f03FrozenCoreCommit.slice(0, 12)}</strong>
+          <small>{summary.f03Generation.candidateCount} candidates · {summary.f03Generation.geometryRejectedCount} geometry rejects · seed {summary.f03ManifestSeed}</small>
+        </div>
+        <div>
+          <span>F03 MANIFEST COMMIT / HASH</span>
+          <strong title={summary.f03ManifestCommit}>{summary.f03ManifestCommit.slice(0, 12)}</strong>
+          <small className="formation-hash" title={summary.f03ManifestHash}>{summary.f03ManifestHash}</small>
+        </div>
+      </div>
+
+      <div className="formation-input-layout">
+        <div>
+          <span>PUBLIC INITIAL POSITIONS · {activeReplay.side.toUpperCase()}</span>
+          <div className="g05-positions">
+            {PLAYER_IDS.map((id) => (
+              <div key={id}>
+                <span>{id}</span>
+                <strong>({config.initialPositions[id].x.toFixed(3)}, {config.initialPositions[id].y.toFixed(3)})</strong>
+                <small>{id === "O1" ? "ball handler" : id === "O5" ? "screener" : `guards ${id === "D1" ? "O1" : "O5"}`}</small>
+              </div>
+            ))}
+          </div>
+        </div>
+        <div>
+          <span>PUBLIC FORMATION LANDMARKS</span>
+          {Object.entries(snapshot.world.landmarks).map(([name, value]) => (
+            <small key={name}>{name} ({value.x.toFixed(3)}, {value.y.toFixed(3)})</small>
+          ))}
+          <strong>screenSide = {snapshot.world.screenSide}</strong>
+        </div>
+        <div>
+          <span>AUDITED METRICS</span>
+          <strong>formation {auditedWorld.formationTimeSeconds.toFixed(3)}s · min body {displayMeters(auditedWorld.minimumBodyGap)}m</strong>
+          <small>initial clearance {displayMeters(auditedWorld.initialMinimumBodyGap)}m · replans O/D {auditedWorld.offenseReplans}/{auditedWorld.defenseReplans}</small>
+          <small>safe exit {auditedWorld.safeExitReason ?? "none"} · terminal {auditedWorld.terminalReason}@{auditedWorld.terminalTick}</small>
+        </div>
+      </div>
+
+      <div className="p03-current-grid formation-current-grid">
+        <div>
+          <span>LIVE TEAM PLANS / PRIVATE ROUTES · OBSERVER</span>
+          <strong>O · {snapshot.offensePlan.id} · {routePhase(snapshot.offensePlan)}</strong>
+          <small>D · {snapshot.defensePlan.id} · {routePhase(snapshot.defensePlan)}</small>
+          <em>O audit: {observerSummary("offense")}</em>
+          <em>D audit: {observerSummary("defense")}</em>
+        </div>
+        <div>
+          <span>LIVE ROLE OWNERSHIP</span>
+          <strong>{snapshot.roles.map((role) => `${role.playerId}:${role.roleCode}`).join(" · ")}</strong>
+          <small>{snapshot.roles.map((role) => `${role.playerId}→${role.owner}`).join(" · ")}</small>
+          <em>Observer display only；不回流至球队规划输入。</em>
+        </div>
+        <div>
+          <span>CAUSAL TIMELINE</span>
+          <strong>set {ticks.screenSet ?? "—"} · ready {ticks.jointReady ?? "—"} · branch {ticks.branch ?? "—"}</strong>
+          <small>screen_cleared {ticks.screenCleared ?? "—"} · terminal {ticks.terminal ?? "—"}</small>
+          <div className="p03-event-line">
+            {keyEvents.map((event) => <i key={`${event.type}/${event.tick}`}>{event.type}@{event.tick}</i>)}
+          </div>
+        </div>
+      </div>
+
+      {!summary.passed && (
+        <div className="g01-failures">
+          {failureReasons.map((reason) => <p key={reason}>{reason}</p>)}
+        </div>
+      )}
+    </section>
+  );
+}
+
 export default function PnrLab() {
   const [labMode, setLabMode] = useState<LabMode>("scenarios");
   const [scenarioId, setScenarioId] = useState<ScenarioId>(DEFAULT_SCENARIO_ID);
@@ -3205,6 +3424,8 @@ export default function PnrLab() {
   const [underR2ReplayId, setUnderR2ReplayId] =
     useState<UnderR2ReplayId>("f00-gap");
   const [f00Side, setF00Side] = useState<ScreenSide>("right");
+  const [formationReplayId, setFormationReplayId] =
+    useState<FormationGeneralizationReplayId>("longest-f01-arrival");
   const [initialSimulation] = useState(
     () => new PnrSimulation(makeScenarioConfig(DEFAULT_SCENARIO_ID)),
   );
@@ -3331,8 +3552,24 @@ export default function PnrLab() {
     installSimulation(createUnderR2Replay(nextReplayId, nextSide), shouldPlay);
   }, [installSimulation]);
 
+  const replaceFormationSimulation = useCallback((
+    nextReplayId: FormationGeneralizationReplayId,
+    shouldPlay: boolean,
+  ): void => {
+    const replay = FORMATION_GENERALIZATION_AUDIT.replays.find(
+      (candidate) => candidate.id === nextReplayId,
+    );
+    if (!replay) throw new Error(`Unknown Formation replay: ${nextReplayId}`);
+    installSimulation(
+      new PnrSimulation(makeFormationGeneralizationReplayConfig(replay)),
+      shouldPlay,
+    );
+  }, [installSimulation]);
+
   const replaceCurrentSimulation = useCallback((shouldPlay: boolean): void => {
-    if (labMode === "f00") {
+    if (labMode === "formation") {
+      replaceFormationSimulation(formationReplayId, shouldPlay);
+    } else if (labMode === "f00") {
       replaceF00Simulation(underR2ReplayId, f00Side, shouldPlay);
     } else if (labMode === "g01") {
       replaceG01Simulation(g01ReplayId, shouldPlay);
@@ -3367,6 +3604,7 @@ export default function PnrLab() {
     g07Side,
     g08ReplayId,
     f00Side,
+    formationReplayId,
     underR2ReplayId,
     p00ReplayId,
     p01ReplayId,
@@ -3381,6 +3619,7 @@ export default function PnrLab() {
     replaceG07Simulation,
     replaceG08Simulation,
     replaceF00Simulation,
+    replaceFormationSimulation,
     replaceP00Simulation,
     replaceP01Simulation,
     replaceP03Simulation,
@@ -3505,6 +3744,10 @@ export default function PnrLab() {
     P01_REPLAYS.find((replay) => replay.id === p01ReplayId) ?? P01_REPLAYS[0];
   const currentP03Row =
     P03_AUDIT.rows.find((row) => row.id === p03MatchupId) ?? P03_AUDIT.rows[0];
+  const currentFormationReplay =
+    FORMATION_GENERALIZATION_AUDIT.replays.find(
+      (replay) => replay.id === formationReplayId,
+    ) ?? FORMATION_GENERALIZATION_AUDIT.replays[0];
 
   return (
     <main className="lab-shell">
@@ -3530,6 +3773,11 @@ export default function PnrLab() {
           {labMode === "p01" && <span>P01 · {currentP01Replay.code} · {strategyLocked ? "LOCKED" : "READY"}</span>}
           {labMode === "p03" && <span>P02–P03 · {currentP03Row.id} · {strategyLocked ? "LOCKED" : "READY"}</span>}
           {labMode === "f00" && <span>F00-R2 · {underR2ReplayId} · {f00Side.toUpperCase()}</span>}
+          {labMode === "formation" && currentFormationReplay && (
+            <span>
+              F01–F03 · {currentFormationReplay.sampleId} · {currentFormationReplay.side.toUpperCase()} · {playing || snapshot.world.tick > 0 ? "LOCKED" : "READY"}
+            </span>
+          )}
           <span>HASH {snapshot.world.stateHash}</span>
         </div>
       </header>
@@ -3667,6 +3915,17 @@ export default function PnrLab() {
         >
           F00-R2 · 形成 / UNDER
         </button>
+        <button
+          aria-pressed={labMode === "formation"}
+          className={labMode === "formation" ? "is-active" : ""}
+          onClick={() => {
+            setLabMode("formation");
+            replaceFormationSimulation(formationReplayId, false);
+          }}
+          type="button"
+        >
+          F01–F03 · Formation 泛化
+        </button>
       </nav>
 
       {labMode === "scenarios" ? (
@@ -3795,6 +4054,17 @@ export default function PnrLab() {
             replaceP01Simulation(p01ReplayId, nextStrategyId, false);
           }}
           strategyLocked={strategyLocked}
+        />
+      ) : labMode === "formation" ? (
+        <FormationGeneralizationPanel
+          activeReplayId={formationReplayId}
+          locked={playing || snapshot.world.tick > 0}
+          onReplaySelect={(nextReplayId) => {
+            setFormationReplayId(nextReplayId);
+            replaceFormationSimulation(nextReplayId, false);
+          }}
+          snapshot={snapshot}
+          summary={FORMATION_GENERALIZATION_AUDIT}
         />
       ) : labMode === "f00" ? (
         <F00FormationPanel

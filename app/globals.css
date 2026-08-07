@@ -1330,6 +1330,94 @@ select:focus-visible {
   padding: 4px 6px;
 }
 
+.formation-generalization {
+  background:
+    linear-gradient(135deg, rgba(80, 217, 181, 0.075), rgba(79, 140, 255, 0.04) 48%, rgba(238, 102, 150, 0.035));
+  border-color: rgba(80, 217, 181, 0.3);
+}
+
+.formation-replays {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.formation-generalization .formation-replays button:hover,
+.formation-generalization .formation-replays button.is-active {
+  border-color: rgba(80, 217, 181, 0.58);
+}
+
+.formation-generalization .formation-replays button.is-active {
+  background: rgba(80, 217, 181, 0.085);
+  box-shadow: inset 3px 0 #50d9b5;
+}
+
+.formation-replays button:disabled {
+  cursor: not-allowed;
+  opacity: 0.54;
+}
+
+.formation-lock-grid,
+.formation-input-layout {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.formation-lock-grid > div,
+.formation-input-layout > div {
+  background: rgba(8, 14, 20, 0.7);
+  border: 1px solid rgba(80, 217, 181, 0.16);
+  border-radius: 9px;
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  padding: 9px 10px;
+}
+
+.formation-input-layout {
+  grid-template-columns: minmax(0, 1.35fr) minmax(190px, 0.65fr) minmax(250px, 0.8fr);
+}
+
+.formation-lock-grid span,
+.formation-input-layout > div > span {
+  color: #78a99d;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 7px;
+  font-weight: 900;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.formation-lock-grid strong,
+.formation-input-layout > div > strong {
+  color: #dce8e4;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 9px;
+  overflow-wrap: anywhere;
+}
+
+.formation-lock-grid small,
+.formation-input-layout > div > small {
+  color: #758c86;
+  font-size: 8px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.formation-hash,
+.formation-current-grid em {
+  overflow-wrap: anywhere;
+}
+
+.formation-current-grid > div {
+  border-color: rgba(80, 217, 181, 0.16);
+}
+
+.formation-current-grid .p03-event-line i {
+  background: rgba(80, 217, 181, 0.07);
+  border-color: rgba(80, 217, 181, 0.18);
+  color: #95d6c5;
+}
+
 .g01-active-read {
   align-items: stretch;
   display: grid;
@@ -2504,6 +2592,15 @@ footer > span {
     grid-template-columns: 1fr;
   }
 
+  .formation-replays,
+  .formation-lock-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .formation-input-layout {
+    grid-template-columns: 1fr;
+  }
+
   .g01-active-read {
     grid-template-columns: 1fr 1fr;
   }
@@ -2584,7 +2681,9 @@ footer > span {
   }
 
   .g08-lock-grid,
-  .g08-candidate-groups {
+  .g08-candidate-groups,
+  .formation-replays,
+  .formation-lock-grid {
     grid-template-columns: 1fr;
   }
 
