@@ -30,18 +30,21 @@
 
 ## 按任务选择上下文
 
-### 继续当前 F00 纠偏
+### 开始 F01–F03 Formation 泛化合并增量
 
 读取：
 
 - `AGENTS.md`
 - `CURRENT.md`
 - `lib/pnr-f00-formation.ts`
+- `lib/pnr-under-r2.ts`
 - `lib/pnr-core.ts` 中 Formation 类型、planner observation、形成计划、readiness 与交接相关函数
-- `tests/pnr-core.test.mjs` 中 F00 测试
-- `DECISIONS.md` 的 D008–D010
+- `lib/pnr-core.ts` 中 UNDER 私有 route、screen-cleared 重规划与中立真实性门
+- `tests/pnr-core.test.mjs` 中 F00-R2 测试与 170 输入回归入口
+- `DECISIONS.md` 的 D009、D011–D014
+- 进度账本中“阶段 E”与“F 之后的批准主线”
 
-暂时不要读取全部 S01–P03 说明；只有旧回归失败时再定位对应阶段。
+F01、F02、F03 必须依次通过内部停止门；暂时不要读取全部 S01–P03 说明，只有旧回归失败时再定位对应阶段。不得提前开始 A 自动选边。
 
 ### 调查旧 S/G/P 回归
 

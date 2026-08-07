@@ -2,7 +2,7 @@
 
 这是一个独立、确定性、可观看且可解释的 2v2 挡拆算法实验台。它不是预录轨迹：两支球队分别产生队级计划，中立世界以固定时间步解析运动、身体几何、球权、传球和事件。
 
-当前稳定检查点已经覆盖 S01–S08 战术证人、G01–G08 受限域泛化，以及 P00–P03 的两套进攻策略 × 三套防守策略。当前开发范围只有 F00 Formation：从一个固定偏移起手真实形成掩护，再接入既有挡拆内核。实时状态见 [`docs/CURRENT.md`](./docs/CURRENT.md)。
+当前稳定检查点已经覆盖 S01–S08 战术证人、G01–G08 受限域泛化、P00–P03 的两套进攻策略 × 三套防守策略，以及已验收的 F00 Formation/UNDER-R2 固定起手闭环。下一批准增量是合并完成 F01–F03，在严格内部停止门下验证结构化起手、有界 seed 随机与冻结 Formation held-out。实时状态见 [`docs/CURRENT.md`](./docs/CURRENT.md)。
 
 ## 新 agent 从哪里开始
 
@@ -70,6 +70,7 @@ npm run build
 ### 当前 Formation 增量
 
 - `lib/pnr-f00-formation.ts`：F00 固定起手、左右回放和形成阶段审计。
+- `lib/pnr-under-r2.ts`：F00/真实 deep-retreat 两条观察回放、旧假 deep 负回归及私有 route/镜像审计。
 - `components/PnrLab.tsx`：可丢弃的 Canvas 观察入口；可以展示全量调试信息，但不得控制球队决策。
 
 ### 泛化与策略审计
@@ -81,7 +82,7 @@ npm run build
 
 ### 验证
 
-- `tests/pnr-core.test.mjs`：核心不变量、S/G/P 回归，以及当前 F00 因果与信息边界门。
+- `tests/pnr-core.test.mjs`：核心不变量、S/G/P 回归，以及当前 F00-R2 路径、真实性与信息边界门。
 - `app/`：页面入口和全局样式。
 - `worker/`、`build/`：本地运行与构建适配，不承载篮球决策。
 
