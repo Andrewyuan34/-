@@ -6,9 +6,12 @@ import type {
 } from "./pnr-core.ts";
 
 export type DecisionPhase =
+  | "offense_formation"
   | "offense_initial_read"
+  | "offense_under_read"
   | "offense_mismatch"
   | "offense_post_catch"
+  | "defense_formation"
   | "defense_initial_coverage"
   | "defense_mismatch"
   | "defense_post_catch";
@@ -54,28 +57,38 @@ export interface StrategyScoreBreakdown {
 }
 
 export const DECISION_PHASE_LABELS: Readonly<Record<DecisionPhase, string>> = Object.freeze({
+  offense_formation: "进攻 · 形成掩护",
   offense_initial_read: "进攻 · 初始阅读",
+  offense_under_read: "进攻 · UNDER 后二级读取",
   offense_mismatch: "进攻 · 换防后错位",
   offense_post_catch: "进攻 · O5 接球后",
+  defense_formation: "防守 · 跟随形成",
   defense_initial_coverage: "防守 · 初始覆盖",
   defense_mismatch: "防守 · 换防后错位",
   defense_post_catch: "防守 · O5 接球后",
 });
 
 const OFFENSE_PHASES = new Set<DecisionPhase>([
+  "offense_formation",
   "offense_initial_read",
+  "offense_under_read",
   "offense_mismatch",
   "offense_post_catch",
 ]);
 const DEFENSE_PHASES = new Set<DecisionPhase>([
+  "defense_formation",
   "defense_initial_coverage",
   "defense_mismatch",
   "defense_post_catch",
 ]);
 
 const OFFENSE_PLAN_IDS = [
+  "FORM_SCREEN",
   "USE_RIGHT_SCREEN",
   "REJECT_LEFT",
+  "ATTACK_UNDER_GAP",
+  "TAKE_UNDER_PULLUP",
+  "RESET_UNDER",
   "ATTACK_BIG",
   "FEED_SEAL",
   "RESET_MISMATCH",
@@ -85,6 +98,7 @@ const OFFENSE_PLAN_IDS = [
 ] as const satisfies readonly OffensePlanId[];
 
 const DEFENSE_PLAN_IDS = [
+  "TRACK_FORMATION",
   "SWITCH_READY",
   "SWITCH",
   "STAY_HOME",
@@ -192,7 +206,9 @@ export const OFFENSE_BALANCED_READ = freezeProfile({
   label: "平衡阅读",
   description: "只保留既有硬可行性、短推演与滞回评分；P00 不改变任何进攻候选偏好。",
   phasePreferences: {
+    offense_formation: zeroPreferences(OFFENSE_PLAN_IDS, OFFENSE_ZERO_REASON),
     offense_initial_read: zeroPreferences(OFFENSE_PLAN_IDS, OFFENSE_ZERO_REASON),
+    offense_under_read: zeroPreferences(OFFENSE_PLAN_IDS, OFFENSE_ZERO_REASON),
     offense_mismatch: zeroPreferences(OFFENSE_PLAN_IDS, OFFENSE_ZERO_REASON),
     offense_post_catch: zeroPreferences(OFFENSE_PLAN_IDS, OFFENSE_ZERO_REASON),
   },
@@ -206,9 +222,17 @@ export const OFFENSE_MISMATCH_PRESSURE = freezeProfile({
   description:
     "只在换防完成后的错位阶段，为硬可行的 ATTACK_BIG 增加统一 +0.02；其他候选和阶段保持零调整。",
   phasePreferences: {
+    offense_formation: zeroPreferences(
+      OFFENSE_PLAN_IDS,
+      "P01 错位攻击优先在形成阶段保持基础方案，不施加偏好",
+    ),
     offense_initial_read: zeroPreferences(
       OFFENSE_PLAN_IDS,
       "P01 错位攻击优先尚未进入 post-switch；保持基础评分",
+    ),
+    offense_under_read: zeroPreferences(
+      OFFENSE_PLAN_IDS,
+      "P01 错位攻击优先不影响 UNDER 后二级读取；保持基础评分",
     ),
     offense_mismatch: mismatchPressurePreferences(),
     offense_post_catch: zeroPreferences(
@@ -225,6 +249,7 @@ export const DEFENSE_BALANCED_COVERAGE = freezeProfile({
   label: "平衡覆盖",
   description: "只保留既有硬可行性、短推演与滞回评分；P00 不改变任何防守候选偏好。",
   phasePreferences: {
+    defense_formation: zeroPreferences(DEFENSE_PLAN_IDS, DEFENSE_ZERO_REASON),
     defense_initial_coverage: zeroPreferences(DEFENSE_PLAN_IDS, DEFENSE_ZERO_REASON),
     defense_mismatch: zeroPreferences(DEFENSE_PLAN_IDS, DEFENSE_ZERO_REASON),
     defense_post_catch: zeroPreferences(DEFENSE_PLAN_IDS, DEFENSE_ZERO_REASON),
@@ -239,6 +264,10 @@ export const DEFENSE_MISMATCH_PRESSURE = freezeProfile({
   description:
     "只在换防完成后的错位阶段，为硬可行的 PRESSURE_MISMATCH 增加统一 +1.18；其他候选和阶段保持零调整。",
   phasePreferences: {
+    defense_formation: zeroPreferences(
+      DEFENSE_PLAN_IDS,
+      "P02 错位持球施压在形成阶段保持原对位跟随，不施加偏好",
+    ),
     defense_initial_coverage: zeroPreferences(
       DEFENSE_PLAN_IDS,
       "P02 错位持球施压尚未进入换防后错位；保持基础评分",
@@ -259,6 +288,10 @@ export const DEFENSE_EARLY_DIG = freezeProfile({
   description:
     "只在 O5 完成合法接球后的阶段，为硬可行的 DIG_POST 增加统一 +0.24；真实帮助与分球仍由公开移动和局部几何决定。",
   phasePreferences: {
+    defense_formation: zeroPreferences(
+      DEFENSE_PLAN_IDS,
+      "P02 接球后提前协防在形成阶段保持原对位跟随，不施加偏好",
+    ),
     defense_initial_coverage: zeroPreferences(
       DEFENSE_PLAN_IDS,
       "P02 接球后提前协防尚未发生 O5 接球；保持基础评分",

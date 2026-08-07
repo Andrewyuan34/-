@@ -110,6 +110,14 @@ import {
   type P03MatchupId,
   type P03MatrixAuditResult,
 } from "@/lib/pnr-p03-policy-matrix";
+import { F00_AUDIT } from "@/lib/pnr-f00-formation";
+import {
+  UNDER_R2_AUDIT,
+  UNDER_R2_REPLAYS,
+  createUnderR2Replay,
+  makeUnderR2ReplayConfig,
+  type UnderR2ReplayId,
+} from "@/lib/pnr-under-r2";
 
 interface UiSnapshot {
   world: WorldState;
@@ -126,7 +134,7 @@ interface UiSnapshot {
 
 type PositionMap = Record<PlayerId, Vec2>;
 type TrailMap = Record<PlayerId, Vec2[]>;
-type LabMode = "scenarios" | "g01" | "g02" | "g03" | "g05" | "g06" | "g07" | "g08" | "p00" | "p01" | "p03";
+type LabMode = "scenarios" | "g01" | "g02" | "g03" | "g05" | "g06" | "g07" | "g08" | "p00" | "p01" | "p03" | "f00";
 type P00ReplayId = "initial-read" | "mismatch-read" | "post-catch-read";
 
 const P00_REPLAYS = Object.freeze([
@@ -161,6 +169,7 @@ const PLAYER_COLORS: Record<PlayerId, string> = {
 };
 
 const PLAN_SHORT: Record<string, string> = {
+  FORM_SCREEN: "FORM · 到位设掩护",
   USE_RIGHT_SCREEN: "USE · 右侧使用",
   REJECT_LEFT: "REJECT · 左侧拒绝",
   ATTACK_BIG: "ATTACK · 攻击换防大个",
@@ -178,8 +187,12 @@ const PLAN_SHORT: Record<string, string> = {
   POST_FINISH: "FINISH · O5 转身攻筐",
   KICK_OUT: "KICK · O5 分回 O1",
   REJECT_SLIP_PASS: "SLIP · 拒绝后分 O5",
+  ATTACK_UNDER_GAP: "ATTACK · 攻击 UNDER 髋部",
+  TAKE_UNDER_PULLUP: "PULLUP · 真实净空急停",
+  RESET_UNDER: "RESET · 安全收住 UNDER",
   UNDER: "UNDER · D1 走下方",
   TAG_REJECT: "TAG · D5 协防拒绝",
+  TRACK_FORMATION: "TRACK · 保持原对位",
 };
 
 const G01_AUDIT = scanG01SpeedBoundary();
@@ -213,6 +226,43 @@ function clonePlan(plan: TeamPlan): TeamPlan {
     roles: Object.fromEntries(
       Object.entries(plan.roles).map(([id, role]) => [id, role ? { ...role } : role]),
     ),
+    route: plan.route
+      ? {
+          ...plan.route,
+          tracks: Object.fromEntries(
+            Object.entries(plan.route.tracks).map(([id, track]) => [
+              id,
+              track
+                ? {
+                    ...track,
+                    reachedAtTick: [...track.reachedAtTick],
+                    segments: track.segments.map((segment) => ({
+                      ...segment,
+                      target: { ...segment.target },
+                      passageHalfPlane: segment.passageHalfPlane
+                        ? {
+                            ...segment.passageHalfPlane,
+                            normal: { ...segment.passageHalfPlane.normal },
+                          }
+                        : null,
+                      proof: {
+                        ...segment.proof,
+                        blockerIds: [...segment.proof.blockerIds],
+                        ...(segment.proof.releasesExistingContactByBlocker
+                          ? {
+                              releasesExistingContactByBlocker: [
+                                ...segment.proof.releasesExistingContactByBlocker,
+                              ],
+                            }
+                          : {}),
+                      },
+                    })),
+                  }
+                : track,
+            ]),
+          ),
+        }
+      : undefined,
   };
 }
 
@@ -225,8 +275,30 @@ function takeSnapshot(simulation: PnrSimulation): UiSnapshot {
       mismatch: { ...simulation.world.mismatch },
       seal: { ...simulation.world.seal },
       postCatch: { ...simulation.world.postCatch },
-      under: { ...simulation.world.under },
+      under: {
+        ...simulation.world.under,
+        ...(simulation.world.under.o1PositionAtScreenClear
+          ? {
+              o1PositionAtScreenClear: {
+                ...simulation.world.under.o1PositionAtScreenClear,
+              },
+            }
+          : {}),
+      },
       reject: { ...simulation.world.reject },
+      landmarks: {
+        screenAnchor: { ...simulation.world.landmarks.screenAnchor },
+        handlerWaitingPoint: { ...simulation.world.landmarks.handlerWaitingPoint },
+        useGate: { ...simulation.world.landmarks.useGate },
+        rejectGate: { ...simulation.world.landmarks.rejectGate },
+      },
+      tacticalLandmarks: {
+        screenAnchor: { ...simulation.world.tacticalLandmarks.screenAnchor },
+        handlerWaitingPoint: { ...simulation.world.tacticalLandmarks.handlerWaitingPoint },
+        useGate: { ...simulation.world.tacticalLandmarks.useGate },
+        rejectGate: { ...simulation.world.tacticalLandmarks.rejectGate },
+      },
+      formation: { ...simulation.world.formation },
       ball: {
         ...simulation.world.ball,
         pos: { ...simulation.world.ball.pos },
@@ -399,10 +471,16 @@ function drawCourt(
   context.stroke();
 
   context.beginPath();
-  context.arc(hoop.x, hoop.y, 4.72 * scale, 0.18 * Math.PI, 0.82 * Math.PI);
+  context.arc(
+    hoop.x,
+    hoop.y,
+    COURT.threePointArcRadius * scale,
+    0.18 * Math.PI,
+    0.82 * Math.PI,
+  );
   context.stroke();
 
-  const screenSpot = point(sidePoint(COURT.screenSpot));
+  const screenSpot = point(simulation.world.landmarks.screenAnchor);
   context.save();
   context.setLineDash([5, 6]);
   context.lineWidth = 1.2;
@@ -410,6 +488,20 @@ function drawCourt(
   context.beginPath();
   context.arc(screenSpot.x, screenSpot.y, 0.48 * scale, 0, Math.PI * 2);
   context.stroke();
+  if (simulation.config.startMode === "form_pnr") {
+    const waitingPoint = point(simulation.world.landmarks.handlerWaitingPoint);
+    context.fillStyle = "rgba(255, 243, 223, 0.9)";
+    context.font = "600 11px ui-monospace, SFMono-Regular, Menlo, monospace";
+    context.fillText("SCREEN ANCHOR", screenSpot.x + 8, screenSpot.y - 8);
+    context.strokeStyle = "rgba(255, 243, 223, 0.72)";
+    context.strokeRect(
+      waitingPoint.x - 0.16 * scale,
+      waitingPoint.y - 0.16 * scale,
+      0.32 * scale,
+      0.32 * scale,
+    );
+    context.fillText("O1 WAIT", waitingPoint.x + 8, waitingPoint.y - 8);
+  }
   context.restore();
 
   const drawPlanPath = (points: Vec2[], color: string): void => {
@@ -462,7 +554,42 @@ function drawCourt(
       remainingArc.push(sidePoint(shoulderPoint(0)));
     }
   }
-  if (
+  const drawCommittedTeamRoute = (
+    plan: TeamPlan,
+    playerIds: readonly PlayerId[],
+    color: string,
+  ): boolean => {
+    if (!plan.route) return false;
+    for (const playerId of playerIds) {
+      const track = plan.route.tracks[playerId];
+      if (!track) continue;
+      const remainingTargets = track.segments
+        .slice(track.segmentIndex)
+        .map((segment) => segment.target);
+      if (remainingTargets.length > 0) {
+        drawPlanPath([current[playerId], ...remainingTargets], color);
+      }
+    }
+    return true;
+  };
+  const offenseCommittedRouteDrawn = drawCommittedTeamRoute(
+    simulation.offensePlan,
+    ["O1", "O5"],
+    "#fff3df",
+  );
+  if (offenseCommittedRouteDrawn) {
+    // UNDER paths are planner-owned payloads; Canvas observes the committed
+    // segments instead of reconstructing or choosing a tactical route.
+  } else if (simulation.offensePlan.id === "FORM_SCREEN") {
+    drawPlanPath(
+      [o1Now, simulation.offensePlan.primaryTarget ?? simulation.world.landmarks.handlerWaitingPoint],
+      "#fff3df",
+    );
+    drawPlanPath(
+      [o5Now, simulation.offensePlan.secondaryTarget ?? simulation.world.landmarks.screenAnchor],
+      "rgba(255, 194, 139, 0.9)",
+    );
+  } else if (
     simulation.offensePlan.id === "POST_FINISH" ||
     simulation.offensePlan.id === "KICK_OUT"
   ) {
@@ -502,12 +629,22 @@ function drawCourt(
       simulation.offensePlan.id === "REJECT_LEFT"
         ? simulation.offensePlan.primaryTarget
           ? [o1Now, simulation.offensePlan.primaryTarget]
-          : [o1Now, sidePoint(COURT.rejectGate), sidePoint({ x: 4.46, y: 1.08 })]
-        : [o1Now, ...remainingArc, sidePoint(COURT.useGate), sidePoint({ x: 5.72, y: 1.05 })],
+          : [o1Now, simulation.world.landmarks.rejectGate, sidePoint({ x: 4.46, y: 1.08 })]
+        : [o1Now, ...remainingArc, simulation.world.landmarks.useGate, sidePoint({ x: 5.72, y: 1.05 })],
       "#fff3df",
     );
   }
-  if (simulation.defensePlan.id === "UNDER") {
+  const defenseCommittedRouteDrawn = drawCommittedTeamRoute(
+    simulation.defensePlan,
+    ["D1", "D5"],
+    "rgba(46, 91, 181, 0.78)",
+  );
+  if (defenseCommittedRouteDrawn) {
+    // See offense note above: this is observer-only route visualization.
+  } else if (simulation.defensePlan.id === "TRACK_FORMATION") {
+    drawPlanPath([current.D1, current.O1], "rgba(46, 91, 181, 0.78)");
+    drawPlanPath([current.D5, current.O5], "rgba(46, 91, 181, 0.78)");
+  } else if (simulation.defensePlan.id === "UNDER") {
     drawPlanPath([current.D1, towardHoop(current.O5, 0.86), current.O1], "rgba(46, 91, 181, 0.78)");
     drawPlanPath([current.D5, towardHoop(current.O5, 0.42)], "rgba(46, 91, 181, 0.78)");
   } else if (simulation.defensePlan.id === "TAG_REJECT") {
@@ -2817,6 +2954,233 @@ function P03PolicyMatrixPanel({
   );
 }
 
+function F00FormationPanel({
+  replayId,
+  side,
+  sideLocked,
+  snapshot,
+  onReplayChange,
+  onSideChange,
+}: {
+  replayId: UnderR2ReplayId;
+  side: ScreenSide;
+  sideLocked: boolean;
+  snapshot: UiSnapshot;
+  onReplayChange: (replayId: UnderR2ReplayId) => void;
+  onSideChange: (side: ScreenSide) => void;
+}) {
+  const config = makeUnderR2ReplayConfig(replayId, side);
+  const activeReplay = UNDER_R2_REPLAYS.find((replay) => replay.id === replayId) ??
+    UNDER_R2_REPLAYS[0];
+  const isFormationReplay = replayId === "f00-gap";
+  const auditSide = side === "right" ? F00_AUDIT.right : F00_AUDIT.left;
+  const passed = UNDER_R2_AUDIT.passed;
+  const diagnostics = auditSide.diagnostics;
+  const keyEvents = (isFormationReplay ? auditSide.events : snapshot.events).filter((event) => [
+    "screen_set",
+    "formation_ready",
+    "branch_use",
+    "branch_reject",
+    "contact_on",
+    "screen_effective",
+    "switch_completed",
+    "under_committed",
+    "under_recovery_blocked",
+    "under_drive_advantage",
+    "under_contained",
+    "pullup_window",
+    "pass_caught",
+    "formation_timeout",
+    "terminal",
+  ].includes(event.type));
+  const latestUnderRead = [...snapshot.planning].reverse().find(
+    (record) => record.decisionPhase === "offense_under_read",
+  );
+  const underReadPlan = latestUnderRead?.chosen ??
+    (isFormationReplay
+      ? diagnostics.underReadPlan
+      : UNDER_R2_AUDIT.deepRetreat.selectedPlan);
+  const underTick = isFormationReplay
+    ? diagnostics.underCommittedTick
+    : UNDER_R2_AUDIT.deepRetreat.underTick;
+  const underReadTick = isFormationReplay
+    ? diagnostics.underReadTick
+    : UNDER_R2_AUDIT.deepRetreat.readTick;
+  const topologyReasons = Object.values(F00_AUDIT.topologyRejections).join(" · ");
+  const failureReasons = [...new Set([
+    ...F00_AUDIT.right.failures,
+    ...F00_AUDIT.left.failures,
+    ...F00_AUDIT.mirrorFailures,
+    ...(!F00_AUDIT.topologyPassed ? ["F00_TOPOLOGY_REJECTION_GATE"] : []),
+    ...(!F00_AUDIT.informationOwnership.passed
+      ? ["F00_DEFENSE_INFORMATION_OWNERSHIP"]
+      : []),
+    ...UNDER_R2_AUDIT.deepRetreat.failures,
+  ])];
+  const currentFormationLabel = snapshot.world.under.active
+    ? "UNDER 后二级读取"
+    : snapshot.world.formation.phase === "pnr"
+      ? "现有挡拆阅读"
+    : snapshot.world.formation.screenSet && !snapshot.world.formation.jointReady
+      ? "O5 已设稳 · 等待 O1"
+      : snapshot.world.formation.jointReady
+        ? "O1 / O5 联合就绪"
+        : "形成掩护";
+
+  const routePhase = (plan: TeamPlan): string => {
+    if (!plan.route) return "none";
+    const activeSegments = Object.values(plan.route.tracks).flatMap((track) => {
+      if (!track) return [];
+      const segment = track.segments[track.segmentIndex];
+      return segment
+        ? [`${track.playerId}:${segment.phase}[${track.segmentIndex + 1}/${track.segments.length}]`]
+        : [`${track.playerId}:complete`];
+    });
+    return `v${plan.route.routeVersion} ${plan.route.boundary} · ${activeSegments.join(" · ")}`;
+  };
+
+  return (
+    <section className="g01-probe g07-probe f00-probe" aria-label="F00 与 UNDER 二级读取纠偏">
+      <div className="g01-probe__head">
+        <div>
+          <span className="eyebrow">F00-R2 · UNDER EVENT → NEXT-BOUNDARY OFFENSE READ</span>
+          <h2>形成挡拆与 UNDER 二级读取</h2>
+          <p>中立世界只发布 D1 已走下方；下一规划边界由进攻读取 D5 的真实深度、髋部路线和 contest 净空，再决定继续突破、真实急停或安全收住。</p>
+        </div>
+        <span className={"g01-status " + (passed ? "is-pass" : "is-fail")}>
+          {passed ? "F00-R2 SEMANTIC PASS" : "F00-R2 SEMANTIC FAIL"}
+        </span>
+      </div>
+
+      <div className="g01-summary">
+        <div>
+          <span>当前阶段</span>
+          <strong>{currentFormationLabel}</strong>
+          <small>{isFormationReplay ? `screen_set ${snapshot.world.formation.screenSetTick ?? "—"} · joint ready ${snapshot.world.formation.jointReadyTick ?? "—"} · PnR ${snapshot.world.formation.enteredPnrAtTick ?? "—"}` : "固定测试级 preset 起手；不加入 S 场景目录"}</small>
+        </div>
+        <div>
+          <span>双运行</span>
+          <strong>{(isFormationReplay
+            ? auditSide.deterministic
+            : side === "right"
+              ? UNDER_R2_AUDIT.deepRetreat.deterministicRight
+              : UNDER_R2_AUDIT.deepRetreat.deterministicLeft) ? "2 / 2 IDENTICAL" : "DIVERGED"}</strong>
+          <small>{side.toUpperCase()} · {(isFormationReplay ? auditSide.terminalReason : UNDER_R2_AUDIT.deepRetreat.terminalReason)} · mirror {(isFormationReplay ? F00_AUDIT.mirrorMaximumError : UNDER_R2_AUDIT.deepRetreat.maximumMirrorError).toExponential(2)}m</small>
+        </div>
+        <div>
+          <span>UNDER 二级读取</span>
+          <strong>{underReadPlan ?? "等待 under_committed"}</strong>
+          <small>under {underTick ?? "—"} · read {underReadTick ?? "—"} · 必须晚一 tick</small>
+        </div>
+        <div>
+          <span>{isFormationReplay ? "交接责任与输入边界" : "真实 pullup 净空"}</span>
+          <strong>{isFormationReplay
+            ? `D1 篮筐侧 +${diagnostics.d1GoalSideMargin?.toFixed(2)}m`
+            : `D5–O1 body gap ${UNDER_R2_AUDIT.deepRetreat.bodyGap?.toFixed(2)}m`}</strong>
+          <small title={topologyReasons}>{isFormationReplay
+            ? "4/4 非法模板拒绝；防守视图不含进攻私有地标"
+            : `O1 ${UNDER_R2_AUDIT.deepRetreat.maximumO1Speed.toFixed(2)} → ${UNDER_R2_AUDIT.deepRetreat.finalO1Speed?.toFixed(2)}m/s 后才发布窗口`}</small>
+          {!isFormationReplay && (
+            <small>
+              rim {UNDER_R2_AUDIT.deepRetreat.initialO1RimDistance.toFixed(2)} → {UNDER_R2_AUDIT.deepRetreat.finalO1RimDistance.toFixed(2)}m · post-clear progress {UNDER_R2_AUDIT.deepRetreat.rimwardProgressAfterClear?.toFixed(2)}m
+            </small>
+          )}
+        </div>
+      </div>
+
+      <div className="g07-side-row">
+        <div className="g07-side-switch" aria-label="选择 UNDER 代表回放">
+          {UNDER_R2_REPLAYS.map((replay) => (
+            <button
+              aria-pressed={replay.id === replayId}
+              className={replay.id === replayId ? "is-active" : ""}
+              disabled={sideLocked}
+              key={replay.id}
+              onClick={() => onReplayChange(replay.id)}
+              type="button"
+            >
+              {replay.label}
+            </button>
+          ))}
+        </div>
+        <div className="g07-side-switch" aria-label="选择 F00 真实运行侧">
+          {(["right", "left"] as const).map((option) => (
+            <button
+              aria-pressed={side === option}
+              className={side === option ? "is-active" : ""}
+              disabled={sideLocked}
+              key={option}
+              onClick={() => onSideChange(option)}
+              type="button"
+            >
+              {option === "right" ? "RIGHT · 右侧世界" : "LEFT · 左侧世界"}
+            </button>
+          ))}
+        </div>
+        <small>{sideLocked ? "运行已开始：回放与 side 均锁定；重置到 tick 0 后才可切换。" : activeReplay.note}</small>
+      </div>
+
+      <div className="g07-current">
+        <div>
+          <span className="eyebrow">{isFormationReplay ? "PUBLIC OFFSET START" : "TEST-LEVEL DEEP RETREAT INPUT"} · {side.toUpperCase()}</span>
+          <strong>screen anchor ({snapshot.world.landmarks.screenAnchor.x.toFixed(2)}, {snapshot.world.landmarks.screenAnchor.y.toFixed(2)})</strong>
+          <small>Observer debug：O1 waiting ({snapshot.world.landmarks.handlerWaitingPoint.x.toFixed(2)}, {snapshot.world.landmarks.handlerWaitingPoint.y.toFixed(2)})；防守规划输入不含 waiting/use/reject</small>
+        </div>
+        <div className="g05-positions">
+          {PLAYER_IDS.map((id) => (
+            <div key={id}>
+              <span>{id}</span>
+              <strong>({config.initialPositions[id].x.toFixed(2)}, {config.initialPositions[id].y.toFixed(2)})</strong>
+              <small>{isFormationReplay ? "固定公开 Formation 起手" : "固定测试级深沉退起手"}</small>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="p03-current-grid">
+        <div>
+          <span>LIVE TEAM PLANS</span>
+          <strong>O · {snapshot.offensePlan.id}</strong>
+          <small>D · {snapshot.defensePlan.id}</small>
+          <small>O route {routePhase(snapshot.offensePlan)}</small>
+          <small>D route {routePhase(snapshot.defensePlan)}</small>
+          <em>Formation 与 UNDER 二级读取的策略 adjustment 均固定为 0</em>
+        </div>
+        <div>
+          <span>LIVE ROLE OWNERSHIP</span>
+          <strong>{snapshot.roles.map((role) => `${role.playerId} ${role.roleCode}`).join(" · ")}</strong>
+          <small>每名球员始终只有一个本队规划器角色所有者</small>
+        </div>
+        <div>
+          <span>SEMANTIC GATE · DIAGNOSTIC TIMELINE</span>
+          <small>under_committed · next-tick offense_under_read · 真实运动 · 世界结果</small>
+          <strong>{keyEvents.length > 0 ? keyEvents.map((event) => `${event.type}@${event.tick}`).join(" → ") : "等待公开事件"}</strong>
+          <small>{isFormationReplay ? `${diagnostics.firstOffensePlan} × ${diagnostics.firstDefensePlan} · ${diagnostics.terminalReason}@${diagnostics.terminalTick}` : `TAKE_UNDER_PULLUP · pullup_window@${UNDER_R2_AUDIT.deepRetreat.pullupTick}`}</small>
+        </div>
+      </div>
+
+      {latestUnderRead && (
+        <div className="p03-current-grid" aria-label="UNDER 候选、评分与否决">
+          {latestUnderRead.candidates.map((candidate) => (
+            <div key={candidate.id}>
+              <span>{candidate.id}</span>
+              <strong>{candidate.feasible ? "FEASIBLE" : "VETOED"}</strong>
+              <small>{candidate.baseScore ?? "—"} + {candidate.strategyAdjustment.toFixed(2)} = {candidate.effectiveScore ?? "—"}</small>
+              <em>{candidate.feasible ? candidate.evidence[0] : candidate.vetoes[0]}</em>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {!passed && (
+        <div className="g01-failures">
+          {failureReasons.map((reason) => <p key={reason}>{reason}</p>)}
+        </div>
+      )}
+    </section>
+  );
+}
+
 export default function PnrLab() {
   const [labMode, setLabMode] = useState<LabMode>("scenarios");
   const [scenarioId, setScenarioId] = useState<ScenarioId>(DEFAULT_SCENARIO_ID);
@@ -2838,6 +3202,9 @@ export default function PnrLab() {
     useState<P01OffenseStrategyId>(OFFENSE_BALANCED_READ.id);
   const [p03DefenseStrategyId, setP03DefenseStrategyId] =
     useState<P02DefenseStrategyId>("DEFENSE_BALANCED_COVERAGE");
+  const [underR2ReplayId, setUnderR2ReplayId] =
+    useState<UnderR2ReplayId>("f00-gap");
+  const [f00Side, setF00Side] = useState<ScreenSide>("right");
   const [initialSimulation] = useState(
     () => new PnrSimulation(makeScenarioConfig(DEFAULT_SCENARIO_ID)),
   );
@@ -2956,8 +3323,18 @@ export default function PnrLab() {
     installSimulation(createP03PolicyReplay(nextMatchupId), shouldPlay);
   }, [installSimulation]);
 
+  const replaceF00Simulation = useCallback((
+    nextReplayId: UnderR2ReplayId,
+    nextSide: ScreenSide,
+    shouldPlay: boolean,
+  ): void => {
+    installSimulation(createUnderR2Replay(nextReplayId, nextSide), shouldPlay);
+  }, [installSimulation]);
+
   const replaceCurrentSimulation = useCallback((shouldPlay: boolean): void => {
-    if (labMode === "g01") {
+    if (labMode === "f00") {
+      replaceF00Simulation(underR2ReplayId, f00Side, shouldPlay);
+    } else if (labMode === "g01") {
       replaceG01Simulation(g01ReplayId, shouldPlay);
     } else if (labMode === "g02") {
       replaceG02Simulation(g02ReplayId, shouldPlay);
@@ -2989,6 +3366,8 @@ export default function PnrLab() {
     g07ReplayId,
     g07Side,
     g08ReplayId,
+    f00Side,
+    underR2ReplayId,
     p00ReplayId,
     p01ReplayId,
     p01OffenseStrategyId,
@@ -3001,6 +3380,7 @@ export default function PnrLab() {
     replaceG06Simulation,
     replaceG07Simulation,
     replaceG08Simulation,
+    replaceF00Simulation,
     replaceP00Simulation,
     replaceP01Simulation,
     replaceP03Simulation,
@@ -3149,6 +3529,7 @@ export default function PnrLab() {
           {labMode === "p00" && <span>P00 · {currentP00Replay.code} · {strategyLocked ? "LOCKED" : "READY"}</span>}
           {labMode === "p01" && <span>P01 · {currentP01Replay.code} · {strategyLocked ? "LOCKED" : "READY"}</span>}
           {labMode === "p03" && <span>P02–P03 · {currentP03Row.id} · {strategyLocked ? "LOCKED" : "READY"}</span>}
+          {labMode === "f00" && <span>F00-R2 · {underR2ReplayId} · {f00Side.toUpperCase()}</span>}
           <span>HASH {snapshot.world.stateHash}</span>
         </div>
       </header>
@@ -3274,6 +3655,17 @@ export default function PnrLab() {
           type="button"
         >
           P02–P03 · 策略对局
+        </button>
+        <button
+          aria-pressed={labMode === "f00"}
+          className={labMode === "f00" ? "is-active" : ""}
+          onClick={() => {
+            setLabMode("f00");
+            replaceF00Simulation(underR2ReplayId, f00Side, false);
+          }}
+          type="button"
+        >
+          F00-R2 · 形成 / UNDER
         </button>
       </nav>
 
@@ -3403,6 +3795,21 @@ export default function PnrLab() {
             replaceP01Simulation(p01ReplayId, nextStrategyId, false);
           }}
           strategyLocked={strategyLocked}
+        />
+      ) : labMode === "f00" ? (
+        <F00FormationPanel
+          onReplayChange={(nextReplayId) => {
+            setUnderR2ReplayId(nextReplayId);
+            replaceF00Simulation(nextReplayId, f00Side, false);
+          }}
+          onSideChange={(nextSide) => {
+            setF00Side(nextSide);
+            replaceF00Simulation(underR2ReplayId, nextSide, false);
+          }}
+          replayId={underR2ReplayId}
+          side={f00Side}
+          sideLocked={playing || snapshot.world.tick > 0}
+          snapshot={snapshot}
         />
       ) : (
         <P03PolicyMatrixPanel

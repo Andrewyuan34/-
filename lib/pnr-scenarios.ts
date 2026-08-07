@@ -205,9 +205,9 @@ export const PNR_SCENARIOS = [
     id: "under_screen_pullup_window",
     code: "S07",
     cue: "under_gap",
-    label: "D1 走下方 · D5 短收 · 急停窗口",
-    question: "D1 从掩护下方通过且 D5 留守 O5 时，能否保持原对位并让 O1 获得真实中距离空间？",
-    expected: "预期观察：UNDER 从公开起手深度胜出；没有换防，D1 合法绕下方，D5 短收 O5，O1 在追回前获得处理窗。",
+    label: "D1 走下方 · 读取 D5 · 攻击髋部",
+    question: "D1 从掩护下方通过且 D5 仍贴 O5 时，O1 能否在下一决策边界读取真实髋部并继续攻击？",
+    expected: "预期观察：UNDER 从公开起手深度胜出；没有换防，D1 合法绕下方，D5 未形成真实深退净空，O1 选择 ATTACK_UNDER_GAP 而不是被世界直接宣布中投窗口。",
     publicInput: {
       strategies: DEFAULT_TEAM_STRATEGY_SELECTION,
       initialPositions: makeInitialPositionsForCue("under_gap"),
@@ -221,7 +221,7 @@ export const PNR_SCENARIOS = [
     },
     checkpoint: {
       branch: "use",
-      terminalReason: "under_pullup_window",
+      terminalReason: "under_drive_advantage",
       ballOwner: "O1",
     },
   },

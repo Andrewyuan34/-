@@ -3,16 +3,48 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import {
+  FORMATION_LANDMARK_OFFSETS,
+  FORMATION_HANDLER_MAX_READY_SPEED,
+  FORMATION_HANDLER_READY_RADIUS,
+  FORMATION_SCREENER_MAX_SET_SPEED,
   COURT,
   EVENT_ORDER,
   FIXED_DT,
   PLAYER_IDS,
   PnrSimulation,
+  UNDER_MAX_MATCHUP_INVERSION_AUDIT_SECONDS,
+  UNDER_MAX_COLLISION_SUPPRESSION_SECONDS,
+  UNDER_PULLUP_CLEAN_STOP_MIN_BODY_GAP,
+  UNDER_PULLUP_MAX_STOP_SPEED,
+  UNDER_PULLUP_MIN_BODY_CLEARANCE,
+  UNDER_PULLUP_MIN_RIMWARD_PROGRESS,
   createPlannerObservation,
   evaluateScreenFacts,
+  formationReadiness,
+  isInsideThreePointArc,
+  isInsideUnderPullupRegion,
   mirrorPointAcrossCenterline,
   validateInitialPlayerPositions,
 } from "../lib/pnr-core.ts";
+import {
+  F00_AUDIT,
+  F00_EXPECTED_RIGHT_LANDMARKS,
+  F00_OUT_OF_BOUNDS_OFFSETS,
+  F00_RIGHT_INITIAL_POSITIONS,
+  F00_SWAPPED_GATE_OFFSETS,
+  F00_UNAPPROVED_OFFSETS,
+  F00_WAITING_CONFLICT_OFFSETS,
+  createF00Replay,
+  makeF00Config,
+} from "../lib/pnr-f00-formation.ts";
+import {
+  UNDER_R2_AUDIT,
+  UNDER_R2_DEEP_RETREAT_RIGHT_INITIAL_POSITIONS,
+  UNDER_R2_FALSE_POSITIVE_DEEP_RIGHT_INITIAL_POSITIONS,
+  createUnderR2Replay,
+  makeUnderR2DeepRetreatConfig,
+  makeUnderR2FalsePositiveDeepConfig,
+} from "../lib/pnr-under-r2.ts";
 import {
   DEFAULT_SCENARIO_ID,
   PNR_SCENARIOS,
@@ -758,7 +790,7 @@ test("G04 explicit-position refactor preserves every approved S/G behavior traje
     S04: "7eabadc212fcfe42c480faf6446693b6616a62cef7147414fde47e208a074440",
     S05: "dd40668118d4c68e33f84edd13c37bebbac3cf54806619114aa79b5fdc934ba0",
     S06: "d3f02c807203c4a4ab656829f84241c961e9c9933bb442e25e926e455e21fb13",
-    S07: "a3079918032d205fd15473c9d7590204119b4cf00158e06447d3010c2bfb2bbc",
+    S07: "8e7f857e1563237469ed5e0a75c369d531c4e2fa3c3f90e96804f36c5fc91413",
     S08: "0f27369978dd535ad3732a51fcf5643255735712fd28463a5542e2c568fc2051",
   });
 
@@ -1034,16 +1066,54 @@ test("G08 keeps the locked held-out manifest and approved result checkpoint", ()
   }
 });
 
-test("P00 default strategies preserve all 170 approved S01-G08 tick traces", () => {
+test("UNDER R2 changes only the two approved inputs that actually enter UNDER", () => {
   const groups = approvedConfigGroups();
-  const expected = {
-    S: [8, "608ce5e837986214c713ad4ed4c0fbbdec99a89590b68bb36ad1a0c71ba21316"],
+  const underEntries = [];
+  for (const [group, entries] of Object.entries(groups)) {
+    for (const [id, config] of entries) {
+      const simulation = new PnrSimulation(config);
+      while (!simulation.world.terminal && simulation.world.tick < 600) simulation.step();
+      if (simulation.eventLog.some((event) => event.type === "under_committed")) {
+        underEntries.push(`${group}/${id}`);
+      }
+    }
+  }
+  assert.deepEqual(underEntries, ["S/S07", "G07/scenario/S07"]);
+
+  const expectedNonUnder = {
+    S: [7, "fba73bf322738fa9711441144867069b80b13fad7bcfb937d8b1162ebf0fb6cf"],
     G01: [19, "c4e24d170eb215871daff655b80ddc3cc646dfeabab26907f53a5c714ef2fb22"],
     G02: [17, "20d64cb0c44c54671006eab4e04f844e87d9d052c4b1b4299c66aa582934998b"],
     G03: [21, "d823b25d948216253ecfb705357bbf7749f3f7a8455cb0acf43d0def596fb39b"],
     G05: [31, "b7de26f94b554423407517932a04a0eb5eaad0f8d443671334fe000bc42dc04f"],
     G06: [21, "02c046e000f77e4c1696f5a237700aea1542f51ebdd716cbea300e9cf3b37eb7"],
-    G07: [29, "d22b870f2a042ec990a4af86e818dc039218a1658b45a50ac86ceed044a251ed"],
+    G07: [28, "6e26e4ef4519d0d5bc5d8201b36c4f3ca39a7d90f389052dd6023dfd3da61f7b"],
+    G08: [24, "836238e356d1983a9b119a2b55bc847eb8fbfcdfca4f15f5af6f836752942bc7"],
+  };
+  for (const [group, entries] of Object.entries(groups)) {
+    const filtered = entries.filter(([id]) =>
+      !(group === "S" && id === "S07") &&
+      !(group === "G07" && id === "scenario/S07")
+    );
+    assert.equal(filtered.length, expectedNonUnder[group][0], `${group} non-UNDER count`);
+    assert.equal(
+      p00LegacyGroupDigest(filtered),
+      expectedNonUnder[group][1],
+      `${group} non-UNDER tick trace`,
+    );
+  }
+});
+
+test("P00 default strategies preserve the 170-input ledger with the documented UNDER correction", () => {
+  const groups = approvedConfigGroups();
+  const expected = {
+    S: [8, "da98a942b7a22bee09a7de866299620cfa83881ccf069e720d8cca5ec0e2f8e1"],
+    G01: [19, "c4e24d170eb215871daff655b80ddc3cc646dfeabab26907f53a5c714ef2fb22"],
+    G02: [17, "20d64cb0c44c54671006eab4e04f844e87d9d052c4b1b4299c66aa582934998b"],
+    G03: [21, "d823b25d948216253ecfb705357bbf7749f3f7a8455cb0acf43d0def596fb39b"],
+    G05: [31, "b7de26f94b554423407517932a04a0eb5eaad0f8d443671334fe000bc42dc04f"],
+    G06: [21, "02c046e000f77e4c1696f5a237700aea1542f51ebdd716cbea300e9cf3b37eb7"],
+    G07: [29, "c81d5ec65a6e0311eaeaf1d31a4a99c3f59c18389e7c2ff9ab1b96c8bccc0022"],
     G08: [24, "836238e356d1983a9b119a2b55bc847eb8fbfcdfca4f15f5af6f836752942bc7"],
   };
 
@@ -1842,6 +1912,220 @@ test("P03 uses real mirrored worlds with the same policy constants and events", 
     assert.equal(rightConfig.strategies.offense.id, leftConfig.strategies.offense.id);
     assert.equal(rightConfig.strategies.defense.id, leftConfig.strategies.defense.id);
   }
+});
+
+function f00ConfigWithOffsets(offsets) {
+  return {
+    ...makeF00Config("right"),
+    formationLandmarkOffsets: Object.fromEntries(
+      Object.entries(offsets).map(([name, point]) => [name, { ...point }]),
+    ),
+  };
+}
+
+test("F00 defaults old inputs to preset_pnr and locks one validated landmark template", () => {
+  const legacy = new PnrSimulation(makeScenarioConfig(DEFAULT_SCENARIO_ID));
+  assert.equal(legacy.config.startMode, "preset_pnr");
+  assert.equal(legacy.world.formation.phase, "pnr");
+
+  const right = createF00Replay("right");
+  const left = createF00Replay("left");
+  assert.equal(right.config.startMode, "form_pnr");
+  assert.equal(right.world.formation.phase, "formation");
+  assert.equal(right.offensePlan.id, "FORM_SCREEN");
+  assert.equal(right.defensePlan.id, "TRACK_FORMATION");
+  assert.deepEqual(right.config.formationLandmarkOffsets, FORMATION_LANDMARK_OFFSETS);
+  assert.deepEqual(right.config.initialPositions, F00_RIGHT_INITIAL_POSITIONS);
+  assert.deepEqual(right.world.landmarks, F00_EXPECTED_RIGHT_LANDMARKS);
+  assert.deepEqual(left.world.landmarks, {
+    screenAnchor: mirrorPointAcrossCenterline(F00_EXPECTED_RIGHT_LANDMARKS.screenAnchor),
+    handlerWaitingPoint: mirrorPointAcrossCenterline(
+      F00_EXPECTED_RIGHT_LANDMARKS.handlerWaitingPoint,
+    ),
+    useGate: mirrorPointAcrossCenterline(F00_EXPECTED_RIGHT_LANDMARKS.useGate),
+    rejectGate: mirrorPointAcrossCenterline(F00_EXPECTED_RIGHT_LANDMARKS.rejectGate),
+  });
+
+  const external = makeF00Config("right");
+  const copied = new PnrSimulation(external);
+  external.formationLandmarkOffsets.screenAnchor.x = 9;
+  external.initialPositions.O1.x = 8;
+  assert.deepEqual(copied.world.landmarks, F00_EXPECTED_RIGHT_LANDMARKS);
+  assert.deepEqual(copied.config.initialPositions, F00_RIGHT_INITIAL_POSITIONS);
+
+  assert.throws(
+    () => new PnrSimulation(f00ConfigWithOffsets(F00_OUT_OF_BOUNDS_OFFSETS)),
+    /formation landmark screenAnchor .* outside the court/,
+  );
+  assert.throws(
+    () => new PnrSimulation(f00ConfigWithOffsets(F00_SWAPPED_GATE_OFFSETS)),
+    /topology requires useGate on the screen side/,
+  );
+  assert.throws(
+    () => new PnrSimulation(f00ConfigWithOffsets(F00_WAITING_CONFLICT_OFFSETS)),
+    /handlerWaitingPoint.*initial O5|O1→handlerWaitingPoint crosses O5/,
+  );
+  assert.throws(
+    () => new PnrSimulation(f00ConfigWithOffsets(F00_UNAPPROVED_OFFSETS)),
+    /only the approved F00 landmark template/,
+  );
+  assert.deepEqual(makeF00Config("right", F00_SWAPPED_GATE_OFFSETS).formationLandmarkOffsets,
+    FORMATION_LANDMARK_OFFSETS);
+});
+
+test("F00 requires O1 and O5 joint readiness before next-boundary PnR entry", () => {
+  for (const side of ["right", "left"]) {
+    const simulation = createF00Replay(side);
+    const initialRoles = new Map(simulation.getRoles().map((role) => [role.playerId, role]));
+    assert.equal(initialRoles.get("O1").roleCode, "setup_handler");
+    assert.equal(initialRoles.get("O5").roleCode, "arrive_screen");
+    assert.equal(initialRoles.get("D1").roleCode, "contain_setup");
+    assert.equal(initialRoles.get("D5").roleCode, "track_screener");
+
+    while (!simulation.world.terminal && simulation.world.tick < 720) {
+      if (simulation.world.formation.phase === "formation") {
+        assert.equal(simulation.world.branch, "undecided");
+        assert.equal(simulation.world.facts.screenEffective, false);
+        assert.equal(simulation.world.facts.impeded, false);
+        assert.equal(simulation.offensePlan.id, "FORM_SCREEN");
+        assert.equal(simulation.defensePlan.id, "TRACK_FORMATION");
+      }
+      simulation.step();
+    }
+
+    const screenSet = simulation.eventLog.find((event) => event.type === "screen_set");
+    const jointReady = simulation.eventLog.find((event) => event.type === "formation_ready");
+    const branch = simulation.eventLog.find(
+      (event) => event.type === "branch_use" || event.type === "branch_reject",
+    );
+    const firstPnrOffense = simulation.planningLog.find(
+      (record) => record.decisionPhase === "offense_initial_read",
+    );
+    const firstPnrDefense = simulation.planningLog.find(
+      (record) => record.decisionPhase === "defense_initial_coverage",
+    );
+    assert.ok(screenSet);
+    assert.ok(jointReady);
+    assert.ok(screenSet.tick <= jointReady.tick);
+    assert.equal(firstPnrOffense?.tick, jointReady.availableAtTick);
+    assert.equal(firstPnrDefense?.tick, jointReady.availableAtTick);
+    assert.ok(firstPnrOffense.tick > jointReady.tick);
+    assert.ok(firstPnrDefense.tick > jointReady.tick);
+    assert.match(firstPnrOffense.trigger, /联合就绪/);
+    assert.match(firstPnrDefense.trigger, /联合就绪/);
+    assert.ok(
+      firstPnrOffense.candidates.find(
+        (candidate) => candidate.id === firstPnrOffense.chosen && candidate.feasible,
+      ),
+    );
+    assert.ok(
+      firstPnrDefense.candidates.find(
+        (candidate) => candidate.id === firstPnrDefense.chosen && candidate.feasible,
+      ),
+    );
+    assert.ok(branch.tick > jointReady.tick);
+    assert.notEqual(simulation.world.terminal?.reason, "formation_timeout");
+    assert.ok(simulation.world.terminal);
+  }
+});
+
+test("F00 screen_set alone cannot advance when O1 has not reached the waiting region", () => {
+  const simulation = createF00Replay("right");
+  simulation.world.players.O1.maxSpeed = 0;
+  for (let index = 0; index < 240 && !simulation.world.terminal; index += 1) {
+    simulation.step();
+  }
+
+  assert.ok(simulation.eventLog.some((event) => event.type === "screen_set"));
+  assert.equal(simulation.eventLog.some((event) => event.type === "formation_ready"), false);
+  assert.equal(
+    simulation.planningLog.some((record) => record.decisionPhase === "offense_initial_read"),
+    false,
+  );
+  assert.equal(simulation.world.formation.enteredPnrAtTick, null);
+  assert.equal(simulation.eventLog.some((event) => event.type === "branch_use"), false);
+  assert.equal(simulation.eventLog.some((event) => event.type === "branch_reject"), false);
+  assert.equal(simulation.eventLog.some((event) => event.type === "screen_effective"), false);
+  assert.equal(simulation.eventLog.some((event) => event.type === "impeded_on"), false);
+  assert.equal(simulation.world.terminal?.reason, "formation_timeout");
+});
+
+test("F00 semantic gate is deterministic, locally causal, goal-side, and truly mirrored", () => {
+  assert.equal(F00_AUDIT.passed, true);
+  for (const result of [F00_AUDIT.right, F00_AUDIT.left]) {
+    assert.equal(result.passed, true);
+    assert.equal(result.deterministic, true);
+    assert.deepEqual(result.failures, []);
+    assert.notEqual(result.terminalReason, "formation_timeout");
+    assert.ok(result.maximumPlayerStep <= result.maximumAllowedPlayerStep + 1e-9);
+    assert.ok(result.minimumBodyGap >= -0.01);
+    assert.ok(result.diagnostics.screenSetTick <= result.diagnostics.jointReadyTick);
+    assert.equal(
+      result.diagnostics.pnrPlanningTick,
+      result.diagnostics.jointReadyTick + 1,
+    );
+    assert.ok(result.diagnostics.branchTick > result.diagnostics.jointReadyTick);
+    assert.ok(result.diagnostics.terminalTick > result.diagnostics.branchTick);
+    assert.ok(result.diagnostics.d1GoalSideMargin > 0);
+    assert.ok(result.diagnostics.d1O1Distance < result.diagnostics.o5O1Distance);
+    assert.equal(
+      result.diagnostics.underReadTick,
+      result.diagnostics.underCommittedTick + 1,
+    );
+    assert.equal(result.diagnostics.underReadPlan, "ATTACK_UNDER_GAP");
+    assert.ok(
+      result.diagnostics.minimumD5O1GapAfterUnder < UNDER_PULLUP_MIN_BODY_CLEARANCE,
+    );
+    assert.ok(
+      result.terminalReason === "under_drive_advantage" ||
+        result.terminalReason === "under_contained",
+    );
+  }
+  assert.deepEqual(F00_AUDIT.mirrorFailures, []);
+  assert.ok(F00_AUDIT.mirrorMaximumError <= 1e-9);
+  assert.ok(F00_AUDIT.mirrorMaximumError > 0);
+  assert.equal(F00_AUDIT.topologyPassed, true);
+  assert.match(F00_AUDIT.topologyRejections.outOfBounds, /outside the court/);
+  assert.match(F00_AUDIT.topologyRejections.swappedGates, /topology/);
+  assert.match(F00_AUDIT.topologyRejections.waitingConflict, /O5/);
+  assert.match(F00_AUDIT.topologyRejections.unapprovedTemplate, /approved F00/);
+});
+
+test("F00 exposes offense-local geometry only to offense and keeps defense decisions stable", () => {
+  const simulation = createF00Replay("right");
+  const offenseObservation = createPlannerObservation(simulation.world, "offense");
+  const defenseObservation = createPlannerObservation(simulation.world, "defense");
+  assert.deepEqual(offenseObservation.landmarks, F00_EXPECTED_RIGHT_LANDMARKS);
+  assert.deepEqual(defenseObservation.landmarks, {
+    screenAnchor: F00_EXPECTED_RIGHT_LANDMARKS.screenAnchor,
+  });
+  assert.equal(Object.hasOwn(defenseObservation.landmarks, "handlerWaitingPoint"), false);
+  assert.equal(Object.hasOwn(defenseObservation.landmarks, "useGate"), false);
+  assert.equal(Object.hasOwn(defenseObservation.landmarks, "rejectGate"), false);
+  assert.equal(Object.hasOwn(defenseObservation, "strategies"), false);
+  assert.equal(Object.hasOwn(defenseObservation, "opponentPlan"), false);
+  assert.equal(F00_AUDIT.informationOwnership.privateFieldsHidden, true);
+  assert.equal(F00_AUDIT.informationOwnership.decisionStable, true);
+  assert.equal(F00_AUDIT.informationOwnership.passed, true);
+});
+
+test("F00 readiness thresholds are public facts and formation still terminates if O5 cannot arrive", () => {
+  const simulation = createF00Replay("right");
+  const initialReadiness = formationReadiness(simulation.world);
+  assert.equal(initialReadiness.ready, false);
+  assert.equal(FORMATION_HANDLER_READY_RADIUS, 0.12);
+  assert.equal(FORMATION_HANDLER_MAX_READY_SPEED, 0.32);
+  assert.equal(FORMATION_SCREENER_MAX_SET_SPEED, 0.28);
+
+  simulation.world.players.O5.maxSpeed = 0;
+  for (let index = 0; index < 240 && !simulation.world.terminal; index += 1) {
+    simulation.step();
+  }
+  assert.equal(simulation.world.terminal?.reason, "formation_timeout");
+  assert.ok(simulation.eventLog.some((event) => event.type === "formation_timeout"));
+  assert.equal(simulation.eventLog.some((event) => event.type === "formation_ready"), false);
+  assert.equal(simulation.eventLog.some((event) => event.type === "branch_use"), false);
+  assert.equal(simulation.eventLog.some((event) => event.type === "screen_effective"), false);
 });
 
 test("G01 scans 19 speed-only samples twice and finds one deterministic decision boundary", () => {
@@ -2752,7 +3036,7 @@ test("S06 chooses O1 attacking D5, clears O5, and reaches a real mismatch window
   assert.equal(roles.get("D5")?.roleCode, "contain_ball");
 });
 
-test("S07 keeps original matchups while D1 goes under and O1 reaches a pull-up window", () => {
+test("S07 replans from the real clear snapshot before attacking the open hip", () => {
   const simulation = new PnrSimulation(makeScenarioConfig("under_screen_pullup_window"));
   let minimumD1O5Gap = Number.POSITIVE_INFINITY;
 
@@ -2768,29 +3052,307 @@ test("S07 keeps original matchups while D1 goes under and O1 reaches a pull-up w
 
   const under = simulation.eventLog.find((event) => event.type === "under_committed");
   const cleared = simulation.eventLog.find((event) => event.type === "screen_cleared");
-  const window = simulation.eventLog.find((event) => event.type === "pullup_window");
+  const drive = simulation.eventLog.find((event) => event.type === "under_drive_advantage");
+  const firstUnderRead = simulation.planningLog.find(
+    (record) => record.decisionPhase === "offense_under_read",
+  );
+  const postClearRead = simulation.planningLog.find(
+    (record) =>
+      record.team === "offense" &&
+      record.tick === cleared?.availableAtTick,
+  );
+  const postClearDefense = simulation.planningLog.find(
+    (record) =>
+      record.team === "defense" &&
+      record.tick === cleared?.availableAtTick,
+  );
+  const eventualAttackRead = simulation.planningLog.find(
+    (record) =>
+      record.team === "offense" &&
+      record.tick > (cleared?.availableAtTick ?? Number.POSITIVE_INFINITY) &&
+      record.chosen === "ATTACK_UNDER_GAP",
+  );
+  const attack = eventualAttackRead?.candidates.find(
+    (candidate) => candidate.id === "ATTACK_UNDER_GAP",
+  );
+  const pullup = eventualAttackRead?.candidates.find(
+    (candidate) => candidate.id === "TAKE_UNDER_PULLUP",
+  );
   const initialDefense = simulation.planningLog.find((record) => record.team === "defense");
   const roles = new Map(simulation.getRoles().map((role) => [role.playerId, role]));
 
   assert.ok(under);
   assert.ok(cleared);
-  assert.ok(window);
+  assert.ok(drive);
+  assert.ok(firstUnderRead);
+  assert.ok(postClearRead);
+  assert.ok(postClearDefense);
+  assert.ok(eventualAttackRead);
   assert.equal(initialDefense?.chosen, "UNDER");
+  assert.equal(firstUnderRead.tick, under.availableAtTick);
+  assert.ok(firstUnderRead.tick > under.tick);
+  assert.equal(postClearRead.tick, cleared.availableAtTick);
+  assert.equal(postClearDefense.tick, cleared.availableAtTick);
+  assert.equal(postClearRead.chosen, "RESET_UNDER");
+  assert.equal(simulation.offensePlan.route?.boundary, "screen_cleared");
+  assert.equal(simulation.defensePlan.route?.boundary, "screen_cleared");
+  assert.equal(attack?.feasible, true);
+  assert.equal(attack?.strategyAdjustment, 0);
+  assert.equal(pullup?.feasible, false);
+  assert.ok(pullup?.vetoes.length > 0);
   assert.ok(under.tick < cleared.tick);
-  assert.ok(cleared.tick < window.tick);
+  assert.ok(cleared.tick < drive.tick);
   assert.equal(simulation.planningLog.some((record) => record.chosen === "SWITCH"), false);
   assert.equal(simulation.eventLog.some((event) => event.type === "switch_completed"), false);
+  assert.equal(simulation.eventLog.some((event) => event.type === "pullup_window"), false);
+  assert.equal(simulation.eventLog.some((event) => event.type === "under_contained"), false);
   assert.equal(simulation.world.facts.matchupExchange, false);
   assert.equal(simulation.world.under.active, true);
-  assert.equal(simulation.world.under.pullupWindow, true);
+  assert.equal(simulation.world.under.pullupWindow, false);
+  assert.equal(simulation.world.under.driveAdvantage, true);
   assert.equal(simulation.world.under.d1Recovered, false);
-  assert.ok(simulation.world.under.d1O1Distance >= 1.08);
-  assert.ok(simulation.world.under.d5O5Distance <= 1.02);
   assert.ok(minimumD1O5Gap >= -0.01);
   assert.equal(simulation.world.ballOwner, "O1");
-  assert.equal(simulation.world.terminal?.reason, "under_pullup_window");
+  assert.equal(simulation.world.terminal?.reason, "under_drive_advantage");
+  assert.equal(roles.get("O1")?.roleCode, "attack_under_gap");
+  assert.equal(roles.get("O5")?.roleCode, "occupy_under_big");
   assert.equal(roles.get("D1")?.roleCode, "navigate_under");
   assert.equal(roles.get("D5")?.roleCode, "under_hold_roller");
+});
+
+test("UNDER never creates a pull-up window while D5 is at near-contact body clearance", () => {
+  for (const [id, simulation] of [
+    ["S07", new PnrSimulation(makeScenarioConfig("under_screen_pullup_window"))],
+    ["F00", createF00Replay("right")],
+  ]) {
+    let sawNearContact = false;
+    while (!simulation.world.terminal && simulation.world.tick < 600) {
+      simulation.step();
+      if (!simulation.world.under.active) continue;
+      const o1 = simulation.world.players.O1;
+      const d5 = simulation.world.players.D5;
+      const bodyGap = Math.hypot(o1.pos.x - d5.pos.x, o1.pos.y - d5.pos.y) -
+        o1.radius - d5.radius;
+      if (bodyGap < UNDER_PULLUP_MIN_BODY_CLEARANCE) sawNearContact = true;
+      if (simulation.world.under.pullupWindow) {
+        assert.ok(
+          bodyGap >= UNDER_PULLUP_MIN_BODY_CLEARANCE,
+          `${id} produced pullup_window with only ${bodyGap.toFixed(3)}m body clearance`,
+        );
+        assert.equal(simulation.world.under.d5Contest, false);
+      }
+    }
+    assert.equal(sawNearContact, true, `${id} must exercise the negative contest boundary`);
+    assert.equal(
+      simulation.eventLog.some((event) => event.type === "pullup_window"),
+      false,
+      `${id} must not turn near contact into a free pull-up`,
+    );
+  }
+});
+
+test("screen_cleared commits immutable post-clear routes on the next planner boundary", () => {
+  const simulation = createF00Replay("right");
+  while (
+    !simulation.world.terminal &&
+    !simulation.eventLog.some((event) => event.type === "screen_cleared") &&
+    simulation.world.tick < 600
+  ) {
+    simulation.step();
+  }
+  const cleared = simulation.eventLog.find((event) => event.type === "screen_cleared");
+  assert.ok(cleared);
+  while (
+    !simulation.world.terminal &&
+    simulation.offensePlan.route?.boundary !== "screen_cleared" &&
+    simulation.world.tick <= cleared.availableAtTick
+  ) {
+    simulation.step();
+  }
+
+  assert.equal(simulation.offensePlan.route?.boundary, "screen_cleared");
+  assert.equal(simulation.defensePlan.route?.boundary, "screen_cleared");
+  assert.equal(simulation.offensePlan.route?.committedAtTick, cleared.availableAtTick);
+  assert.equal(simulation.defensePlan.route?.committedAtTick, cleared.availableAtTick);
+  assert.ok(simulation.offensePlan.route?.tracks.O1?.segments.length > 0);
+  assert.ok(simulation.defensePlan.route?.tracks.D1?.segments.length > 0);
+  assert.ok(simulation.offensePlan.route.routeVersion > 0);
+  assert.ok(simulation.defensePlan.route.routeVersion > 0);
+  assert.ok(
+    simulation.offensePlan.route.minimumCommitUntilTick >
+      simulation.offensePlan.route.committedAtTick,
+  );
+  assert.ok(
+    simulation.defensePlan.route.minimumCommitUntilTick >
+      simulation.defensePlan.route.committedAtTick,
+  );
+  assert.equal(UNDER_R2_AUDIT.deepRetreat.orderIndependent, true);
+  assert.equal(UNDER_R2_AUDIT.f00.orderIndependent, true);
+});
+
+test("F00 post-clear recovery does not rely on sustained D1-O5 collision suppression", () => {
+  const simulation = createF00Replay("right");
+  let maximumNearZeroSeconds = 0;
+  let currentNearZeroSeconds = 0;
+  while (!simulation.world.terminal && simulation.world.tick < 720) {
+    simulation.step();
+    if (!simulation.world.facts.ballHandlerClearedScreen) continue;
+    const d1 = simulation.world.players.D1;
+    const o5 = simulation.world.players.O5;
+    const bodyGap = Math.hypot(d1.pos.x - o5.pos.x, d1.pos.y - o5.pos.y) -
+      d1.radius - o5.radius;
+    currentNearZeroSeconds = bodyGap <= 0.025
+      ? currentNearZeroSeconds + FIXED_DT
+      : 0;
+    maximumNearZeroSeconds = Math.max(maximumNearZeroSeconds, currentNearZeroSeconds);
+  }
+
+  assert.ok(
+    maximumNearZeroSeconds <= UNDER_MAX_COLLISION_SUPPRESSION_SECONDS + 1e-9,
+  );
+  assert.ok(
+    (simulation.world.under.d1O5CollisionSuppressedSeconds ?? 0) <=
+      UNDER_MAX_COLLISION_SUPPRESSION_SECONDS + 1e-9,
+  );
+  assert.ok(
+    UNDER_R2_AUDIT.f00.maximumMatchupInversionSeconds <=
+      UNDER_MAX_MATCHUP_INVERSION_AUDIT_SECONDS + 1e-9,
+  );
+  assert.equal(simulation.world.facts.matchupExchange, false);
+  assert.equal(simulation.eventLog.some((event) => event.type === "switch_completed"), false);
+  if (simulation.world.terminal?.reason === "under_contained") {
+    assert.equal(simulation.world.under.d1Recovered, true);
+  }
+});
+
+test("the original deep-retreat false-positive coordinates never publish pullup_window", () => {
+  assert.deepEqual(
+    makeUnderR2FalsePositiveDeepConfig("right").initialPositions,
+    UNDER_R2_FALSE_POSITIVE_DEEP_RIGHT_INITIAL_POSITIONS,
+  );
+  for (const side of ["right", "left"]) {
+    const simulation = new PnrSimulation(makeUnderR2FalsePositiveDeepConfig(side));
+    while (!simulation.world.terminal && simulation.world.tick < 600) simulation.step();
+    assert.equal(simulation.eventLog.some((event) => event.type === "pullup_window"), false);
+    assert.equal(simulation.world.under.pullupWindow, false);
+  }
+  assert.equal(UNDER_R2_AUDIT.negativeDeep.passed, true);
+  assert.deepEqual(UNDER_R2_AUDIT.negativeDeep.failures, []);
+});
+
+test("a fixed test-level deep retreat creates a real deceleration pull-up and mirrors exactly", () => {
+  assert.equal(UNDER_R2_AUDIT.passed, true);
+  assert.equal(UNDER_R2_AUDIT.deepRetreat.passed, true);
+  assert.deepEqual(UNDER_R2_AUDIT.deepRetreat.failures, []);
+  assert.equal(UNDER_R2_AUDIT.deepRetreat.deterministicRight, true);
+  assert.equal(UNDER_R2_AUDIT.deepRetreat.deterministicLeft, true);
+  assert.equal(UNDER_R2_AUDIT.deepRetreat.orderIndependent, true);
+  assert.equal(UNDER_R2_AUDIT.deepRetreat.privateRouteTraceAudited, true);
+  assert.equal(UNDER_R2_AUDIT.f00.orderIndependent, true);
+  assert.equal(UNDER_R2_AUDIT.privacy.passed, true);
+  assert.deepEqual(UNDER_R2_AUDIT.privacy.failures, []);
+  assert.deepEqual(
+    makeUnderR2DeepRetreatConfig("right").initialPositions,
+    UNDER_R2_DEEP_RETREAT_RIGHT_INITIAL_POSITIONS,
+  );
+  const right = createUnderR2Replay("deep-retreat", "right");
+  const left = createUnderR2Replay("deep-retreat", "left");
+  const rightReplay = createUnderR2Replay("deep-retreat", "right");
+  const leftReplay = createUnderR2Replay("deep-retreat", "left");
+  let maximumMirrorError = 0;
+  let maximumO1Speed = 0;
+  const lastRouteCursor = new Map();
+
+  while (!right.world.terminal && !left.world.terminal) {
+    assert.equal(right.world.stateHash, rightReplay.world.stateHash);
+    assert.equal(left.world.stateHash, leftReplay.world.stateHash);
+    assert.equal(left.offensePlan.id, right.offensePlan.id);
+    assert.equal(left.defensePlan.id, right.defensePlan.id);
+    assert.deepEqual(right.offensePlan.route, rightReplay.offensePlan.route);
+    assert.deepEqual(right.defensePlan.route, rightReplay.defensePlan.route);
+    assert.deepEqual(left.offensePlan.route, leftReplay.offensePlan.route);
+    assert.deepEqual(left.defensePlan.route, leftReplay.defensePlan.route);
+    for (const [side, simulation] of [["right", right], ["left", left]]) {
+      for (const [team, route] of [
+        ["offense", simulation.offensePlan.route],
+        ["defense", simulation.defensePlan.route],
+      ]) {
+        if (!route) continue;
+        for (const [playerId, track] of Object.entries(route.tracks)) {
+          assert.ok(track.segments.every((segment) => segment.proof.legal));
+          const key = `${side}/${team}/${route.routeVersion}/${playerId}`;
+          const previousCursor = lastRouteCursor.get(key) ?? 0;
+          assert.ok(track.segmentIndex >= previousCursor, `${key} route cursor regressed`);
+          lastRouteCursor.set(key, track.segmentIndex);
+        }
+      }
+    }
+    assert.deepEqual(
+      left.getRoles().map(({ playerId, roleCode }) => ({ playerId, roleCode })),
+      right.getRoles().map(({ playerId, roleCode }) => ({ playerId, roleCode })),
+    );
+    maximumO1Speed = Math.max(
+      maximumO1Speed,
+      Math.hypot(right.world.players.O1.vel.x, right.world.players.O1.vel.y),
+    );
+    for (const id of PLAYER_IDS) {
+      const mirrored = mirrorPointAcrossCenterline(right.world.players[id].pos);
+      maximumMirrorError = Math.max(
+        maximumMirrorError,
+        Math.abs(left.world.players[id].pos.x - mirrored.x),
+        Math.abs(left.world.players[id].pos.y - mirrored.y),
+        Math.abs(left.world.players[id].vel.x + right.world.players[id].vel.x),
+        Math.abs(left.world.players[id].vel.y - right.world.players[id].vel.y),
+      );
+    }
+    right.step();
+    left.step();
+    rightReplay.step();
+    leftReplay.step();
+  }
+
+  const under = right.eventLog.find((event) => event.type === "under_committed");
+  const screenCleared = right.eventLog.find((event) => event.type === "screen_cleared");
+  const pullupWindow = right.eventLog.find((event) => event.type === "pullup_window");
+  const read = right.planningLog.find(
+    (record) => record.decisionPhase === "offense_under_read",
+  );
+  const candidate = read?.candidates.find(
+    (entry) => entry.id === "TAKE_UNDER_PULLUP",
+  );
+  assert.ok(under);
+  assert.ok(screenCleared);
+  assert.ok(pullupWindow);
+  assert.ok(read);
+  assert.equal(read.tick, under.availableAtTick);
+  assert.equal(read.chosen, "TAKE_UNDER_PULLUP");
+  assert.equal(candidate?.feasible, true);
+  assert.equal(candidate?.strategyAdjustment, 0);
+  assert.ok(pullupWindow.tick > screenCleared.tick);
+  assert.ok(maximumO1Speed >= 2);
+  assert.ok(right.world.under.o1Speed <= UNDER_PULLUP_MAX_STOP_SPEED);
+  assert.equal(isInsideThreePointArc(right.world.players.O1.pos), true);
+  assert.equal(isInsideUnderPullupRegion(right.world.players.O1.pos), true);
+  assert.ok(
+    right.world.under.rimwardProgressAfterClear >=
+      UNDER_PULLUP_MIN_RIMWARD_PROGRESS,
+  );
+  assert.equal(right.world.under.cleanDeceleration, true);
+  assert.ok(
+    UNDER_R2_AUDIT.deepRetreat.minimumO1BodyGapDuringDeceleration >=
+      UNDER_PULLUP_CLEAN_STOP_MIN_BODY_GAP,
+  );
+  assert.equal(right.world.under.pullupCommitted, true);
+  assert.equal(right.world.under.d5DeepRetreat, true);
+  assert.equal(right.world.under.d5Contest, false);
+  assert.ok(right.world.under.d5BodyGap >= UNDER_PULLUP_MIN_BODY_CLEARANCE);
+  assert.equal(right.world.terminal?.reason, "under_pullup_window");
+  assert.equal(left.world.terminal?.reason, right.world.terminal?.reason);
+  assert.deepEqual(
+    left.eventLog.map(({ type, tick }) => ({ type, tick })),
+    right.eventLog.map(({ type, tick }) => ({ type, tick })),
+  );
+  assert.ok(maximumMirrorError <= 1e-9);
 });
 
 test("S08 waits for local reject help before O1 passes to the slipping O5", () => {

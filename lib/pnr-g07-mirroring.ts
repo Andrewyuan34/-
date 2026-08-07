@@ -263,13 +263,26 @@ function planScalarFrame(simulation: PnrSimulation): object {
 }
 
 function factsFrame(simulation: PnrSimulation): object {
+  const under = {
+    ...simulation.world.under,
+    ...(simulation.world.under.o1PositionAtScreenClear
+      ? {
+          o1PositionAtScreenClear:
+            simulation.world.screenSide === "right"
+              ? simulation.world.under.o1PositionAtScreenClear
+              : mirrorPointAcrossCenterline(
+                  simulation.world.under.o1PositionAtScreenClear,
+                ),
+        }
+      : {}),
+  };
   return {
     branch: simulation.world.branch,
     facts: simulation.world.facts,
     mismatch: simulation.world.mismatch,
     seal: simulation.world.seal,
     postCatch: simulation.world.postCatch,
-    under: simulation.world.under,
+    under,
     reject: simulation.world.reject,
     ballOwner: simulation.world.ballOwner,
     ballMeta: {
