@@ -23,6 +23,7 @@ import {
   formationReadiness,
   isInsideThreePointArc,
   isInsideUnderPullupRegion,
+  mirrorInitialPlayerPositions,
   mirrorPointAcrossCenterline,
   validateInitialPlayerPositions,
 } from "../lib/pnr-core.ts";
@@ -59,6 +60,16 @@ import {
   F02_SAMPLE_SEED,
   canonicalF02InputJson,
 } from "../lib/pnr-f02-formation-samples.ts";
+import {
+  F03_FROZEN_CORE_COMMIT,
+  F03_HELDOUT_MANIFEST,
+  F03_MANIFEST_GENERATION,
+  F03_MANIFEST_HASH,
+  F03_MANIFEST_SEED,
+  F03_SIMULATION_SEED,
+  canonicalF03ManifestJson,
+  findF03ProhibitedOutputFields,
+} from "../lib/pnr-f03-heldout-manifest.ts";
 import {
   UNDER_R2_AUDIT,
   UNDER_R2_DEEP_RETREAT_RIGHT_INITIAL_POSITIONS,
@@ -592,6 +603,107 @@ function p01AuditRun(config) {
     terminalReason: simulation.world.terminal?.reason ?? null,
   };
 }
+
+test("F03 locks 16 input-only Formation held-out cases before any held-out world is run", () => {
+  const expectedIds = [
+    ...Array.from({ length: 8 }, (_, index) =>
+      `F03-R${String(index + 1).padStart(2, "0")}`
+    ),
+    ...Array.from({ length: 8 }, (_, index) =>
+      `F03-L${String(index + 1).padStart(2, "0")}`
+    ),
+  ];
+  assert.equal(F03_FROZEN_CORE_COMMIT, "90631359ba5a52eacfdbfc1434d657f8743df45e");
+  assert.equal(F03_MANIFEST_SEED, 20260810);
+  assert.equal(F03_SIMULATION_SEED, 17);
+  assert.equal(F03_MANIFEST_HASH,
+    "sha256:7d7331992d4855d0d43704f926da97a0698e4c80a3da6b494ca4f350f3eb5b68");
+  assert.deepEqual(F03_MANIFEST_GENERATION, {
+    generator: "mulberry32-v1",
+    seed: 20260810,
+    domainVersion: "F01-v1",
+    frozenF02InputHash: F02_INPUT_HASH,
+    candidateCount: 16,
+    geometryRejectedCount: 0,
+    duplicateRejectedCount: 0,
+    acceptedCount: 16,
+    rightCount: 8,
+    leftCount: 8,
+  });
+  assert.deepEqual(F03_HELDOUT_MANIFEST.map((item) => item.id), expectedIds);
+  assert.equal(new Set(F03_HELDOUT_MANIFEST.map((item) => item.id)).size, 16);
+  assert.deepEqual(findF03ProhibitedOutputFields(F03_HELDOUT_MANIFEST), []);
+  assert.equal(
+    `sha256:${createHash("sha256").update(canonicalF03ManifestJson()).digest("hex")}`,
+    F03_MANIFEST_HASH,
+  );
+
+  const priorTacticalInputs = new Set([
+    ...F01_CANONICAL_STARTS.map((start) => JSON.stringify(start.tacticalPositions)),
+    ...F02_FORMATION_SAMPLES.map((sample) => JSON.stringify(sample.tacticalPositions)),
+  ]);
+  const heldoutTacticalInputs = [];
+  for (const item of F03_HELDOUT_MANIFEST) {
+    assert.deepEqual(Object.keys(item).sort(), ["id", "input", "side", "source"]);
+    assert.deepEqual(Object.keys(item.source).sort(), [
+      "candidateIndex",
+      "domainVersion",
+      "frozenF02InputHash",
+      "generator",
+      "parameters",
+      "seed",
+      "tacticalFrame",
+    ]);
+    assert.deepEqual(Object.keys(item.input).sort(), [
+      "d1FrontReactionDelay",
+      "d1PostCatchRecoveryDelay",
+      "formationLandmarkOffsets",
+      "horizon",
+      "initialPositions",
+      "maxTime",
+      "o1MaxSpeed",
+      "screenSide",
+      "seed",
+      "startMode",
+    ]);
+    assert.equal(item.input.screenSide, item.side);
+    assert.equal(item.input.startMode, "form_pnr");
+    assert.deepEqual(item.input.formationLandmarkOffsets, FORMATION_LANDMARK_OFFSETS);
+    assert.equal(item.source.seed, F03_MANIFEST_SEED);
+    assert.equal(item.source.domainVersion, F01_FORMATION_INPUT_DOMAIN.version);
+    assert.equal(item.source.frozenF02InputHash, F02_INPUT_HASH);
+    assert.ok(Object.isFrozen(item));
+    const tacticalPositions = item.side === "right"
+      ? item.input.initialPositions
+      : mirrorInitialPlayerPositions(item.input.initialPositions);
+    const key = JSON.stringify(tacticalPositions);
+    assert.equal(priorTacticalInputs.has(key), false, item.id);
+    heldoutTacticalInputs.push(key);
+  }
+  assert.equal(new Set(heldoutTacticalInputs).size, 16);
+  const rightParameterKeys = new Set(
+    F03_HELDOUT_MANIFEST
+      .filter((item) => item.side === "right")
+      .map((item) => JSON.stringify(item.source.parameters)),
+  );
+  assert.equal(
+    F03_HELDOUT_MANIFEST
+      .filter((item) => item.side === "left")
+      .some((item) => rightParameterKeys.has(JSON.stringify(item.source.parameters))),
+    false,
+    "left cases must use different parameter combinations rather than paired mirrors",
+  );
+
+  const manifestSource = readFileSync(
+    new URL("../lib/pnr-f03-heldout-manifest.ts", import.meta.url),
+    "utf8",
+  );
+  assert.doesNotMatch(
+    manifestSource,
+    /new\s+PnrSimulation|pnr-formation-audit|planningLog|eventLog|terminalReason|world\./,
+    "manifest generation must not execute or inspect a held-out world",
+  );
+});
 
 test("G08 locks 24 input-only held-out cases before any world is run", () => {
   const expectedIds = [
