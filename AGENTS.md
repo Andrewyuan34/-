@@ -31,3 +31,10 @@
 - 场景定义集中在 `lib/pnr-scenarios.ts`，模拟内核集中在 `lib/pnr-core.ts`，网页只消费公开快照。
 - 完成前运行 `npm test`、`npm run lint` 和 `npm run build`。
 - 每轮只解决一个可观看的篮球问题，达到第一个明确停止点后暂停，交给用户亲眼判断。
+
+## G08 冻结规则
+
+- G08 的冻结核心基线是 `d92ed9f63bba3dcfa28d65d54b6a47c7e3e1f74c`；锁定 manifest commit 是 `b994d2d7520f00069e011e629ccb54f90ba8c5d5`，内容哈希是 `sha256:5ff19401f264663f5d5fcfc2e944cb1e0ef4430093a11281193f7f8d8d07fee3`。
+- manifest 推送后不得修改 `lib/pnr-core.ts`、S01–S08/G01–G07 输入或 `lib/pnr-g08-heldout-manifest.ts`；G08 后续只允许增加审计运行器、结果汇总、测试、网页入口和最短说明。
+- held-out 失败时保留冻结核心与 manifest，报告最早失败及最小轨迹并停止；不得针对 case ID、side 或同一批输入调参后重跑。
+- 当前 G08 自动门已通过，正等待代表动画人眼验收。用户确认前不提交审计/UI，不开始 P00、P01 或其他策略工作。

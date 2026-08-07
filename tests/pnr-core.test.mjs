@@ -75,6 +75,11 @@ import {
   findG08ProhibitedOutputFields,
   isG08ValueOnPriorGrid,
 } from "../lib/pnr-g08-heldout-manifest.ts";
+import {
+  G08_MANIFEST_COMMIT,
+  createG08Replay,
+  scanG08Heldout,
+} from "../lib/pnr-g08-heldout-audit.ts";
 
 function makeTestConfig(cue = "neutral", overrides = {}) {
   return {
@@ -618,6 +623,100 @@ test("G07 runs real left worlds for all S01-S08 and G06 inputs with deterministi
     () => new PnrSimulation({ ...makeG07Config("scenario/S03", "right"), screenSide: undefined }),
     /screenSide must be "right" or "left"/,
   );
+});
+
+test("G08 runs the locked held-out manifest twice without changing the frozen basketball core", () => {
+  const frozenFileHashes = {
+    "../lib/pnr-core.ts": "ff60980d7c6380cf36cb756df5362a5cef0a58fda489dbcada1e715733a48afc",
+    "../lib/pnr-scenarios.ts": "8d22bef1f3c60c2ce7d68c74ab197a7c3b43bc172d673cddde43c1b1661a187d",
+    "../lib/pnr-generalization.ts": "6fd651792df05afeefa38ca7511d0a3fec9011c6c8e99778a9745e75d68ecdd0",
+    "../lib/pnr-g02-generalization.ts": "d553fc73753b9f2ea87cb23643d05d0b0ba8d7623589de9f5e550c1218b6b172",
+    "../lib/pnr-g03-generalization.ts": "feba404ed776c32b08801ae263c4fc4b415d73e4f0c3416464d9f8d44e398420",
+    "../lib/pnr-g05-spatial-generalization.ts": "bf64b008a777c752bebd1c499bd88ffc69473cb4992c3dbb655241fde716dc0d",
+    "../lib/pnr-g06-combinations.ts": "074770fa9aebca2120f0fac47013c3a20f301bfe4e11460f0125e5ce31afc8b6",
+    "../lib/pnr-g07-mirroring.ts": "b316ae0028ec30f538d587a5a8ff75fe00db5fc84c1a785421d81af90e50912d",
+  };
+  for (const [path, expectedHash] of Object.entries(frozenFileHashes)) {
+    const source = readFileSync(new URL(path, import.meta.url));
+    assert.equal(createHash("sha256").update(source).digest("hex"), expectedHash, path);
+  }
+  assert.doesNotMatch(
+    readFileSync(new URL("../lib/pnr-core.ts", import.meta.url), "utf8"),
+    /G08-[RL]\d|heldout/i,
+  );
+
+  const audit = scanG08Heldout();
+  assert.equal(audit.frozenCoreCommit, G08_FROZEN_CORE_COMMIT);
+  assert.equal(audit.manifestCommit, G08_MANIFEST_COMMIT);
+  assert.equal(audit.manifestHash, G08_MANIFEST_HASH);
+  assert.equal(audit.manifestCount, 24);
+  assert.equal(audit.executedCount, 24);
+  assert.equal(audit.rows.length, 24);
+  assert.equal(audit.rightSummary.count, 12);
+  assert.equal(audit.leftSummary.count, 12);
+  assert.equal(audit.deterministic, true);
+  assert.equal(audit.informationBoundaryPassed, true);
+  assert.equal(audit.invariantsPassed, true);
+  assert.equal(audit.explainable, true);
+  assert.equal(audit.passed, true);
+  assert.deepEqual(audit.failedCaseIds, []);
+  assert.deepEqual(audit.failureReasons, []);
+  assert.equal(audit.rightSummary.maxReplayNumericError, 0);
+  assert.equal(audit.leftSummary.maxReplayNumericError, 0);
+  assert.ok(audit.rightSummary.minimumBodyGap >= -0.01);
+  assert.ok(audit.leftSummary.minimumBodyGap >= -0.01);
+  assert.deepEqual(audit.terminalCounts, {
+    post_catch_kickout_caught: 16,
+    mismatch_advantage: 3,
+    switch_contained: 1,
+    post_catch_finish_window: 4,
+  });
+  assert.deepEqual(audit.outcomeCounts, {
+    "defensive-stop": 1,
+    "handler-advantage": 3,
+    "interior-window": 4,
+    "kickout-catch": 16,
+  });
+  assert.equal(audit.rows.filter((row) => row.defenseContained).length, 0);
+  assert.equal(
+    audit.rows.every(
+      (row) =>
+        row.manifestHash === G08_MANIFEST_HASH &&
+        row.deterministic &&
+        row.earliestDivergenceTick === null &&
+        row.maxReplayNumericError === 0 &&
+        row.informationBoundaryPassed &&
+        row.explainable &&
+        row.invariantFailures.length === 0 &&
+        row.minimumBodyGap >= -0.01 &&
+        row.passLaunches === row.passResolutions &&
+        row.touches.every((touch) => touch.local) &&
+        row.planning.length === row.offenseReplans + row.defenseReplans &&
+        row.watchdogReplans === 0 &&
+        row.minimumCommitmentSeconds > 0,
+    ),
+    true,
+  );
+  assert.deepEqual(
+    audit.replays.map(({ id, manifestId }) => ({ id, manifestId })),
+    [
+      { id: "closest-boundary", manifestId: "G08-L08" },
+      { id: "largest-displacement", manifestId: "G08-L09" },
+      { id: "longest-run", manifestId: "G08-R12" },
+      { id: "diverse-fourth", manifestId: "G08-R08" },
+    ],
+  );
+
+  for (const replay of audit.replays) {
+    const simulation = createG08Replay(replay.manifestId);
+    const manifest = G08_HELDOUT_MANIFEST.find((item) => item.id === replay.manifestId);
+    assert.ok(manifest);
+    assert.equal(simulation.world.screenSide, manifest.side);
+    assert.deepEqual(
+      Object.fromEntries(PLAYER_IDS.map((id) => [id, simulation.world.players[id].pos])),
+      manifest.input.initialPositions,
+    );
+  }
 });
 
 test("G01 scans 19 speed-only samples twice and finds one deterministic decision boundary", () => {
