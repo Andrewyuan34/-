@@ -136,6 +136,24 @@ function freezeProfile(profile: TeamStrategyProfile): TeamStrategyProfile {
 const OFFENSE_ZERO_REASON = "P00 平衡阅读：保持现有基础评分，不施加额外偏好";
 const DEFENSE_ZERO_REASON = "P00 平衡覆盖：保持现有基础评分，不施加额外偏好";
 
+export const OFFENSE_MISMATCH_PRESSURE_ATTACK_BIG_ADJUSTMENT = 0.02;
+
+function mismatchPressurePreferences(): readonly StrategyPreference[] {
+  return Object.freeze(
+    OFFENSE_PLAN_IDS.map((planId) => Object.freeze({
+      planId,
+      adjustment:
+        planId === "ATTACK_BIG"
+          ? OFFENSE_MISMATCH_PRESSURE_ATTACK_BIG_ADJUSTMENT
+          : 0,
+      reason:
+        planId === "ATTACK_BIG"
+          ? `P01 错位攻击优先：post-switch 可行 ATTACK_BIG 统一 +${OFFENSE_MISMATCH_PRESSURE_ATTACK_BIG_ADJUSTMENT.toFixed(2)}`
+          : "P01 错位攻击优先：post-switch 只提升 ATTACK_BIG；本候选保持基础评分",
+    })),
+  );
+}
+
 export const OFFENSE_BALANCED_READ = freezeProfile({
   id: "OFFENSE_BALANCED_READ",
   version: 1,
@@ -146,6 +164,26 @@ export const OFFENSE_BALANCED_READ = freezeProfile({
     offense_initial_read: zeroPreferences(OFFENSE_PLAN_IDS, OFFENSE_ZERO_REASON),
     offense_mismatch: zeroPreferences(OFFENSE_PLAN_IDS, OFFENSE_ZERO_REASON),
     offense_post_catch: zeroPreferences(OFFENSE_PLAN_IDS, OFFENSE_ZERO_REASON),
+  },
+});
+
+export const OFFENSE_MISMATCH_PRESSURE = freezeProfile({
+  id: "OFFENSE_MISMATCH_PRESSURE",
+  version: 1,
+  team: "offense",
+  label: "错位攻击优先",
+  description:
+    "只在换防完成后的错位阶段，为硬可行的 ATTACK_BIG 增加统一 +0.02；其他候选和阶段保持零调整。",
+  phasePreferences: {
+    offense_initial_read: zeroPreferences(
+      OFFENSE_PLAN_IDS,
+      "P01 错位攻击优先尚未进入 post-switch；保持基础评分",
+    ),
+    offense_mismatch: mismatchPressurePreferences(),
+    offense_post_catch: zeroPreferences(
+      OFFENSE_PLAN_IDS,
+      "P01 错位攻击优先已离开 post-switch；接球后保持基础评分",
+    ),
   },
 });
 
@@ -164,25 +202,25 @@ export const DEFENSE_BALANCED_COVERAGE = freezeProfile({
 
 const REGISTERED_STRATEGIES = new Map<string, TeamStrategyProfile>([
   [OFFENSE_BALANCED_READ.id, OFFENSE_BALANCED_READ],
+  [OFFENSE_MISMATCH_PRESSURE.id, OFFENSE_MISMATCH_PRESSURE],
   [DEFENSE_BALANCED_COVERAGE.id, DEFENSE_BALANCED_COVERAGE],
 ]);
 
 export const REGISTERED_TEAM_STRATEGIES = Object.freeze([
   OFFENSE_BALANCED_READ,
+  OFFENSE_MISMATCH_PRESSURE,
   DEFENSE_BALANCED_COVERAGE,
 ]);
 
+export function makeTeamStrategySelection(
+  offense: TeamStrategyReference = OFFENSE_BALANCED_READ,
+  defense: TeamStrategyReference = DEFENSE_BALANCED_COVERAGE,
+): TeamStrategySelection {
+  return copyTeamStrategySelection({ offense, defense });
+}
+
 export function makeDefaultTeamStrategySelection(): TeamStrategySelection {
-  return Object.freeze({
-    offense: Object.freeze({
-      id: OFFENSE_BALANCED_READ.id,
-      version: OFFENSE_BALANCED_READ.version,
-    }),
-    defense: Object.freeze({
-      id: DEFENSE_BALANCED_COVERAGE.id,
-      version: DEFENSE_BALANCED_COVERAGE.version,
-    }),
-  });
+  return makeTeamStrategySelection();
 }
 
 export const DEFAULT_TEAM_STRATEGY_SELECTION = makeDefaultTeamStrategySelection();

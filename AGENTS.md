@@ -1,6 +1,6 @@
 # AGENTS.md
 
-本仓库是一个独立、短周期的 2v2 挡拆算法实验台。当前批准范围为网页场景 S01–S08、G01–G08 受限域泛化检查点，以及正在人眼验收的 P00 队级策略输入契约；根目录 `README.md` 是运行方式与最短边界说明。
+本仓库是一个独立、短周期的 2v2 挡拆算法实验台。当前批准范围为网页场景 S01–S08、G01–G08 受限域泛化检查点、已验收的 P00 策略输入契约与 P01“错位攻击优先”进攻策略，以及当前 P02–P03 防守策略和有限对局矩阵增量；根目录 `README.md` 是运行方式与最短边界说明。
 
 ## 不可破坏的内核边界
 
@@ -41,9 +41,18 @@
 
 ## P00 策略契约规则
 
-- 只注册 `OFFENSE_BALANCED_READ@1` 与 `DEFENSE_BALANCED_COVERAGE@1`，全部 adjustment 为 0；不得提前加入第二套策略、非零偏置、新 PlanId、评分/阈值变化或 P01 行为。
+- P00 检查点只注册 `OFFENSE_BALANCED_READ@1` 与 `DEFENSE_BALANCED_COVERAGE@1`，两套默认 profile 的 adjustment 永远保持 0；后续策略不得改变默认选择或 P00 旧行为指纹。
 - 进攻规划器只能读取进攻策略，防守规划器只能读取防守策略；中立世界创建、运动与事件解析完全不接收策略。
 - 评分顺序必须是硬可行性、`baseScore`、本队 `strategyAdjustment`、`effectiveScore`。策略只重排可行候选，绝不能恢复被 veto 的候选。
 - 正式场景与 G01–G08 审计输入显式携带双方默认策略 ID/version；选择与 profile 构造后深拷贝并冻结。
 - 播放或单步后策略锁定，暂停不解锁；只有重置并创建新回合才解锁。
-- P00 前保存的 170 个合法输入逐 tick 行为指纹必须全部保持。当前实现停在三条既有代表回放的人眼验收点；用户确认前不提交 P00，也不开始 P01。
+- P00 前保存的 170 个合法输入逐 tick 行为指纹必须全部保持。P00 已由用户验收并以 `31aad3c2819ebda861bd101dfe9832869622c7b9` 推送。
+
+## P01 进攻策略规则
+
+- P01 只新增 `OFFENSE_MISMATCH_PRESSURE@1`；P01 版本点的防守仍只有 `DEFENSE_BALANCED_COVERAGE@1`，且不得改变 PlanId、基础评分、阈值或运动目标。
+- 唯一非零偏好是 `offense_mismatch` / post-switch 阶段硬可行 `ATTACK_BIG` 的全局 `+0.02`；不得读取 scenarioId、速度点、side、held-out ID 或结果标签。其他候选与阶段必须为 0。
+- `baseScore` 与硬可行性先于策略；被 veto 的 `ATTACK_BIG` 始终保持 `effectiveScore = null`。选择 ATTACK 后必须由同一队级计划同时分配 O1 `attack_big` 与 O5 `clear_lane`。
+- 3.98m/s 必须形成 Balanced FEED / Pressure ATTACK；3.72m/s 两者都保持 FEED；4.00m/s 两者都可 ATTACK。左右侧共享同一常数和逻辑。
+- 默认 Balanced 的 170 个旧输入逐 tick 指纹继续不变；Pressure 必须在同一 170 个批准输入上双运行确定、合法且无信息泄漏。G08 manifest 不得修改。
+- 网页运行前可在两套进攻策略间选择；播放或单步后锁定，暂停不解锁，重置新回合才解锁。P01 已完成人眼验收并作为独立版本点收口；P02–P03 不得改写其 `+0.02` 校准、170 输入回归或已批准回放。

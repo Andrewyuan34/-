@@ -85,11 +85,19 @@ import {
   DEFAULT_TEAM_STRATEGY_SELECTION,
   DEFENSE_BALANCED_COVERAGE,
   OFFENSE_BALANCED_READ,
+  OFFENSE_MISMATCH_PRESSURE,
+  OFFENSE_MISMATCH_PRESSURE_ATTACK_BIG_ADJUSTMENT,
   REGISTERED_TEAM_STRATEGIES,
   makeDefaultTeamStrategySelection,
   scoreCandidateWithStrategy,
   validateTeamStrategyProfile,
 } from "../lib/pnr-strategy.ts";
+import {
+  createP01Replay,
+  makeP01G01Config,
+  scanP01Calibration,
+  withP01OffenseStrategy,
+} from "../lib/pnr-p01-offense-strategy.ts";
 
 function makeTestConfig(cue = "neutral", overrides = {}) {
   return {
@@ -276,6 +284,181 @@ function p00LegacyGroupDigest(entries) {
     hash.update(`${id}:${p00LegacyTraceDigest(config)}\n`);
   }
   return hash.digest("hex");
+}
+
+function approvedConfigGroups() {
+  const legalG05 = G05_CANDIDATES.filter(
+    ({ id }) => id !== "O1.y/-0.24" && id !== "D1.y/+0.24",
+  );
+  return {
+    S: PNR_SCENARIOS.map((scenario) => [scenario.code, makeScenarioConfig(scenario.id)]),
+    G01: G01_SPEEDS.map((speed) => [speed.toFixed(2), makeG01Config(speed)]),
+    G02: G02_DELAYS.map((delay) => [delay.toFixed(2), makeG02Config(delay)]),
+    G03: G03_DELAYS.map((delay) => [delay.toFixed(2), makeG03Config(delay)]),
+    G05: legalG05.map((candidate) => [candidate.id, makeG05Config(candidate.id)]),
+    G06: G06_SPECS.map((spec) => [spec.id, makeG06Config(spec.id)]),
+    G07: G07_SPECS.map((spec) => [spec.id, makeG07Config(spec.id, "left")]),
+    G08: G08_HELDOUT_MANIFEST.map((item) => [item.id, makeG08Config(item.id)]),
+  };
+}
+
+function approvedConfigEntries() {
+  return Object.entries(approvedConfigGroups()).flatMap(([group, entries]) =>
+    entries.map(([id, config]) => [`${group}/${id}`, config]),
+  );
+}
+
+const P01_PLAYER_PAIRS = [
+  ["O1", "O5"],
+  ["O1", "D1"],
+  ["O1", "D5"],
+  ["O5", "D1"],
+  ["O5", "D5"],
+  ["D1", "D5"],
+];
+
+function p01AuditRun(config) {
+  const simulation = new PnrSimulation(config);
+  const hash = createHash("sha256");
+  const failures = new Set();
+  let planningStart = 0;
+  let eventStart = 0;
+
+  const capture = () => {
+    const planning = simulation.planningLog.slice(planningStart);
+    const events = simulation.eventLog.slice(eventStart);
+    hash.update(JSON.stringify({
+      tick: simulation.world.tick,
+      stateHash: simulation.world.stateHash,
+      offensePlan: simulation.offensePlan,
+      defensePlan: simulation.defensePlan,
+      roles: simulation.getRoles(),
+      planning,
+      events,
+      terminal: simulation.world.terminal,
+    }));
+    planningStart = simulation.planningLog.length;
+    eventStart = simulation.eventLog.length;
+
+    const roles = simulation.getRoles();
+    if (roles.length !== 4 || new Set(roles.map((role) => role.playerId)).size !== 4) {
+      failures.add("role ownership conflict");
+    }
+    if (roles.some(
+      (role) =>
+        role.owner !==
+        (role.playerId.startsWith("O") ? "offense-planner" : "defense-planner"),
+    )) {
+      failures.add("role owned by wrong planner");
+    }
+
+    const world = simulation.world;
+    if (world.ballOwner !== null && !PLAYER_IDS.includes(world.ballOwner)) {
+      failures.add("illegal ball owner");
+    }
+    if (world.ball.inFlight !== (world.ballOwner === null)) {
+      failures.add("possession and flight disagree");
+    }
+    if (world.time !== Math.round(world.tick * FIXED_DT * 1e6) / 1e6) {
+      failures.add("fixed timestep drift");
+    }
+    if (world.lastStepMaxDisplacement > 0.15 + 1e-9) {
+      failures.add("player path step too large");
+    }
+    if (
+      world.ball.pos.x < -1e-9 ||
+      world.ball.pos.x > COURT.width + 1e-9 ||
+      world.ball.pos.y < -1e-9 ||
+      world.ball.pos.y > COURT.height + 1e-9
+    ) {
+      failures.add("ball out of bounds");
+    }
+    for (const id of PLAYER_IDS) {
+      const player = world.players[id];
+      if (
+        player.pos.x < player.radius - 1e-9 ||
+        player.pos.x > COURT.width - player.radius + 1e-9 ||
+        player.pos.y < player.radius - 1e-9 ||
+        player.pos.y > COURT.height - player.radius + 1e-9
+      ) {
+        failures.add("player out of bounds");
+      }
+    }
+    for (const [firstId, secondId] of P01_PLAYER_PAIRS) {
+      const first = world.players[firstId];
+      const second = world.players[secondId];
+      const gap =
+        Math.hypot(first.pos.x - second.pos.x, first.pos.y - second.pos.y) -
+        first.radius -
+        second.radius;
+      if (gap < -0.01) failures.add("body penetration");
+    }
+    if (world.facts.impeded && !world.facts.contact && !world.facts.routeExposure) {
+      failures.add("remote screen impediment");
+    }
+
+    for (let index = 1; index < events.length; index += 1) {
+      if (events[index - 1].tick === events[index].tick) {
+        if (EVENT_ORDER[events[index - 1].type] > EVENT_ORDER[events[index].type]) {
+          failures.add("event order changed");
+        }
+      }
+    }
+    const touchOwner = {
+      pass_denied: "D1",
+      pass_caught: "O5",
+      kickout_caught: "O1",
+      reject_pass_caught: "O5",
+    };
+    for (const event of events) {
+      if (event.type === "pass_denied" && world.ball.outcome === "missed") continue;
+      const owner = touchOwner[event.type];
+      if (!owner) continue;
+      const player = world.players[owner];
+      const localDistance = Math.hypot(
+        world.ball.pos.x - player.pos.x,
+        world.ball.pos.y - player.pos.y,
+      );
+      const localThreshold =
+        player.radius + world.ball.radius + (event.type === "pass_denied" ? 0.045 : 0.075);
+      if (
+        world.ballOwner !== owner ||
+        localDistance > localThreshold + 1e-9
+      ) {
+        failures.add("pass resolved without local touch");
+      }
+    }
+  };
+
+  for (const team of ["offense", "defense"]) {
+    const observation = createPlannerObservation(simulation.world, team);
+    if (/strategy|offensePlan|defensePlan|hiddenPlan/i.test(JSON.stringify(observation))) {
+      failures.add("planner observation leaked hidden strategy or plan");
+    }
+  }
+
+  capture();
+  for (let index = 0; index < 600 && !simulation.world.terminal; index += 1) {
+    simulation.step();
+    capture();
+  }
+  if (!simulation.world.terminal) failures.add("world did not reach a finite terminal");
+
+  const eventsById = new Map(simulation.eventLog.map((event) => [event.id, event]));
+  for (const record of simulation.planningLog) {
+    for (const id of record.triggerEventIds) {
+      const event = eventsById.get(id);
+      if (!event || event.availableAtTick <= event.tick || record.tick < event.availableAtTick) {
+        failures.add("planner consumed event before its public boundary");
+      }
+    }
+  }
+
+  return {
+    digest: hash.digest("hex"),
+    failures: [...failures],
+    terminalReason: simulation.world.terminal?.reason ?? null,
+  };
 }
 
 test("G08 locks 24 input-only held-out cases before any world is run", () => {
@@ -832,19 +1015,7 @@ test("G08 keeps the locked held-out manifest and approved result checkpoint", ()
 });
 
 test("P00 default strategies preserve all 170 approved S01-G08 tick traces", () => {
-  const legalG05 = G05_CANDIDATES.filter(
-    ({ id }) => id !== "O1.y/-0.24" && id !== "D1.y/+0.24",
-  );
-  const groups = {
-    S: PNR_SCENARIOS.map((scenario) => [scenario.code, makeScenarioConfig(scenario.id)]),
-    G01: G01_SPEEDS.map((speed) => [speed.toFixed(2), makeG01Config(speed)]),
-    G02: G02_DELAYS.map((delay) => [delay.toFixed(2), makeG02Config(delay)]),
-    G03: G03_DELAYS.map((delay) => [delay.toFixed(2), makeG03Config(delay)]),
-    G05: legalG05.map((candidate) => [candidate.id, makeG05Config(candidate.id)]),
-    G06: G06_SPECS.map((spec) => [spec.id, makeG06Config(spec.id)]),
-    G07: G07_SPECS.map((spec) => [spec.id, makeG07Config(spec.id, "left")]),
-    G08: G08_HELDOUT_MANIFEST.map((item) => [item.id, makeG08Config(item.id)]),
-  };
+  const groups = approvedConfigGroups();
   const expected = {
     S: [8, "608ce5e837986214c713ad4ed4c0fbbdec99a89590b68bb36ad1a0c71ba21316"],
     G01: [19, "c4e24d170eb215871daff655b80ddc3cc646dfeabab26907f53a5c714ef2fb22"],
@@ -1000,7 +1171,12 @@ test("P00 temporary preferences can reorder feasible candidates but never revive
 
 test("P00 strategy inputs are deep-copied, deterministic, registered, and locked after start", () => {
   assert.deepEqual(
-    REGISTERED_TEAM_STRATEGIES.map(({ id, version, team }) => ({ id, version, team })),
+    REGISTERED_TEAM_STRATEGIES
+      .filter(({ id }) =>
+        id === DEFAULT_TEAM_STRATEGY_SELECTION.offense.id ||
+        id === DEFAULT_TEAM_STRATEGY_SELECTION.defense.id,
+      )
+      .map(({ id, version, team }) => ({ id, version, team })),
     [
       { id: "OFFENSE_BALANCED_READ", version: 1, team: "offense" },
       { id: "DEFENSE_BALANCED_COVERAGE", version: 1, team: "defense" },
@@ -1076,6 +1252,259 @@ test("P00 strategy inputs are deep-copied, deterministic, registered, and locked
     }),
     /version 2 is unavailable/,
   );
+});
+
+test("P01 calibrates one global +0.02 post-switch ATTACK_BIG preference", () => {
+  const audit = scanP01Calibration();
+  assert.equal(audit.passed, true);
+  assert.deepEqual(audit.failureReasons, []);
+  assert.equal(audit.adjustment, 0.02);
+  assert.equal(audit.adjustment, OFFENSE_MISMATCH_PRESSURE_ATTACK_BIG_ADJUSTMENT);
+  assert.ok(audit.adjustment <= audit.maximumAllowedAdjustment);
+  assert.deepEqual(
+    REGISTERED_TEAM_STRATEGIES.map(({ id, version, team }) => ({ id, version, team })),
+    [
+      { id: "OFFENSE_BALANCED_READ", version: 1, team: "offense" },
+      { id: "OFFENSE_MISMATCH_PRESSURE", version: 1, team: "offense" },
+      { id: "DEFENSE_BALANCED_COVERAGE", version: 1, team: "defense" },
+    ],
+  );
+  assert.equal(
+    REGISTERED_TEAM_STRATEGIES.filter((profile) => profile.team === "defense").length,
+    1,
+  );
+
+  for (const [phase, preferences] of Object.entries(
+    OFFENSE_MISMATCH_PRESSURE.phasePreferences,
+  )) {
+    for (const preference of preferences) {
+      const expected =
+        phase === "offense_mismatch" && preference.planId === "ATTACK_BIG"
+          ? OFFENSE_MISMATCH_PRESSURE_ATTACK_BIG_ADJUSTMENT
+          : 0;
+      assert.equal(preference.adjustment, expected, `${phase}/${preference.planId}`);
+    }
+  }
+  assert.equal(Object.isFrozen(OFFENSE_MISMATCH_PRESSURE), true);
+  assert.equal(
+    Object.isFrozen(OFFENSE_MISMATCH_PRESSURE.phasePreferences.offense_mismatch),
+    true,
+  );
+
+  const row = (speed, strategyId, side = "right") =>
+    audit.rows.find(
+      (candidate) =>
+        candidate.speed === speed &&
+        candidate.strategyId === strategyId &&
+        candidate.side === side,
+    );
+  const balanced372 = row(3.72, OFFENSE_BALANCED_READ.id);
+  const pressure372 = row(3.72, OFFENSE_MISMATCH_PRESSURE.id);
+  const balanced398 = row(3.98, OFFENSE_BALANCED_READ.id);
+  const pressure398 = row(3.98, OFFENSE_MISMATCH_PRESSURE.id);
+  const balanced400 = row(4, OFFENSE_BALANCED_READ.id);
+  const pressure400 = row(4, OFFENSE_MISMATCH_PRESSURE.id);
+
+  assert.equal(balanced398?.chosen, "FEED_SEAL");
+  assert.equal(pressure398?.chosen, "ATTACK_BIG");
+  assert.equal(balanced398?.attack.baseScore, 5.131);
+  assert.equal(pressure398?.attack.baseScore, 5.131);
+  assert.equal(pressure398?.attack.strategyAdjustment, 0.02);
+  assert.equal(pressure398?.attack.effectiveScore, 5.151);
+  assert.equal(pressure398?.feed.baseScore, 5.144);
+  assert.equal(pressure398?.feed.strategyAdjustment, 0);
+  assert.equal(pressure398?.feed.effectiveScore, 5.144);
+  assert.equal(balanced372?.chosen, "FEED_SEAL");
+  assert.equal(pressure372?.chosen, "FEED_SEAL");
+  assert.equal(pressure372?.attack.effectiveScore, 4.632);
+  assert.equal(pressure372?.feed.effectiveScore, 5.144);
+  assert.equal(balanced400?.chosen, "ATTACK_BIG");
+  assert.equal(pressure400?.chosen, "ATTACK_BIG");
+  assert.equal(
+    pressure398?.offenseRoles.find((role) => role.playerId === "O1")?.roleCode,
+    "attack_big",
+  );
+  assert.equal(
+    pressure398?.offenseRoles.find((role) => role.playerId === "O5")?.roleCode,
+    "clear_lane",
+  );
+  assert.equal(audit.veto.feasible, false);
+  assert.equal(audit.veto.baseScore, null);
+  assert.equal(audit.veto.strategyAdjustment, 0);
+  assert.equal(audit.veto.effectiveScore, null);
+  assert.match(audit.veto.strategyReason, /不能恢复候选/);
+  const postSwitchVeto = scoreCandidateWithStrategy(
+    OFFENSE_MISMATCH_PRESSURE,
+    "offense_mismatch",
+    { planId: "ATTACK_BIG", feasible: false, baseScore: null },
+  );
+  assert.equal(postSwitchVeto.baseScore, null);
+  assert.equal(postSwitchVeto.strategyAdjustment, 0);
+  assert.equal(postSwitchVeto.effectiveScore, null);
+  assert.match(postSwitchVeto.strategyReason, /不能恢复候选/);
+});
+
+test("P01 mismatch pressure is deterministic and legal on all 170 approved inputs", () => {
+  const entries = approvedConfigEntries();
+  assert.equal(entries.length, 170);
+  for (const [id, balancedConfig] of entries) {
+    const pressureConfig = withP01OffenseStrategy(
+      balancedConfig,
+      OFFENSE_MISMATCH_PRESSURE.id,
+    );
+    assert.equal(pressureConfig.strategies.offense.id, OFFENSE_MISMATCH_PRESSURE.id);
+    assert.equal(pressureConfig.strategies.defense.id, DEFENSE_BALANCED_COVERAGE.id);
+    const first = p01AuditRun(pressureConfig);
+    const replay = p01AuditRun(pressureConfig);
+    assert.deepEqual(first.failures, [], `${id} first-run invariants`);
+    assert.deepEqual(replay.failures, [], `${id} replay invariants`);
+    assert.equal(first.digest, replay.digest, `${id} tick determinism`);
+    assert.equal(first.terminalReason, replay.terminalReason, `${id} terminal`);
+  }
+  assert.equal(
+    `sha256:${createHash("sha256").update(canonicalG08ManifestJson()).digest("hex")}`,
+    G08_MANIFEST_HASH,
+  );
+});
+
+test("P01 changes only strategy scoring before public motion lets defense react", () => {
+  const balanced = new PnrSimulation(
+    makeP01G01Config(3.98, OFFENSE_BALANCED_READ.id),
+  );
+  const pressure = new PnrSimulation(
+    makeP01G01Config(3.98, OFFENSE_MISMATCH_PRESSURE.id),
+  );
+  let firstPublicMotionDifferenceTick = null;
+
+  for (let index = 0; index < 600; index += 1) {
+    const samePublicPlayers = PLAYER_IDS.every((id) => {
+      const first = balanced.world.players[id];
+      const second = pressure.world.players[id];
+      return (
+        first.pos.x === second.pos.x &&
+        first.pos.y === second.pos.y &&
+        first.vel.x === second.vel.x &&
+        first.vel.y === second.vel.y
+      );
+    });
+    if (!samePublicPlayers) {
+      firstPublicMotionDifferenceTick = balanced.world.tick;
+      break;
+    }
+    assert.equal(balanced.defensePlan.id, pressure.defensePlan.id);
+    balanced.step();
+    pressure.step();
+  }
+
+  const balancedDecision = balanced.planningLog.find(
+    (record) => record.team === "offense" && record.decisionPhase === "offense_mismatch",
+  );
+  const pressureDecision = pressure.planningLog.find(
+    (record) => record.team === "offense" && record.decisionPhase === "offense_mismatch",
+  );
+  assert.ok(balancedDecision);
+  assert.ok(pressureDecision);
+  assert.equal(balancedDecision.tick, pressureDecision.tick);
+  assert.equal(balancedDecision.chosen, "FEED_SEAL");
+  assert.equal(pressureDecision.chosen, "ATTACK_BIG");
+  assert.ok(firstPublicMotionDifferenceTick > pressureDecision.tick);
+
+  for (const balancedCandidate of balancedDecision.candidates) {
+    const pressureCandidate = pressureDecision.candidates.find(
+      (candidate) => candidate.id === balancedCandidate.id,
+    );
+    assert.ok(pressureCandidate);
+    assert.equal(pressureCandidate.baseScore, balancedCandidate.baseScore);
+    assert.equal(pressureCandidate.feasible, balancedCandidate.feasible);
+    assert.deepEqual(pressureCandidate.vetoes, balancedCandidate.vetoes);
+    assert.deepEqual(pressureCandidate.evidence, balancedCandidate.evidence);
+    assert.equal(
+      pressureCandidate.strategyAdjustment,
+      balancedCandidate.id === "ATTACK_BIG" ? 0.02 : 0,
+    );
+  }
+
+  const defenseFrame = (simulation) => simulation.planningLog
+    .filter(
+      (record) =>
+        record.team === "defense" && record.tick < firstPublicMotionDifferenceTick,
+    )
+    .map((record) => ({
+      tick: record.tick,
+      trigger: record.trigger,
+      chosen: record.chosen,
+      candidates: record.candidates.map((candidate) => ({
+        id: candidate.id,
+        feasible: candidate.feasible,
+        baseScore: candidate.baseScore,
+        effectiveScore: candidate.effectiveScore,
+        vetoes: candidate.vetoes,
+      })),
+    }));
+  assert.deepEqual(defenseFrame(pressure), defenseFrame(balanced));
+});
+
+test("P01 keeps the stable low side unchanged and mirrors pressure left/right", () => {
+  const lowBalanced = new PnrSimulation(
+    makeP01G01Config(3.72, OFFENSE_BALANCED_READ.id),
+  );
+  const lowPressure = new PnrSimulation(
+    makeP01G01Config(3.72, OFFENSE_MISMATCH_PRESSURE.id),
+  );
+  while (!lowBalanced.world.terminal && !lowPressure.world.terminal) {
+    assert.equal(lowPressure.world.stateHash, lowBalanced.world.stateHash);
+    lowBalanced.step();
+    lowPressure.step();
+  }
+  assert.equal(lowBalanced.world.terminal?.reason, lowPressure.world.terminal?.reason);
+  assert.equal(lowBalanced.offensePlan.id, "FEED_SEAL");
+  assert.equal(lowPressure.offensePlan.id, "FEED_SEAL");
+
+  const right = new PnrSimulation(
+    makeP01G01Config(3.98, OFFENSE_MISMATCH_PRESSURE.id, "right"),
+  );
+  const left = new PnrSimulation(
+    makeP01G01Config(3.98, OFFENSE_MISMATCH_PRESSURE.id, "left"),
+  );
+  let maximumMirrorError = 0;
+  while (!right.world.terminal && !left.world.terminal) {
+    assert.equal(left.offensePlan.id, right.offensePlan.id);
+    assert.equal(left.defensePlan.id, right.defensePlan.id);
+    assert.deepEqual(
+      left.getRoles().map(({ playerId, roleCode }) => ({ playerId, roleCode })),
+      right.getRoles().map(({ playerId, roleCode }) => ({ playerId, roleCode })),
+    );
+    for (const id of PLAYER_IDS) {
+      const mirrored = mirrorPointAcrossCenterline(right.world.players[id].pos);
+      maximumMirrorError = Math.max(
+        maximumMirrorError,
+        Math.abs(left.world.players[id].pos.x - mirrored.x),
+        Math.abs(left.world.players[id].pos.y - mirrored.y),
+        Math.abs(left.world.players[id].vel.x + right.world.players[id].vel.x),
+        Math.abs(left.world.players[id].vel.y - right.world.players[id].vel.y),
+      );
+    }
+    right.step();
+    left.step();
+  }
+  assert.equal(left.world.terminal?.reason, right.world.terminal?.reason);
+  assert.ok(maximumMirrorError <= 1e-9);
+});
+
+test("P01 hard veto and runtime lock hold for the new offense profile", () => {
+  const simulation = createP01Replay("hard-veto", OFFENSE_MISMATCH_PRESSURE.id);
+  const initialOffense = simulation.planningLog.find((record) => record.team === "offense");
+  const attack = initialOffense?.candidates.find((candidate) => candidate.id === "ATTACK_BIG");
+  assert.ok(attack);
+  assert.equal(attack.feasible, false);
+  assert.equal(attack.baseScore, null);
+  assert.equal(attack.strategyAdjustment, 0);
+  assert.equal(attack.effectiveScore, null);
+  assert.equal(simulation.config.strategies.offense.id, OFFENSE_MISMATCH_PRESSURE.id);
+  assert.equal(simulation.config.strategies.defense.id, DEFENSE_BALANCED_COVERAGE.id);
+  assert.equal(simulation.strategyLocked, false);
+  simulation.step();
+  assert.equal(simulation.strategyLocked, true);
 });
 
 test("G01 scans 19 speed-only samples twice and finds one deterministic decision boundary", () => {

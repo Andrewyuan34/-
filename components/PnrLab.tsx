@@ -84,9 +84,18 @@ import {
 } from "@/lib/pnr-g08-heldout-manifest";
 import {
   DECISION_PHASE_LABELS,
-  REGISTERED_TEAM_STRATEGIES,
+  OFFENSE_BALANCED_READ,
   type TeamStrategyProfile,
 } from "@/lib/pnr-strategy";
+import {
+  P01_OFFENSE_STRATEGIES,
+  P01_REPLAYS,
+  createP01Replay,
+  scanP01Calibration,
+  type P01CalibrationResult,
+  type P01OffenseStrategyId,
+  type P01ReplayId,
+} from "@/lib/pnr-p01-offense-strategy";
 
 interface UiSnapshot {
   world: WorldState;
@@ -103,7 +112,7 @@ interface UiSnapshot {
 
 type PositionMap = Record<PlayerId, Vec2>;
 type TrailMap = Record<PlayerId, Vec2[]>;
-type LabMode = "scenarios" | "g01" | "g02" | "g03" | "g05" | "g06" | "g07" | "g08" | "p00";
+type LabMode = "scenarios" | "g01" | "g02" | "g03" | "g05" | "g06" | "g07" | "g08" | "p00" | "p01";
 type P00ReplayId = "initial-read" | "mismatch-read" | "post-catch-read";
 
 const P00_REPLAYS = Object.freeze([
@@ -166,6 +175,7 @@ const G05_AUDIT = scanG05SpatialBoundary();
 const G06_AUDIT = scanG06Combinations();
 const G07_AUDIT = scanG07Mirrors();
 const G08_AUDIT = scanG08Heldout();
+const P01_AUDIT = scanP01Calibration();
 
 function planShort(id: string, side: ScreenSide): string {
   if (side === "left" && id === "USE_RIGHT_SCREEN") return "USE · 左侧使用";
@@ -2227,12 +2237,8 @@ function P00ProbePanel({
 }) {
   const activeReplay =
     P00_REPLAYS.find((replay) => replay.id === activeReplayId) ?? P00_REPLAYS[0];
-  const offenseProfiles = REGISTERED_TEAM_STRATEGIES.filter(
-    (strategy) => strategy.team === "offense",
-  );
-  const defenseProfiles = REGISTERED_TEAM_STRATEGIES.filter(
-    (strategy) => strategy.team === "defense",
-  );
+  const offenseProfiles = [offenseStrategy];
+  const defenseProfiles = [defenseStrategy];
 
   return (
     <section className="g01-probe p00-probe" aria-label="P00 队级策略输入契约">
@@ -2349,6 +2355,212 @@ function P00ProbePanel({
   );
 }
 
+function P01ProbePanel({
+  activeReplayId,
+  activeStrategyId,
+  audit,
+  offenseStrategy,
+  defenseStrategy,
+  latestOffense,
+  latestDefense,
+  strategyLocked,
+  onReplaySelect,
+  onStrategySelect,
+}: {
+  activeReplayId: P01ReplayId;
+  activeStrategyId: P01OffenseStrategyId;
+  audit: P01CalibrationResult;
+  offenseStrategy: TeamStrategyProfile;
+  defenseStrategy: TeamStrategyProfile;
+  latestOffense?: PlanningRecord;
+  latestDefense?: PlanningRecord;
+  strategyLocked: boolean;
+  onReplaySelect: (id: P01ReplayId) => void;
+  onStrategySelect: (id: P01OffenseStrategyId) => void;
+}) {
+  const activeReplay =
+    P01_REPLAYS.find((replay) => replay.id === activeReplayId) ?? P01_REPLAYS[0];
+  const comparisonSpeed =
+    activeReplay.id === "boundary-398"
+      ? 3.98
+      : activeReplay.id === "stable-low-372"
+        ? 3.72
+        : null;
+  const comparisonRows = comparisonSpeed === null
+    ? []
+    : audit.rows.filter(
+        (row) => row.speed === comparisonSpeed && row.side === "right",
+      );
+
+  return (
+    <section className="g01-probe p00-probe p01-probe" aria-label="P01 错位攻击优先进攻策略">
+      <div className="g01-probe__head">
+        <div>
+          <span className="eyebrow">P01 · OFFENSE POLICY · POST-SWITCH ONLY</span>
+          <h2>错位攻击优先</h2>
+          <p>
+            只为 post-switch 阶段硬可行的 ATTACK_BIG 增加统一 +{audit.adjustment.toFixed(2)}；
+            基础分、否决、运动和防守策略均不变。
+          </p>
+        </div>
+        <span className={"g01-status " + (audit.passed ? "is-pass" : "is-fail")}>
+          {audit.passed ? "CALIBRATION PASS" : "CALIBRATION FAIL"}
+        </span>
+      </div>
+
+      <div className="g01-summary">
+        <div>
+          <span>全局策略常数</span>
+          <strong>ATTACK_BIG +{audit.adjustment.toFixed(2)}</strong>
+          <small>公开上限 +{audit.maximumAllowedAdjustment.toFixed(2)} · 不按速度/side/场景分支</small>
+        </div>
+        <div>
+          <span>3.98m/s 边界</span>
+          <strong>FEED → ATTACK</strong>
+          <small>Balanced 5.144 &gt; 5.131；Pressure 5.151 &gt; 5.144</small>
+        </div>
+        <div>
+          <span>3.72m/s 稳定低侧</span>
+          <strong>FEED / FEED</strong>
+          <small>4.612 + 0.02 仍明显低于 FEED 5.144</small>
+        </div>
+        <div>
+          <span>本回合配置</span>
+          <strong>{strategyLocked ? "LOCKED" : "UNLOCKED"}</strong>
+          <small>{strategyLocked ? "暂停仍锁定；重置才可改策略" : "可在运行前选择进攻策略"}</small>
+        </div>
+      </div>
+
+      <div className="p00-strategy-grid p01-strategy-grid">
+        <label className="p00-strategy-card offense">
+          <span>OFFENSE · SELECT BEFORE RUN</span>
+          <strong>{offenseStrategy.label}</strong>
+          <select
+            aria-label="P01 进攻队级策略"
+            disabled={strategyLocked}
+            onChange={(event) => onStrategySelect(event.currentTarget.value)}
+            value={activeStrategyId}
+          >
+            {P01_OFFENSE_STRATEGIES.map((profile) => (
+              <option key={profile.id} value={profile.id}>
+                {profile.label} · {profile.id}
+              </option>
+            ))}
+          </select>
+          <small>{offenseStrategy.description}</small>
+        </label>
+        <div className="p00-neutral-lock">
+          <span>NEUTRAL WORLD</span>
+          <strong>NO POLICY INPUT</strong>
+          <small>只解析双方已经提交的运动意图与真实局部结果</small>
+        </div>
+        <label className="p00-strategy-card defense">
+          <span>DEFENSE · ONE PROFILE ONLY</span>
+          <strong>{defenseStrategy.label}</strong>
+          <select
+            aria-label="P01 防守队级策略"
+            disabled
+            value={`${defenseStrategy.id}@${defenseStrategy.version}`}
+          >
+            <option value={`${defenseStrategy.id}@${defenseStrategy.version}`}>
+              {defenseStrategy.id} · v{defenseStrategy.version}
+            </option>
+          </select>
+          <small>本轮不增加防守策略；防守只观察公开运动后再响应。</small>
+        </label>
+      </div>
+
+      <div className="p01-rule-strip" aria-label="P01 策略作用范围">
+        <div>
+          <span>阶段门</span>
+          <strong>post-switch / offense_mismatch</strong>
+          <small>初始阅读与 O5 接球后 adjustment 均为 0</small>
+        </div>
+        <div>
+          <span>候选门</span>
+          <strong>可行 ATTACK_BIG only</strong>
+          <small>FEED_SEAL、RESET_MISMATCH 与其余候选保持 0</small>
+        </div>
+        <div>
+          <span>队内协同</span>
+          <strong>O1 attack_big + O5 clear_lane</strong>
+          <small>同一个进攻队级计划同时分配两名球员</small>
+        </div>
+      </div>
+
+      <div className="g01-replays" aria-label="P01 三个代表回放">
+        {P01_REPLAYS.map((replay) => (
+          <button
+            aria-pressed={replay.id === activeReplayId}
+            className={replay.id === activeReplayId ? "is-active" : ""}
+            disabled={strategyLocked}
+            key={replay.id}
+            onClick={() => onReplaySelect(replay.id)}
+            type="button"
+          >
+            <span>{replay.label}</span>
+            <strong>{replay.code}</strong>
+            <small>{replay.note}</small>
+          </button>
+        ))}
+      </div>
+
+      <div className="p01-calibration-grid" aria-label="当前代表样本策略评分对照">
+        {comparisonRows.length > 0 ? comparisonRows.map((row) => (
+          <div
+            className={row.strategyId === activeStrategyId ? "is-current" : ""}
+            key={`${row.speed}/${row.strategyId}/${row.side}`}
+          >
+            <span>{row.strategyId === OFFENSE_BALANCED_READ.id ? "BALANCED" : "MISMATCH PRESSURE"}</span>
+            <strong>{row.chosen}</strong>
+            <small>
+              ATTACK {row.attack.baseScore?.toFixed(3)} + {row.attack.strategyAdjustment.toFixed(2)} = {row.attack.effectiveScore?.toFixed(3)}
+            </small>
+            <small>
+              FEED {row.feed.baseScore?.toFixed(3)} + {row.feed.strategyAdjustment.toFixed(2)} = {row.feed.effectiveScore?.toFixed(3)}
+            </small>
+          </div>
+        )) : (
+          <div className="is-current p01-veto-card">
+            <span>HARD FEASIBILITY FIRST</span>
+            <strong>ATTACK_BIG = VETO</strong>
+            <small>base VETO + strategy BLOCKED = effective VETO</small>
+            <small>{audit.veto.vetoes.join("；")}</small>
+          </div>
+        )}
+      </div>
+
+      <div className="p00-phase-grid" aria-label="P01 当前双方决策阶段与策略原因">
+        <div>
+          <span>当前进攻阶段</span>
+          <strong>
+            {latestOffense ? DECISION_PHASE_LABELS[latestOffense.decisionPhase] : "等待进攻决策"}
+          </strong>
+          <small>{latestOffense?.strategyBoundary ?? "只读取选定进攻策略"}</small>
+        </div>
+        <div className="p00-current-replay">
+          <span>CURRENT POLICY REPLAY</span>
+          <strong>{activeReplay.code} · {activeReplay.label}</strong>
+          <small>{activeReplay.note}</small>
+        </div>
+        <div>
+          <span>当前防守阶段</span>
+          <strong>
+            {latestDefense ? DECISION_PHASE_LABELS[latestDefense.decisionPhase] : "等待防守决策"}
+          </strong>
+          <small>{latestDefense?.strategyBoundary ?? "不读取进攻策略"}</small>
+        </div>
+      </div>
+
+      {!audit.passed && (
+        <div className="g01-failures">
+          {audit.failureReasons.map((reason) => <p key={reason}>{reason}</p>)}
+        </div>
+      )}
+    </section>
+  );
+}
+
 export default function PnrLab() {
   const [labMode, setLabMode] = useState<LabMode>("scenarios");
   const [scenarioId, setScenarioId] = useState<ScenarioId>(DEFAULT_SCENARIO_ID);
@@ -2362,6 +2574,9 @@ export default function PnrLab() {
   const [g08ReplayId, setG08ReplayId] =
     useState<G08ReplaySelection["id"]>("closest-boundary");
   const [p00ReplayId, setP00ReplayId] = useState<P00ReplayId>("initial-read");
+  const [p01ReplayId, setP01ReplayId] = useState<P01ReplayId>("boundary-398");
+  const [p01OffenseStrategyId, setP01OffenseStrategyId] =
+    useState<P01OffenseStrategyId>(OFFENSE_BALANCED_READ.id);
   const [initialSimulation] = useState(
     () => new PnrSimulation(makeScenarioConfig(DEFAULT_SCENARIO_ID)),
   );
@@ -2462,6 +2677,17 @@ export default function PnrLab() {
     installSimulation(new PnrSimulation(makeScenarioConfig(replay.scenarioId)), shouldPlay);
   }, [installSimulation]);
 
+  const replaceP01Simulation = useCallback((
+    nextReplayId: P01ReplayId,
+    nextStrategyId: P01OffenseStrategyId,
+    shouldPlay: boolean,
+  ): void => {
+    installSimulation(
+      createP01Replay(nextReplayId, nextStrategyId),
+      shouldPlay,
+    );
+  }, [installSimulation]);
+
   const replaceCurrentSimulation = useCallback((shouldPlay: boolean): void => {
     if (labMode === "g01") {
       replaceG01Simulation(g01ReplayId, shouldPlay);
@@ -2479,6 +2705,8 @@ export default function PnrLab() {
       replaceG08Simulation(g08ReplayId, shouldPlay);
     } else if (labMode === "p00") {
       replaceP00Simulation(p00ReplayId, shouldPlay);
+    } else if (labMode === "p01") {
+      replaceP01Simulation(p01ReplayId, p01OffenseStrategyId, shouldPlay);
     } else {
       replaceSimulation(scenarioId, shouldPlay);
     }
@@ -2492,6 +2720,8 @@ export default function PnrLab() {
     g07Side,
     g08ReplayId,
     p00ReplayId,
+    p01ReplayId,
+    p01OffenseStrategyId,
     labMode,
     replaceG01Simulation,
     replaceG02Simulation,
@@ -2501,6 +2731,7 @@ export default function PnrLab() {
     replaceG07Simulation,
     replaceG08Simulation,
     replaceP00Simulation,
+    replaceP01Simulation,
     replaceSimulation,
     scenarioId,
   ]);
@@ -2618,6 +2849,8 @@ export default function PnrLab() {
     G08_AUDIT.replays.find((replay) => replay.id === g08ReplayId) ?? G08_AUDIT.replays[0];
   const currentP00Replay =
     P00_REPLAYS.find((replay) => replay.id === p00ReplayId) ?? P00_REPLAYS[0];
+  const currentP01Replay =
+    P01_REPLAYS.find((replay) => replay.id === p01ReplayId) ?? P01_REPLAYS[0];
 
   return (
     <main className="lab-shell">
@@ -2640,6 +2873,7 @@ export default function PnrLab() {
           {labMode === "g07" && <span>G07 · {g07Side.toUpperCase()} · {currentG07Replay.specId}</span>}
           {labMode === "g08" && currentG08Replay && <span>G08 · {currentG08Replay.manifestId} · {snapshot.world.screenSide.toUpperCase()}</span>}
           {labMode === "p00" && <span>P00 · {currentP00Replay.code} · {strategyLocked ? "LOCKED" : "READY"}</span>}
+          {labMode === "p01" && <span>P01 · {currentP01Replay.code} · {strategyLocked ? "LOCKED" : "READY"}</span>}
           <span>HASH {snapshot.world.stateHash}</span>
         </div>
       </header>
@@ -2744,6 +2978,17 @@ export default function PnrLab() {
         >
           P00 · 默认策略契约
         </button>
+        <button
+          aria-pressed={labMode === "p01"}
+          className={labMode === "p01" ? "is-active" : ""}
+          onClick={() => {
+            setLabMode("p01");
+            replaceP01Simulation(p01ReplayId, p01OffenseStrategyId, false);
+          }}
+          type="button"
+        >
+          P01 · 错位攻击优先
+        </button>
       </nav>
 
       {labMode === "scenarios" ? (
@@ -2841,7 +3086,7 @@ export default function PnrLab() {
             replaceG08Simulation(nextReplayId, false);
           }}
         />
-      ) : (
+      ) : labMode === "p00" ? (
         <P00ProbePanel
           activeReplayId={p00ReplayId}
           defenseStrategy={snapshot.strategies.defense}
@@ -2851,6 +3096,25 @@ export default function PnrLab() {
           onReplaySelect={(nextReplayId) => {
             setP00ReplayId(nextReplayId);
             replaceP00Simulation(nextReplayId, false);
+          }}
+          strategyLocked={strategyLocked}
+        />
+      ) : (
+        <P01ProbePanel
+          activeReplayId={p01ReplayId}
+          activeStrategyId={p01OffenseStrategyId}
+          audit={P01_AUDIT}
+          defenseStrategy={snapshot.strategies.defense}
+          latestDefense={latestDefense}
+          latestOffense={latestOffense}
+          offenseStrategy={snapshot.strategies.offense}
+          onReplaySelect={(nextReplayId) => {
+            setP01ReplayId(nextReplayId);
+            replaceP01Simulation(nextReplayId, p01OffenseStrategyId, false);
+          }}
+          onStrategySelect={(nextStrategyId) => {
+            setP01OffenseStrategyId(nextStrategyId);
+            replaceP01Simulation(p01ReplayId, nextStrategyId, false);
           }}
           strategyLocked={strategyLocked}
         />
