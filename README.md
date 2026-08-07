@@ -32,7 +32,7 @@ npm run lint
 npm run build
 ```
 
-`npm run check` 运行测试与构建，但不能替代单独的 lint。
+`npm test` 与聚焦测试默认使用紧凑 dot reporter。开发中先运行 `npm run test:focus -- "<name pattern>"`；只有失败时才用 `npm run test:focus:detail -- "<name pattern>"` 展开对应失败。`npm run test:detail` 可展开整套测试；`npm run check` 运行测试与构建，但不能替代单独的 lint。
 
 ## 架构
 
@@ -74,7 +74,8 @@ npm run build
 - `lib/pnr-formation-domain.ts`、`pnr-f02-formation-samples.ts`：F01 结构化域与 F02 冻结 seed 采样。
 - `lib/pnr-f03-heldout-manifest.ts`、`pnr-f03-heldout-audit.ts`：揭示前锁定的 Formation held-out 与结果审计。
 - `lib/pnr-formation-generalization-results.ts`：F01–F03 汇总与审计后代表回放选择。
-- `components/PnrLab.tsx`：可丢弃的 Canvas 观察入口；可以展示全量调试信息，但不得控制球队决策。
+- `components/PnrLab.tsx`：可丢弃观察壳的状态与回放编排；保持唯一默认页面入口，不承载球队决策。
+- `components/pnr-lab/`：Canvas 绘制、共享展示与 G/P/F 审计面板；UI 任务只读取命中的模块，不回读整份观察壳。
 
 ### 泛化与策略审计
 

@@ -81,7 +81,7 @@ A00 必须先用输入-only 固定审计集证明自动选边、双运行、镜�
 
 ### 只修改 UI
 
-读取 README 架构、`components/PnrLab.tsx` 的相关区域和公开快照类型。必须确认 UI 仍是只读观察壳；不需要加载全部泛化历史。
+先按 README 代码地图定位：回放/状态编排读 `components/PnrLab.tsx` 的相关符号，Canvas 或面板改动只读 `components/pnr-lab/` 中命中的模块及公开快照类型。必须确认 UI 仍是只读观察壳；不需要加载整个组件目录或全部泛化历史。
 
 ## 信息冲突时怎么办
 
