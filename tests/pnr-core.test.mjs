@@ -84,6 +84,10 @@ import {
 import {
   DEFAULT_TEAM_STRATEGY_SELECTION,
   DEFENSE_BALANCED_COVERAGE,
+  DEFENSE_EARLY_DIG,
+  DEFENSE_EARLY_DIG_ADJUSTMENT,
+  DEFENSE_MISMATCH_PRESSURE,
+  DEFENSE_MISMATCH_PRESSURE_ADJUSTMENT,
   OFFENSE_BALANCED_READ,
   OFFENSE_MISMATCH_PRESSURE,
   OFFENSE_MISMATCH_PRESSURE_ATTACK_BIG_ADJUSTMENT,
@@ -98,6 +102,19 @@ import {
   scanP01Calibration,
   withP01OffenseStrategy,
 } from "../lib/pnr-p01-offense-strategy.ts";
+import {
+  P02_DEFENSE_STRATEGIES,
+  makeP02StrategySelection,
+  scanP02DefenseCalibration,
+  withP02Strategies,
+} from "../lib/pnr-p02-defense-strategy.ts";
+import {
+  P03_COMMON_INPUT,
+  P03_POLICY_MATCHUPS,
+  createP03PolicyReplay,
+  makeP03PolicyConfig,
+  scanP03PolicyMatrix,
+} from "../lib/pnr-p03-policy-matrix.ts";
 
 function makeTestConfig(cue = "neutral", overrides = {}) {
   return {
@@ -405,15 +422,18 @@ function p01AuditRun(config) {
       }
     }
     const touchOwner = {
-      pass_denied: "D1",
       pass_caught: "O5",
       kickout_caught: "O1",
       reject_pass_caught: "O5",
     };
     for (const event of events) {
       if (event.type === "pass_denied" && world.ball.outcome === "missed") continue;
-      const owner = touchOwner[event.type];
+      const owner = event.type === "pass_denied" ? world.ballOwner : touchOwner[event.type];
       if (!owner) continue;
+      if (event.type === "pass_denied" && owner !== "D1" && owner !== "D5") {
+        failures.add("pass denial assigned to a non-defender");
+        continue;
+      }
       const player = world.players[owner];
       const localDistance = Math.hypot(
         world.ball.pos.x - player.pos.x,
@@ -1267,11 +1287,13 @@ test("P01 calibrates one global +0.02 post-switch ATTACK_BIG preference", () => 
       { id: "OFFENSE_BALANCED_READ", version: 1, team: "offense" },
       { id: "OFFENSE_MISMATCH_PRESSURE", version: 1, team: "offense" },
       { id: "DEFENSE_BALANCED_COVERAGE", version: 1, team: "defense" },
+      { id: "DEFENSE_MISMATCH_PRESSURE", version: 1, team: "defense" },
+      { id: "DEFENSE_EARLY_DIG", version: 1, team: "defense" },
     ],
   );
   assert.equal(
     REGISTERED_TEAM_STRATEGIES.filter((profile) => profile.team === "defense").length,
-    1,
+    3,
   );
 
   for (const [phase, preferences] of Object.entries(
@@ -1505,6 +1527,321 @@ test("P01 hard veto and runtime lock hold for the new offense profile", () => {
   assert.equal(simulation.strategyLocked, false);
   simulation.step();
   assert.equal(simulation.strategyLocked, true);
+});
+
+test("P02 calibrates two global defense preferences without changing base scores", () => {
+  const audit = scanP02DefenseCalibration();
+  assert.equal(audit.passed, true);
+  assert.deepEqual(audit.failureReasons, []);
+  assert.equal(audit.mismatchAdjustment, 1.18);
+  assert.equal(audit.mismatchAdjustment, DEFENSE_MISMATCH_PRESSURE_ADJUSTMENT);
+  assert.equal(audit.earlyDigAdjustment, 0.24);
+  assert.equal(audit.earlyDigAdjustment, DEFENSE_EARLY_DIG_ADJUSTMENT);
+  assert.equal(audit.rows.length, 10);
+  assert.deepEqual(
+    P02_DEFENSE_STRATEGIES.map(({ id, version, team }) => ({ id, version, team })),
+    [
+      { id: "DEFENSE_BALANCED_COVERAGE", version: 1, team: "defense" },
+      { id: "DEFENSE_MISMATCH_PRESSURE", version: 1, team: "defense" },
+      { id: "DEFENSE_EARLY_DIG", version: 1, team: "defense" },
+    ],
+  );
+
+  for (const [phase, preferences] of Object.entries(
+    DEFENSE_MISMATCH_PRESSURE.phasePreferences,
+  )) {
+    for (const preference of preferences) {
+      assert.equal(
+        preference.adjustment,
+        phase === "defense_mismatch" && preference.planId === "PRESSURE_MISMATCH"
+          ? DEFENSE_MISMATCH_PRESSURE_ADJUSTMENT
+          : 0,
+        `${phase}/${preference.planId}`,
+      );
+    }
+  }
+  for (const [phase, preferences] of Object.entries(DEFENSE_EARLY_DIG.phasePreferences)) {
+    for (const preference of preferences) {
+      assert.equal(
+        preference.adjustment,
+        phase === "defense_post_catch" && preference.planId === "DIG_POST"
+          ? DEFENSE_EARLY_DIG_ADJUSTMENT
+          : 0,
+        `${phase}/${preference.planId}`,
+      );
+    }
+  }
+  assert.equal(Object.isFrozen(DEFENSE_MISMATCH_PRESSURE), true);
+  assert.equal(Object.isFrozen(DEFENSE_EARLY_DIG), true);
+
+  const row = (family, input, defenseStrategyId) => audit.rows.find(
+    (candidate) =>
+      candidate.family === family &&
+      candidate.input === input &&
+      candidate.defenseStrategyId === defenseStrategyId,
+  );
+  const score = (entry, id) => entry?.candidates.find((candidate) => candidate.id === id);
+  const balanced398 = row("mismatch", 3.98, DEFENSE_BALANCED_COVERAGE.id);
+  const pressure398 = row("mismatch", 3.98, DEFENSE_MISMATCH_PRESSURE.id);
+  const pressure400 = row("mismatch", 4, DEFENSE_MISMATCH_PRESSURE.id);
+  assert.equal(balanced398?.chosen, "CONTAIN_MISMATCH");
+  assert.equal(pressure398?.chosen, "PRESSURE_MISMATCH");
+  assert.equal(pressure400?.chosen, "CONTAIN_MISMATCH");
+  assert.deepEqual(
+    [
+      score(balanced398, "CONTAIN_MISMATCH")?.baseScore,
+      score(balanced398, "PRESSURE_MISMATCH")?.baseScore,
+      score(pressure398, "CONTAIN_MISMATCH")?.baseScore,
+      score(pressure398, "PRESSURE_MISMATCH")?.baseScore,
+      score(pressure398, "PRESSURE_MISMATCH")?.strategyAdjustment,
+      score(pressure398, "PRESSURE_MISMATCH")?.effectiveScore,
+      score(pressure400, "CONTAIN_MISMATCH")?.baseScore,
+      score(pressure400, "PRESSURE_MISMATCH")?.baseScore,
+      score(pressure400, "PRESSURE_MISMATCH")?.effectiveScore,
+    ],
+    [4.569, 3.396, 4.569, 3.396, 1.18, 4.576, 4.577, 3.387, 4.567],
+  );
+
+  const balanced000 = row("post-catch", 0, DEFENSE_BALANCED_COVERAGE.id);
+  const early000 = row("post-catch", 0, DEFENSE_EARLY_DIG.id);
+  const balanced018 = row("post-catch", 0.18, DEFENSE_BALANCED_COVERAGE.id);
+  const early018 = row("post-catch", 0.18, DEFENSE_EARLY_DIG.id);
+  const early021 = row("post-catch", 0.21, DEFENSE_EARLY_DIG.id);
+  assert.equal(balanced000?.chosen, "STAY_HOME_POST");
+  assert.equal(early000?.chosen, "STAY_HOME_POST");
+  assert.equal(balanced018?.chosen, "STAY_HOME_POST");
+  assert.equal(early018?.chosen, "DIG_POST");
+  assert.equal(early021?.chosen, "DIG_POST");
+  assert.deepEqual(
+    [
+      score(balanced018, "STAY_HOME_POST")?.baseScore,
+      score(balanced018, "DIG_POST")?.baseScore,
+      score(early018, "STAY_HOME_POST")?.baseScore,
+      score(early018, "DIG_POST")?.baseScore,
+      score(early018, "DIG_POST")?.strategyAdjustment,
+      score(early018, "DIG_POST")?.effectiveScore,
+    ],
+    [1.217, 0.98, 1.217, 0.98, 0.24, 1.22],
+  );
+
+  for (const veto of [audit.pressureHardVeto, audit.digHardVeto]) {
+    assert.equal(veto.feasible, false);
+    assert.equal(veto.baseScore, null);
+    assert.equal(veto.strategyAdjustment, 0);
+    assert.equal(veto.effectiveScore, null);
+    assert.match(veto.strategyReason, /不能恢复候选/);
+  }
+});
+
+test("P02 defense profiles are deterministic and legal on all 170 approved inputs", () => {
+  const entries = approvedConfigEntries();
+  assert.equal(entries.length, 170);
+  for (const profile of [DEFENSE_MISMATCH_PRESSURE, DEFENSE_EARLY_DIG]) {
+    for (const [id, balancedConfig] of entries) {
+      const config = withP02Strategies(
+        balancedConfig,
+        OFFENSE_BALANCED_READ.id,
+        profile.id,
+      );
+      assert.equal(config.strategies.offense.id, OFFENSE_BALANCED_READ.id);
+      assert.equal(config.strategies.defense.id, profile.id);
+      const first = p01AuditRun(config);
+      const replay = p01AuditRun(config);
+      assert.deepEqual(first.failures, [], `${profile.id}/${id} first-run invariants`);
+      assert.deepEqual(replay.failures, [], `${profile.id}/${id} replay invariants`);
+      assert.equal(first.digest, replay.digest, `${profile.id}/${id} tick determinism`);
+      assert.equal(first.terminalReason, replay.terminalReason, `${profile.id}/${id} terminal`);
+    }
+  }
+  assert.equal(
+    `sha256:${createHash("sha256").update(canonicalG08ManifestJson()).digest("hex")}`,
+    G08_MANIFEST_HASH,
+  );
+});
+
+test("P02 keeps defense policy hidden until its public movement can affect offense", () => {
+  const base = makeP01G01Config(3.98, OFFENSE_BALANCED_READ.id);
+  const balanced = new PnrSimulation(withP02Strategies(
+    base,
+    OFFENSE_BALANCED_READ.id,
+    DEFENSE_BALANCED_COVERAGE.id,
+  ));
+  const pressure = new PnrSimulation(withP02Strategies(
+    base,
+    OFFENSE_BALANCED_READ.id,
+    DEFENSE_MISMATCH_PRESSURE.id,
+  ));
+  let firstPublicMotionDifferenceTick = null;
+
+  for (let index = 0; index < 600; index += 1) {
+    const samePublicPlayers = PLAYER_IDS.every((id) => {
+      const first = balanced.world.players[id];
+      const second = pressure.world.players[id];
+      return (
+        first.pos.x === second.pos.x &&
+        first.pos.y === second.pos.y &&
+        first.vel.x === second.vel.x &&
+        first.vel.y === second.vel.y
+      );
+    });
+    if (!samePublicPlayers) {
+      firstPublicMotionDifferenceTick = balanced.world.tick;
+      break;
+    }
+    assert.equal(balanced.offensePlan.id, pressure.offensePlan.id);
+    balanced.step();
+    pressure.step();
+  }
+
+  const balancedDecision = balanced.planningLog.find(
+    (record) => record.team === "defense" && record.decisionPhase === "defense_mismatch",
+  );
+  const pressureDecision = pressure.planningLog.find(
+    (record) => record.team === "defense" && record.decisionPhase === "defense_mismatch",
+  );
+  assert.ok(balancedDecision);
+  assert.ok(pressureDecision);
+  assert.equal(balancedDecision.tick, pressureDecision.tick);
+  assert.equal(balancedDecision.chosen, "CONTAIN_MISMATCH");
+  assert.equal(pressureDecision.chosen, "PRESSURE_MISMATCH");
+  assert.ok(firstPublicMotionDifferenceTick > pressureDecision.tick);
+
+  for (const balancedCandidate of balancedDecision.candidates) {
+    const pressureCandidate = pressureDecision.candidates.find(
+      (candidate) => candidate.id === balancedCandidate.id,
+    );
+    assert.ok(pressureCandidate);
+    assert.equal(pressureCandidate.baseScore, balancedCandidate.baseScore);
+    assert.equal(pressureCandidate.feasible, balancedCandidate.feasible);
+    assert.deepEqual(pressureCandidate.vetoes, balancedCandidate.vetoes);
+    assert.deepEqual(pressureCandidate.evidence, balancedCandidate.evidence);
+    assert.equal(
+      pressureCandidate.strategyAdjustment,
+      balancedCandidate.id === "PRESSURE_MISMATCH" ? 1.18 : 0,
+    );
+  }
+
+  const offenseBeforeMotion = (simulation) => simulation.planningLog
+    .filter(
+      (record) => record.team === "offense" && record.tick < firstPublicMotionDifferenceTick,
+    )
+    .map((record) => ({
+      tick: record.tick,
+      trigger: record.trigger,
+      chosen: record.chosen,
+      candidates: record.candidates.map((candidate) => ({
+        id: candidate.id,
+        feasible: candidate.feasible,
+        baseScore: candidate.baseScore,
+        effectiveScore: candidate.effectiveScore,
+        vetoes: candidate.vetoes,
+      })),
+    }));
+  assert.deepEqual(offenseBeforeMotion(pressure), offenseBeforeMotion(balanced));
+});
+
+test("P02 early dig changes intent at the catch but kickout waits for real local help", () => {
+  const simulation = createP03PolicyReplay("OB-DE");
+  while (!simulation.world.terminal) simulation.step();
+  const postCatchDefense = simulation.planningLog.find(
+    (record) => record.team === "defense" && record.decisionPhase === "defense_post_catch",
+  );
+  const postCatchOffense = simulation.planningLog.filter(
+    (record) => record.team === "offense" && record.decisionPhase === "offense_post_catch",
+  );
+  const eventTick = (type) => simulation.eventLog.find((event) => event.type === type)?.tick;
+  const catchTick = eventTick("pass_caught");
+  const helpTick = eventTick("help_committed");
+  const launchTick = eventTick("kickout_launched");
+  const caughtTick = eventTick("kickout_caught");
+  const firstKickoutDecision = postCatchOffense.find((record) => record.chosen === "KICK_OUT");
+
+  assert.equal(postCatchDefense?.chosen, "DIG_POST");
+  assert.equal(postCatchOffense[0]?.chosen, "POST_FINISH");
+  assert.ok(catchTick < postCatchDefense.tick);
+  assert.ok(postCatchDefense.tick < helpTick);
+  assert.ok(helpTick < firstKickoutDecision.tick);
+  assert.ok(firstKickoutDecision.tick <= launchTick);
+  assert.ok(launchTick < caughtTick);
+  assert.equal(simulation.world.terminal?.reason, "post_catch_kickout_caught");
+});
+
+test("P03 runs the fixed two-by-three policy matrix twice without prewritten outcomes", () => {
+  const audit = scanP03PolicyMatrix();
+  assert.equal(audit.passed, true);
+  assert.deepEqual(audit.failureReasons, []);
+  assert.deepEqual(audit.commonInput, P03_COMMON_INPUT);
+  assert.equal(audit.rows.length, 6);
+  assert.equal(audit.leftRows.length, 6);
+  assert.deepEqual(audit.rows.map((row) => row.id), P03_POLICY_MATCHUPS.map(({ id }) => id));
+  assert.equal(
+    new Set(audit.rows.map((row) => `${row.offenseStrategyId}/${row.defenseStrategyId}`)).size,
+    6,
+  );
+  assert.equal(audit.deterministic, true);
+  assert.equal(audit.invariantSafe, true);
+
+  for (const row of [...audit.rows, ...audit.leftRows]) {
+    assert.equal(row.deterministic, true, `${row.id}/${row.side}`);
+    assert.deepEqual(row.invariantFailures, [], `${row.id}/${row.side}`);
+    assert.ok(row.terminalTick > 0);
+    assert.ok(row.terminal.reason.length > 0);
+    assert.ok(row.offensePlanSequence.length > 0);
+    assert.ok(row.defensePlanSequence.length > 0);
+    assert.ok(row.minimumBodyGap >= -0.01);
+    if (row.kickoutCaught) {
+      const helpTick = row.keyEvents.find((event) => event.type === "help_committed")?.tick;
+      const launchTick = row.keyEvents.find((event) => event.type === "kickout_launched")?.tick;
+      const caughtTick = row.keyEvents.find((event) => event.type === "kickout_caught")?.tick;
+      assert.ok(helpTick < launchTick);
+      assert.ok(launchTick < caughtTick);
+    }
+  }
+
+  const selection = makeP02StrategySelection(
+    OFFENSE_MISMATCH_PRESSURE.id,
+    DEFENSE_EARLY_DIG.id,
+  );
+  assert.deepEqual(selection, {
+    offense: { id: OFFENSE_MISMATCH_PRESSURE.id, version: 1 },
+    defense: { id: DEFENSE_EARLY_DIG.id, version: 1 },
+  });
+  const replay = createP03PolicyReplay("OM-DE");
+  assert.equal(replay.strategyLocked, false);
+  replay.step();
+  assert.equal(replay.strategyLocked, true);
+});
+
+test("P03 uses real mirrored worlds with the same policy constants and events", () => {
+  const audit = scanP03PolicyMatrix();
+  assert.equal(audit.mirrorSafe, true);
+  assert.equal(audit.mirrors.length, 6);
+  for (const mirror of audit.mirrors) {
+    assert.equal(mirror.deterministicRight, true);
+    assert.equal(mirror.deterministicLeft, true);
+    assert.equal(mirror.mirrored, true);
+    assert.deepEqual(mirror.failureReasons, []);
+    assert.ok(mirror.maximumMirrorError <= 1e-9);
+    const right = audit.rows.find((row) => row.id === mirror.id);
+    const left = audit.leftRows.find((row) => row.id === mirror.id);
+    assert.ok(right);
+    assert.ok(left);
+    assert.equal(left.terminal.reason, right.terminal.reason);
+    assert.equal(left.terminalTick, right.terminalTick);
+    assert.deepEqual(left.offensePlanSequence, right.offensePlanSequence);
+    assert.deepEqual(left.defensePlanSequence, right.defensePlanSequence);
+
+    const rightConfig = makeP03PolicyConfig(mirror.id, "right");
+    const leftConfig = makeP03PolicyConfig(mirror.id, "left");
+    for (const id of PLAYER_IDS) {
+      assert.deepEqual(
+        leftConfig.initialPositions[id],
+        mirrorPointAcrossCenterline(rightConfig.initialPositions[id]),
+      );
+    }
+    assert.equal(rightConfig.strategies.offense.id, leftConfig.strategies.offense.id);
+    assert.equal(rightConfig.strategies.defense.id, leftConfig.strategies.defense.id);
+  }
 });
 
 test("G01 scans 19 speed-only samples twice and finds one deterministic decision boundary", () => {

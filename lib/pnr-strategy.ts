@@ -137,6 +137,8 @@ const OFFENSE_ZERO_REASON = "P00 平衡阅读：保持现有基础评分，不�
 const DEFENSE_ZERO_REASON = "P00 平衡覆盖：保持现有基础评分，不施加额外偏好";
 
 export const OFFENSE_MISMATCH_PRESSURE_ATTACK_BIG_ADJUSTMENT = 0.02;
+export const DEFENSE_MISMATCH_PRESSURE_ADJUSTMENT = 1.18;
+export const DEFENSE_EARLY_DIG_ADJUSTMENT = 0.24;
 
 function mismatchPressurePreferences(): readonly StrategyPreference[] {
   return Object.freeze(
@@ -150,6 +152,35 @@ function mismatchPressurePreferences(): readonly StrategyPreference[] {
         planId === "ATTACK_BIG"
           ? `P01 错位攻击优先：post-switch 可行 ATTACK_BIG 统一 +${OFFENSE_MISMATCH_PRESSURE_ATTACK_BIG_ADJUSTMENT.toFixed(2)}`
           : "P01 错位攻击优先：post-switch 只提升 ATTACK_BIG；本候选保持基础评分",
+    })),
+  );
+}
+
+function defenseMismatchPressurePreferences(): readonly StrategyPreference[] {
+  return Object.freeze(
+    DEFENSE_PLAN_IDS.map((planId) => Object.freeze({
+      planId,
+      adjustment:
+        planId === "PRESSURE_MISMATCH"
+          ? DEFENSE_MISMATCH_PRESSURE_ADJUSTMENT
+          : 0,
+      reason:
+        planId === "PRESSURE_MISMATCH"
+          ? `P02 错位持球施压：defense_mismatch 可行 PRESSURE_MISMATCH 统一 +${DEFENSE_MISMATCH_PRESSURE_ADJUSTMENT.toFixed(2)}`
+          : "P02 错位持球施压：只提升换防后 PRESSURE_MISMATCH；本候选保持基础评分",
+    })),
+  );
+}
+
+function defenseEarlyDigPreferences(): readonly StrategyPreference[] {
+  return Object.freeze(
+    DEFENSE_PLAN_IDS.map((planId) => Object.freeze({
+      planId,
+      adjustment: planId === "DIG_POST" ? DEFENSE_EARLY_DIG_ADJUSTMENT : 0,
+      reason:
+        planId === "DIG_POST"
+          ? `P02 接球后提前协防：defense_post_catch 可行 DIG_POST 统一 +${DEFENSE_EARLY_DIG_ADJUSTMENT.toFixed(2)}`
+          : "P02 接球后提前协防：只提升 O5 接球后的 DIG_POST；本候选保持基础评分",
     })),
   );
 }
@@ -200,16 +231,60 @@ export const DEFENSE_BALANCED_COVERAGE = freezeProfile({
   },
 });
 
+export const DEFENSE_MISMATCH_PRESSURE = freezeProfile({
+  id: "DEFENSE_MISMATCH_PRESSURE",
+  version: 1,
+  team: "defense",
+  label: "错位持球施压",
+  description:
+    "只在换防完成后的错位阶段，为硬可行的 PRESSURE_MISMATCH 增加统一 +1.18；其他候选和阶段保持零调整。",
+  phasePreferences: {
+    defense_initial_coverage: zeroPreferences(
+      DEFENSE_PLAN_IDS,
+      "P02 错位持球施压尚未进入换防后错位；保持基础评分",
+    ),
+    defense_mismatch: defenseMismatchPressurePreferences(),
+    defense_post_catch: zeroPreferences(
+      DEFENSE_PLAN_IDS,
+      "P02 错位持球施压已离开错位持球阶段；接球后保持基础评分",
+    ),
+  },
+});
+
+export const DEFENSE_EARLY_DIG = freezeProfile({
+  id: "DEFENSE_EARLY_DIG",
+  version: 1,
+  team: "defense",
+  label: "接球后提前协防",
+  description:
+    "只在 O5 完成合法接球后的阶段，为硬可行的 DIG_POST 增加统一 +0.24；真实帮助与分球仍由公开移动和局部几何决定。",
+  phasePreferences: {
+    defense_initial_coverage: zeroPreferences(
+      DEFENSE_PLAN_IDS,
+      "P02 接球后提前协防尚未发生 O5 接球；保持基础评分",
+    ),
+    defense_mismatch: zeroPreferences(
+      DEFENSE_PLAN_IDS,
+      "P02 接球后提前协防不影响换防后错位阶段；保持基础评分",
+    ),
+    defense_post_catch: defenseEarlyDigPreferences(),
+  },
+});
+
 const REGISTERED_STRATEGIES = new Map<string, TeamStrategyProfile>([
   [OFFENSE_BALANCED_READ.id, OFFENSE_BALANCED_READ],
   [OFFENSE_MISMATCH_PRESSURE.id, OFFENSE_MISMATCH_PRESSURE],
   [DEFENSE_BALANCED_COVERAGE.id, DEFENSE_BALANCED_COVERAGE],
+  [DEFENSE_MISMATCH_PRESSURE.id, DEFENSE_MISMATCH_PRESSURE],
+  [DEFENSE_EARLY_DIG.id, DEFENSE_EARLY_DIG],
 ]);
 
 export const REGISTERED_TEAM_STRATEGIES = Object.freeze([
   OFFENSE_BALANCED_READ,
   OFFENSE_MISMATCH_PRESSURE,
   DEFENSE_BALANCED_COVERAGE,
+  DEFENSE_MISMATCH_PRESSURE,
+  DEFENSE_EARLY_DIG,
 ]);
 
 export function makeTeamStrategySelection(
