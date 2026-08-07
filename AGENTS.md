@@ -27,6 +27,7 @@
 
 - S01–S08、G01–G08 与 P00–P03 已完成并由用户验收；Policy 收口提交是 `c4ada7d`。
 - Formation F00–F03 已完成并由用户验收；F01/F02 冻结核心为 `9063135`，F03 manifest 为 `ba39ef0`，最终审计与回放提交为 `f8163c2`。
+- Autonomous Setup A00–A01 已完成并由用户验收；自动选边、固定 canonical anchor、安全退出、只读回放与自动门行为提交为 `7ecedea`。
 - G08 manifest 与冻结输入不得改写；失败时报告最早失败轨迹，不能按 case ID 调参。
 - P00 默认策略 adjustment 必须保持 0；策略只能重排硬可行候选，不能恢复 veto 候选。
 - 既有 170 个批准输入、G08/F03 manifest、真实左右镜像和核心不变量是 Autonomous Setup 改动的回归基线。
@@ -36,11 +37,10 @@
 
 ## 当前范围与停止点
 
-- 下一批准增量是在新分支 `prototype/pnr-autonomous-setup` 合并完成 A00–A01：先按公开几何自动选掩护侧，再从少量 canonical 候选中自动选合法 anchor，并在全部组合不可行时安全退出。A00 自动门失败不得开始 A01。
-- 新 setup 模式必须显式区分 `explicit | auto`；字段缺省仍为 `explicit`，所有 S/G/P/F00–F03 逐 tick 行为保持不变。`auto` 不得接受或偷读调用方遗留的 side、anchor、样本 ID或预期结果。
-- side、anchor 与 waypoint 属于进攻私有 `TeamPlan`；防守只从真实公开运动和后续公开 commit 事件响应，中立世界不评分、不选 side/anchor，也不从隐藏 target 宣布成功。
-- A 只在 F01/F02/F03 已证明的合法 Formation 域内工作，O1/O5 与 D1/D5 职责固定；不扩到任意位置、角色识别、拖拽、手动控制、新战术、投篮结果、更多人数、5v5、ML/RL 或生产化。
-- 完整 A00–A01 闭环、自动门与代表回放形成后立即停止等待用户验收；验收前不 commit/push A 的实现、测试与 UI，也不开始 T 阶段。
+- A00–A01 已封存；当前没有获批的新实现增量。等待用户明确下一阶段，不自动开始 T。
+- `explicit | auto`、缺省 `explicit`、进攻私有 side/anchor/waypoint、公开 commit 后防守响应以及中立世界不评分选点，都是已封存契约。
+- A 只证明 F01/F02/F03 合法 Formation 域，O1/O5 与 D1/D5 职责固定；不得外推到任意位置、角色识别、拖拽、手动控制、新战术、投篮结果、更多人数、5v5、ML/RL 或生产化。
+- 若未来批准 T，仍须单独定义输入、行为、自动门与停止点；不得借维护或回归修复提前实现。
 
 实时细节和工作树状态以 [`docs/CURRENT.md`](./docs/CURRENT.md) 为准。
 

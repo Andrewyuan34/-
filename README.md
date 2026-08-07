@@ -2,7 +2,7 @@
 
 这是一个独立、确定性、可观看且可解释的 2v2 挡拆算法实验台。它不是预录轨迹：两支球队分别产生队级计划，中立世界以固定时间步解析运动、身体几何、球权、传球和事件。
 
-当前稳定检查点已经覆盖 S01–S08 战术证人、G01–G08 受限域泛化、P00–P03 的两套进攻策略 × 三套防守策略，以及已验收并封存的 Formation F00–F03：固定起手、结构化起手、有界 seed 随机与冻结 held-out。下一批准增量是 A00–A01，在同一受限 Formation 域内自动选择掩护侧与合法 anchor，并在不可形成时安全退出。实时状态见 [`docs/CURRENT.md`](./docs/CURRENT.md)。
+当前稳定检查点已经覆盖 S01–S08 战术证人、G01–G08 受限域泛化、P00–P03 的两套进攻策略 × 三套防守策略、Formation F00–F03，以及已由用户验收的 Autonomous Setup A00–A01：在同一受限 Formation 域内自动选择掩护侧与合法 anchor，并在不可形成时真实安全退出。当前没有获批的新实现增量。实时状态见 [`docs/CURRENT.md`](./docs/CURRENT.md)。
 
 ## 新 agent 从哪里开始
 
@@ -74,8 +74,10 @@ npm run build
 - `lib/pnr-formation-domain.ts`、`pnr-f02-formation-samples.ts`：F01 结构化域与 F02 冻结 seed 采样。
 - `lib/pnr-f03-heldout-manifest.ts`、`pnr-f03-heldout-audit.ts`：揭示前锁定的 Formation held-out 与结果审计。
 - `lib/pnr-formation-generalization-results.ts`：F01–F03 汇总与审计后代表回放选择。
+- `lib/pnr-a00-autonomous-side-manifest.ts`、`pnr-a00-autonomous-side-audit.ts`：A00 input-only 自动选边清单、双运行与严格镜像门。
+- `lib/pnr-a01-autonomous-setup-manifest.ts`、`pnr-a01-autonomous-setup-audit.ts`：A01 固定 side × anchor、真实形成/安全退出审计与代表回放选择。
 - `components/PnrLab.tsx`：可丢弃观察壳的状态与回放编排；保持唯一默认页面入口，不承载球队决策。
-- `components/pnr-lab/`：Canvas 绘制、共享展示与 G/P/F 审计面板；UI 任务只读取命中的模块，不回读整份观察壳。
+- `components/pnr-lab/`：Canvas 绘制、共享展示与 G/P/F/A 审计面板；`AutonomousSetupPanel.tsx` 只读展示 A00–A01 审计与回放，不回流球队规划输入。
 
 ### 泛化与策略审计
 
@@ -86,7 +88,7 @@ npm run build
 
 ### 验证
 
-- `tests/pnr-core.test.mjs`：核心不变量、S/G/P 回归，以及 F00–F03 路径、真实性、冻结输入与信息边界门。
+- `tests/pnr-core.test.mjs`：核心不变量、S/G/P 回归、F00–F03 路径，以及 A00–A01 确定性、镜像、信息边界、形成与安全退出门。
 - `app/`：页面入口和全局样式。
 - `worker/`、`build/`：本地运行与构建适配，不承载篮球决策。
 
@@ -96,12 +98,13 @@ npm run build
 - 在批准的局部 2v2 输入域内，速度、反应时间、小范围位置、有限组合、左右镜像和锁定 held-out 输入已有确定性证据。
 - 同一批准输入域支持两套进攻和三套防守策略；策略只改变合法候选的优先级。
 - Formation 的少量结构化起手与冻结有界随机域共用同一套形成原语，能够真实形成或明确安全退出；用户已验收四条 F01–F03 代表回放。
+- Autonomous Setup 能在同一域内按公开几何确定性选择 side × anchor，并通过真实运动形成或在全-veto 时保球安全退出；用户已验收四条 A00–A01 代表回放。
 - 用户可以从真实回放、计划、角色、候选、否决与事件中判断篮球语义。
 
 ## 仍不能声称什么
 
 - 半场任意位置都能自动组织挡拆。
-- 系统已经能从未指定 side/anchor 的起手自动选择掩护侧和落点；这是当前 A00–A01 的待验收目标。
+- A00–A01 只证明已批准 Formation 域、固定 O1/O5 与 D1/D5 职责；不能外推到任意半场位置或任意角色识别。
 - 真正的沉退、追过、ICE、夹击、外弹、二次掩护等未实现原语已经存在。
 - 完整 `2 × 3` 策略矩阵通过了全新策略 held-out 起手；P04 被明确跳过。
 - 已处理投篮、犯规、篮板、完整比赛、第三名协防人或 5v5。

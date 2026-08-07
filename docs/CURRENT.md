@@ -1,8 +1,9 @@
 # 当前交接快照
 
 > 快照日期：2026-08-07
-> 当前 F 收口分支：`prototype/pnr-formation-loop`
-> 远程分支：`origin/prototype/pnr-formation-loop`
+> 当前交付分支：`prototype/pnr-autonomous-setup`
+> A00–A01 行为检查点：`7ecedea1319ecf714549c1da3946d5fa3c8ed430`
+> P2/P4 基线：`dd6287b97dc3b33b8070a45ccfcb7280a24a1951`
 > F01/F02 冻结核心：`90631359ba5a52eacfdbfc1434d657f8743df45e`
 > F03 manifest：`ba39ef025f29d181af8c7d137d6807f7825c9717`
 > F03 审计与回放：`f8163c2`
@@ -12,7 +13,7 @@
 
 ## 一句话状态
 
-S01–S08、G01–G08、P00–P03 与 Formation F00–F03 已封存并由用户验收。下一批准增量是在新分支 `prototype/pnr-autonomous-setup` 连续完成 A00 自动选掩护侧与 A01 自动生成合法 anchor/安全退出；A00 自动门失败时不得开始 A01，A01 完成后停止等待人眼验收，不开始 T。
+S01–S08、G01–G08、P00–P03、Formation F00–F03 与 Autonomous Setup A00–A01 已封存并由用户验收。当前没有获批的新实现增量；保持停止，不自动开始 T。
 
 ## F 阶段封存事实
 
@@ -24,13 +25,15 @@ S01–S08、G01–G08、P00–P03 与 Formation F00–F03 已封存并由用户�
 - 用户已人眼验收 `F01-C02 · RIGHT`、`F02-S15 · RIGHT`、`F03-R03 · RIGHT` 安全退出与 `F03-L04 · LEFT`。Formation F00–F03 正式完成。
 - F 最终自动门为 `npm test` 72/72、lint、build 与 `git diff --check` 全部通过；G08 manifest、F03 manifest 与已封存输入均未改写。
 
-## 当前批准增量：A00–A01
+## A00–A01 封存事实
 
 1. **A00：自动选择掩护侧。** 在同一合法规划边界比较 left/right 的公开几何、ETA、边界、身体净空、连续路线、走廊与有限 watchdog；硬不可行先 veto，再以公开、确定的标量分数选择。继续使用单一 `FORM_SCREEN`，side 只进入进攻私有 `TeamPlan` payload。
 2. **A01：自动生成合法 anchor。** 只有 A00 自动门通过后，才比较少量、全局固定、左右共享的 canonical side × anchor 组合；所有组合被 veto 时提交明确 formation abort/reset intent，并由中立世界在真实有限条件成立后发布安全终止。
 3. **输入契约。** 新增显式 `explicit | auto` setup 模式，缺省仍为 `explicit`；所有 S/G/P/F00–F03 逐 tick 不变。`auto` 只接受四人合法初始位置、seed、双方策略、固定角色职责与 Formation 域版本；不得携带 side、anchor 或预期结果，冲突字段必须拒绝。
 4. **信息边界。** 防守只能根据 O1/O5 的公开运动及后续公开 commit 事实响应，不能读取进攻私有 side、anchor、等待点或 use/reject gate；中立解析器不评分、不选 side/anchor，也不从隐藏 target 宣布成功。
 5. **运行锁定。** 输入深拷贝且不可变；播放或单步后样本锁定，只有重置新回合才解锁。策略 adjustment 在自动 Formation 阶段保持 0，不增加策略菜单。
+
+交付证据：A00 锁定 12 个输入、24 个镜像世界并各双运行，input-only hash 为 `sha256:ed568eb77c78bc62cffa0dba06aa59df660bd7df181b2eb9b254c37d4887bcc4`；A01 锁定 13 个输入、26 个镜像世界并各双运行，22 个真实形成、2 个继承 Formation timeout、2 个真实安全退出，input-only hash 为 `sha256:0518aadfcea925a6736f16bfaf4843f7c842290c1bff9c959f3c8afceaba42b6`。用户已人眼验收最晚形成、最窄走廊、不同 anchor 镜像与全-veto 安全退出四条审计回放；UI 只读，不回流规划输入。最终自动门为 A00 4/4、A01 4/4、F00–F03 16/16、`npm test` 80/80、lint、build 与 `git diff --check` 全部通过；行为提交为 `7ecedea`。
 
 ## 不可扩大范围
 
@@ -41,4 +44,4 @@ S01–S08、G01–G08、P00–P03 与 Formation F00–F03 已封存并由用户�
 
 ## 下一停止点
 
-在首个完整、可观看的 A00–A01 闭环、输入-only 审计集、严格镜像、零行为回归和独立“A · 自动组织挡拆”页面入口全部通过后立即停止。A 阶段最终实现、测试与 UI 在用户验收前不得 commit/push；只交付四条由审计事实选出的代表回放，不开始 T00。
+A00–A01 闭环、input-only 审计、严格镜像、逐 tick 回归、全自动门、独立只读页面与四条代表回放均已通过并由用户验收。当前没有下一实现授权；保持封存状态，不开始 T00。
