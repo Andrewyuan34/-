@@ -38,6 +38,28 @@ import {
   makeF00Config,
 } from "../lib/pnr-f00-formation.ts";
 import {
+  F01_CANONICAL_STARTS,
+  F01_FORMATION_INPUT_DOMAIN,
+  measureFormationInputParameters,
+} from "../lib/pnr-formation-domain.ts";
+import {
+  F01_FORMATION_SPECS,
+  F02_FORMATION_SPECS,
+  createF01Replay,
+  createF02Replay,
+  makeF01Config,
+  scanF01Formation,
+  scanF02Formation,
+} from "../lib/pnr-formation-audit.ts";
+import {
+  F02_CANONICAL_SAMPLE_COUNT,
+  F02_FORMATION_SAMPLES,
+  F02_INPUT_HASH,
+  F02_SAMPLE_GENERATION,
+  F02_SAMPLE_SEED,
+  canonicalF02InputJson,
+} from "../lib/pnr-f02-formation-samples.ts";
+import {
   UNDER_R2_AUDIT,
   UNDER_R2_DEEP_RETREAT_RIGHT_INITIAL_POSITIONS,
   UNDER_R2_FALSE_POSITIVE_DEEP_RIGHT_INITIAL_POSITIONS,
@@ -325,6 +347,64 @@ function p00LegacyTraceDigest(config) {
     );
   }
   return hash.digest("hex");
+}
+
+function frozenFormationTickFrame(simulation, planning, events) {
+  return {
+    tick: simulation.world.tick,
+    time: simulation.world.time,
+    stateHash: simulation.world.stateHash,
+    players: PLAYER_IDS.map((id) => {
+      const player = simulation.world.players[id];
+      return [id, player.pos, player.vel, player.radius, player.maxSpeed];
+    }),
+    ballOwner: simulation.world.ballOwner,
+    ball: simulation.world.ball,
+    branch: simulation.world.branch,
+    facts: simulation.world.facts,
+    mismatch: simulation.world.mismatch,
+    seal: simulation.world.seal,
+    postCatch: simulation.world.postCatch,
+    under: simulation.world.under,
+    reject: simulation.world.reject,
+    formation: simulation.world.formation,
+    landmarks: simulation.world.landmarks,
+    offensePlan: simulation.offensePlan,
+    defensePlan: simulation.defensePlan,
+    roles: simulation.getRoles(),
+    planning,
+    events,
+    terminal: simulation.world.terminal,
+  };
+}
+
+function frozenFormationTraceDigest(config) {
+  const simulation = new PnrSimulation(config);
+  const hash = createHash("sha256");
+  hash.update(
+    JSON.stringify(
+      frozenFormationTickFrame(simulation, [...simulation.planningLog], []),
+    ),
+  );
+  for (let index = 0; index < 720 && !simulation.world.terminal; index += 1) {
+    const planningStart = simulation.planningLog.length;
+    const eventStart = simulation.eventLog.length;
+    simulation.step();
+    hash.update(
+      JSON.stringify(
+        frozenFormationTickFrame(
+          simulation,
+          simulation.planningLog.slice(planningStart),
+          simulation.eventLog.slice(eventStart),
+        ),
+      ),
+    );
+  }
+  return {
+    digest: hash.digest("hex"),
+    terminalReason: simulation.world.terminal?.reason ?? null,
+    terminalTick: simulation.world.tick,
+  };
 }
 
 function p00LegacyGroupDigest(entries) {
@@ -2126,6 +2206,261 @@ test("F00 readiness thresholds are public facts and formation still terminates i
   assert.equal(simulation.eventLog.some((event) => event.type === "formation_ready"), false);
   assert.equal(simulation.eventLog.some((event) => event.type === "branch_use"), false);
   assert.equal(simulation.eventLog.some((event) => event.type === "screen_effective"), false);
+});
+
+test("F01 freezes eight public canonical starts and derives its legal domain only from them", () => {
+  assert.equal(F01_FORMATION_INPUT_DOMAIN.version, "F01-v1");
+  assert.equal(F01_FORMATION_INPUT_DOMAIN.tacticalFrame, "right-canonical");
+  assert.deepEqual(F01_FORMATION_INPUT_DOMAIN.landmarkOffsets, FORMATION_LANDMARK_OFFSETS);
+  assert.deepEqual(
+    F01_CANONICAL_STARTS.map((start) => start.id),
+    Array.from({ length: 8 }, (_, index) => `F01-C${String(index + 1).padStart(2, "0")}`),
+  );
+  assert.deepEqual(
+    new Set(F01_CANONICAL_STARTS.map((start) => start.focus)),
+    new Set([
+      "baseline",
+      "long_screener_route",
+      "approach_angle",
+      "handler_variation",
+      "d1_depth",
+      "d5_follow_distance",
+      "formation_translation",
+      "tight_legal_geometry",
+    ]),
+  );
+
+  const measured = F01_CANONICAL_STARTS.map((start) =>
+    measureFormationInputParameters(start.tacticalPositions)
+  );
+  for (const name of Object.keys(F01_FORMATION_INPUT_DOMAIN.parameters)) {
+    assert.deepEqual(F01_FORMATION_INPUT_DOMAIN.parameters[name], [
+      Math.min(...measured.map((parameters) => parameters[name])),
+      Math.max(...measured.map((parameters) => parameters[name])),
+    ]);
+  }
+
+  for (const start of F01_CANONICAL_STARTS) {
+    const right = createF01Replay(start.id, "right");
+    const left = createF01Replay(start.id, "left");
+    assert.equal(right.config.startMode, "form_pnr");
+    assert.equal(right.config.screenSide, "right");
+    assert.equal(left.config.screenSide, "left");
+    for (const id of PLAYER_IDS) {
+      assert.deepEqual(
+        left.config.initialPositions[id],
+        mirrorPointAcrossCenterline(right.config.initialPositions[id]),
+      );
+    }
+  }
+
+  const outside = makeF00Config("right");
+  for (const id of PLAYER_IDS) outside.initialPositions[id].x -= 0.05;
+  const unchanged = structuredClone(outside.initialPositions);
+  assert.throws(
+    () => new PnrSimulation(outside),
+    /outside the frozen F01 Formation domain.*handlerOriginX/,
+  );
+  assert.deepEqual(outside.initialPositions, unchanged, "illegal input must be rejected, not clamped");
+});
+
+test("F01 runs 8 canonical starts on both real sides twice through one Formation primitive set", () => {
+  const audit = scanF01Formation();
+  assert.equal(F01_FORMATION_SPECS.length, 8);
+  assert.equal(audit.canonicalInputCount, 8);
+  assert.equal(audit.worldCount, 16);
+  assert.equal(audit.executionsPerWorld, 2);
+  assert.equal(audit.rows.length, 8);
+  assert.equal(audit.successfulFormationWorlds, 14);
+  assert.equal(audit.safeExitWorlds, 2);
+  assert.equal(audit.deterministic, true);
+  assert.equal(audit.mirrored, true);
+  assert.equal(audit.invariantsPassed, true);
+  assert.equal(audit.passed, true);
+  assert.deepEqual(audit.failedCaseIds, []);
+  assert.deepEqual(audit.failureReasons, []);
+
+  for (const row of audit.rows) {
+    assert.equal(row.passed, true, row.id);
+    assert.equal(row.mirrorPassed, true, row.id);
+    assert.ok(row.mirrorMaximumError <= 1e-9, row.id);
+    for (const side of [row.right, row.left]) {
+      assert.equal(side.deterministic, true, `${row.id}/${side.side}`);
+      assert.equal(side.passed, true, `${row.id}/${side.side}`);
+      assert.deepEqual(side.failures, [], `${row.id}/${side.side}`);
+      assert.ok(side.maximumPlayerStep <= side.maximumAllowedPlayerStep + 1e-9);
+      assert.ok(side.minimumBodyGap >= -0.01);
+      assert.ok(side.terminalReason);
+      if (side.safeExitReason) {
+        assert.equal(side.safeExitReason, "formation_timeout");
+        assert.equal(side.eventTicks.jointReady, null);
+        assert.equal(side.eventTicks.branch, null);
+      } else {
+        assert.ok(side.eventTicks.screenSet <= side.eventTicks.jointReady);
+        assert.ok(side.eventTicks.jointReady < side.eventTicks.branch);
+        assert.ok(side.eventTicks.branch < side.eventTicks.terminal);
+      }
+    }
+  }
+
+  assert.equal(audit.rows.find((row) => row.id === "F01-C08").right.safeExitReason,
+    "formation_timeout");
+  assert.equal(
+    audit.rows.toSorted((first, second) => second.o5ArrivalDistance - first.o5ArrivalDistance)[0].id,
+    "F01-C02",
+  );
+});
+
+test("F01 leaves the sealed F00 right and left worlds unchanged at every tick", () => {
+  assert.deepEqual(frozenFormationTraceDigest(makeF01Config("F01-C01", "right")), {
+    digest: "47995851cde760ba06fd0900bad6ca387dbc2b37403bbbc8b8ceb965329b464f",
+    terminalReason: "under_drive_advantage",
+    terminalTick: 277,
+  });
+  assert.deepEqual(frozenFormationTraceDigest(makeF01Config("F01-C01", "left")), {
+    digest: "c3dfc7439eafb9a91aac5ff9bda85b32b387db15aaa72d635cd66f097f539a65",
+    terminalReason: "under_drive_advantage",
+    terminalTick: 277,
+  });
+});
+
+test("F02 deterministically samples 16 unique inputs from only the frozen F01 geometry domain", () => {
+  assert.equal(F02_SAMPLE_SEED, 20260809);
+  assert.equal(F02_CANONICAL_SAMPLE_COUNT, 16);
+  assert.deepEqual(F02_SAMPLE_GENERATION, {
+    generator: "mulberry32-v1",
+    seed: 20260809,
+    domainVersion: "F01-v1",
+    candidateCount: 16,
+    geometryRejectedCount: 0,
+    duplicateRejectedCount: 0,
+    acceptedCount: 16,
+  });
+  assert.deepEqual(
+    F02_FORMATION_SAMPLES.map((sample) => sample.id),
+    Array.from({ length: 16 }, (_, index) =>
+      `F02-S${String(index + 1).padStart(2, "0")}`
+    ),
+  );
+  assert.equal(
+    new Set(F02_FORMATION_SAMPLES.map((sample) =>
+      JSON.stringify(sample.tacticalPositions)
+    )).size,
+    16,
+  );
+  assert.equal(
+    F02_FORMATION_SAMPLES.some((sample) =>
+      F01_CANONICAL_STARTS.some((start) =>
+        JSON.stringify(start.tacticalPositions) === JSON.stringify(sample.tacticalPositions)
+      )
+    ),
+    false,
+  );
+  assert.equal(
+    `sha256:${createHash("sha256").update(canonicalF02InputJson()).digest("hex")}`,
+    F02_INPUT_HASH,
+  );
+
+  for (const sample of F02_FORMATION_SAMPLES) {
+    assert.equal(sample.source.generator, "mulberry32-v1");
+    assert.equal(sample.source.seed, F02_SAMPLE_SEED);
+    assert.equal(sample.source.domainVersion, F01_FORMATION_INPUT_DOMAIN.version);
+    assert.deepEqual(
+      Object.keys(sample.source.parameters).sort(),
+      Object.keys(F01_FORMATION_INPUT_DOMAIN.parameters).sort(),
+    );
+    for (const [name, value] of Object.entries(sample.source.parameters)) {
+      const range = F01_FORMATION_INPUT_DOMAIN.parameters[name];
+      assert.ok(value >= range[0] && value <= range[1], `${sample.id}/${name}`);
+    }
+    const right = createF02Replay(sample.id, "right");
+    const left = createF02Replay(sample.id, "left");
+    for (const id of PLAYER_IDS) {
+      assert.deepEqual(
+        left.config.initialPositions[id],
+        mirrorPointAcrossCenterline(right.config.initialPositions[id]),
+      );
+    }
+  }
+
+  const samplerSource = readFileSync(
+    new URL("../lib/pnr-f02-formation-samples.ts", import.meta.url),
+    "utf8",
+  );
+  assert.doesNotMatch(
+    samplerSource,
+    /new\s+PnrSimulation|planningLog|eventLog|terminalReason|world\.|scanF02Formation/,
+    "the sampler must not execute or inspect simulation output",
+  );
+});
+
+test("F02 runs 16 canonical inputs on both real sides twice with legal causal exits", () => {
+  const audit = scanF02Formation();
+  assert.equal(F02_FORMATION_SPECS.length, 16);
+  assert.equal(audit.canonicalInputCount, 16);
+  assert.equal(audit.worldCount, 32);
+  assert.equal(audit.executionsPerWorld, 2);
+  assert.equal(audit.rows.length, 16);
+  assert.equal(audit.successfulFormationWorlds, 30);
+  assert.equal(audit.safeExitWorlds, 2);
+  assert.equal(audit.deterministic, true);
+  assert.equal(audit.mirrored, true);
+  assert.equal(audit.invariantsPassed, true);
+  assert.equal(audit.passed, true);
+  assert.deepEqual(audit.failedCaseIds, []);
+  assert.deepEqual(audit.failureReasons, []);
+
+  for (const row of audit.rows) {
+    assert.equal(row.passed, true, row.id);
+    assert.equal(row.mirrorPassed, true, row.id);
+    assert.ok(row.mirrorMaximumError <= 1e-9, row.id);
+    for (const side of [row.right, row.left]) {
+      assert.equal(side.deterministic, true, `${row.id}/${side.side}`);
+      assert.equal(side.passed, true, `${row.id}/${side.side}`);
+      assert.deepEqual(side.failures, [], `${row.id}/${side.side}`);
+      assert.equal(side.failureTrace, null, `${row.id}/${side.side}`);
+      assert.ok(side.maximumPlayerStep <= side.maximumAllowedPlayerStep + 1e-9);
+      assert.ok(side.minimumBodyGap >= -0.01);
+      assert.ok(side.offenseReplans < 40);
+      assert.ok(side.defenseReplans < 40);
+      if (side.safeExitReason) {
+        assert.equal(side.safeExitReason, "formation_timeout");
+        assert.equal(side.eventTicks.jointReady, null);
+        assert.equal(side.eventTicks.branch, null);
+      } else {
+        assert.ok(side.eventTicks.screenSet <= side.eventTicks.jointReady);
+        assert.ok(side.eventTicks.jointReady < side.eventTicks.branch);
+        assert.ok(side.eventTicks.branch < side.eventTicks.terminal);
+      }
+    }
+  }
+  assert.equal(audit.rows.find((row) => row.id === "F02-S15").right.safeExitReason,
+    "formation_timeout");
+});
+
+test("F02 latches a published joint-ready fact through the exact next planner boundary", () => {
+  for (const sampleId of ["F02-S02", "F02-S09"]) {
+    const simulation = createF02Replay(sampleId, "right");
+    for (let index = 0; index < 360 && !simulation.world.terminal; index += 1) {
+      simulation.step();
+    }
+    const ready = simulation.eventLog.find((event) => event.type === "formation_ready");
+    const firstOffense = simulation.planningLog.find(
+      (record) => record.decisionPhase === "offense_initial_read",
+    );
+    const firstDefense = simulation.planningLog.find(
+      (record) => record.decisionPhase === "defense_initial_coverage",
+    );
+    assert.ok(ready, sampleId);
+    assert.equal(firstOffense?.tick, ready.availableAtTick, sampleId);
+    assert.equal(firstDefense?.tick, ready.availableAtTick, sampleId);
+    assert.notEqual(simulation.world.terminal?.reason, "formation_timeout", sampleId);
+    assert.equal(
+      simulation.eventLog.filter((event) => event.type === "formation_ready").length,
+      1,
+      sampleId,
+    );
+  }
 });
 
 test("G01 scans 19 speed-only samples twice and finds one deterministic decision boundary", () => {

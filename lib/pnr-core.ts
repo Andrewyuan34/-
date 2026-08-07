@@ -8,6 +8,7 @@ import {
   type TeamStrategyReference,
   type TeamStrategySelection,
 } from "./pnr-strategy.ts";
+import { assertFormationInputInF01Domain } from "./pnr-formation-domain.ts";
 
 export const FIXED_DT = 1 / 60;
 export const FORMATION_TIMEOUT_SECONDS = 3.2;
@@ -1993,6 +1994,7 @@ export function deriveTacticalLandmarks(
       "form_pnr currently accepts only the approved F00 landmark template",
     );
   }
+  assertFormationInputInF01Domain(tacticalPositions);
   return copyTacticalLandmarks(landmarks);
 }
 
@@ -5311,7 +5313,7 @@ export class PnrSimulation {
       [...this.offenseQueue, ...this.defenseQueue].some(
         (event) => event.type === "formation_ready",
       );
-    if (formationReadyEvent && formationReadiness(this.world).ready) {
+    if (formationReadyEvent && this.world.formation.jointReady) {
       const offenseEvents = [...this.offenseQueue];
       const defenseEvents = [...this.defenseQueue];
       this.world.formation = {
@@ -6622,7 +6624,8 @@ export class PnrSimulation {
     if (
       this.world.formation.phase === "formation" &&
       this.world.formation.deadlineAt !== null &&
-      this.world.time + 1e-9 >= this.world.formation.deadlineAt
+      this.world.time + 1e-9 >= this.world.formation.deadlineAt &&
+      !this.world.formation.jointReady
     ) {
       events.push(makeEvent(
         "formation_timeout",
@@ -6905,12 +6908,15 @@ export class PnrSimulation {
         const readiness = formationReadiness(this.world);
         this.world.formation = {
           ...this.world.formation,
-          jointReady: readiness.ready,
-          jointReadyTick: readiness.ready
-            ? previousFormation.jointReady
-              ? previousFormation.jointReadyTick
-              : this.world.tick
-            : null,
+          // Joint readiness is a published event fact. Latch it until both planners
+          // consume that event on the next boundary so a one-tick collision nudge
+          // cannot erase an already-established handoff.
+          jointReady: previousFormation.jointReady || readiness.ready,
+          jointReadyTick: previousFormation.jointReady
+            ? previousFormation.jointReadyTick
+            : readiness.ready
+              ? this.world.tick
+              : null,
         };
       }
       this.world.postCatch = this.resolvePostCatch(previousPostCatch);
