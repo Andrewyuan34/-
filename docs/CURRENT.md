@@ -1,7 +1,7 @@
 # 当前交接快照
 
 > 快照日期：2026-08-07
-> 当前交付分支：`prototype/pnr-autonomous-setup`
+> 当前交付分支：`prototype/pnr-formation-loop`
 > A00–A01 行为检查点：`7ecedea1319ecf714549c1da3946d5fa3c8ed430`
 > P2/P4 基线：`dd6287b97dc3b33b8070a45ccfcb7280a24a1951`
 > F01/F02 冻结核心：`90631359ba5a52eacfdbfc1434d657f8743df45e`

@@ -2,7 +2,7 @@
 
 > 新 agent 不应从这里开始全文阅读。先读 [`CURRENT.md`](./CURRENT.md)，再通过 [`README.md`](./README.md) 只定位当前相关章节；本文是完整阶段账本与历史证据层。
 > 状态日期：2026-08-07
-> 工作分支：`prototype/pnr-autonomous-setup`
+> 工作分支：`prototype/pnr-formation-loop`
 > 最近行为提交：`7ecedea`（A00–A01 核心、审计、自动门与四条代表回放）
 > 已封存检查点：Policy `c4ada7d`；Formation F00/F00-R2 `fb9bea5`、F01/F02 `9063135`、F03 manifest `ba39ef0`、最终审计 `f8163c2`；Autonomous Setup A00–A01 `7ecedea`
 > 当前开发增量：A00–A01 已由用户验收并封存；暂无下一批准增量
@@ -389,7 +389,7 @@ F00 在此基础上增加一个新的完成条件：掩护尚未就位时，四�
 - 已推送历史不改写；需要回退时使用独立 revert。
 - 如果某一步失败，不继续堆新场景、策略或 UI，先记录最小失败输入并修复这一类问题。
 - 策略阶段同样遵守此纪律；一次只增加一个策略输入契约、一小组优先级或一个尚缺的篮球原语。
-- Formation 阶段已从 `c4ada7d` 的独立分支完成并封存。A 阶段从干净 F 检查点在 `prototype/pnr-autonomous-setup` 完成，A00–A01 行为提交为 `7ecedea`，并已通过用户人眼验收。
+- Formation 阶段已从 `c4ada7d` 的独立分支完成并封存。A 阶段从干净 F 检查点在持续维护的 `prototype/pnr-formation-loop` 完成，A00–A01 行为提交为 `7ecedea`，并已通过用户人眼验收。
 
 ## 10. 当前判断与下一停止点
 
