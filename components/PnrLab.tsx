@@ -5,6 +5,8 @@ import {
   FIXED_DT,
   PLAYER_IDS,
   PnrSimulation,
+  type CandidateEvaluation,
+  type PlanningRecord,
   type ScreenSide,
   type TeamPlan,
 } from "@/lib/pnr-core";
@@ -77,8 +79,15 @@ import {
   scanFormationGeneralization,
   type FormationGeneralizationReplayId,
 } from "@/lib/pnr-formation-generalization-results";
+import { scanA00AutonomousSides } from "@/lib/pnr-a00-autonomous-side-audit";
+import {
+  createA01AutonomousReplay,
+  scanA01AutonomousSetups,
+  type A01RepresentativeReplay,
+} from "@/lib/pnr-a01-autonomous-setup-audit";
 import { drawCourt } from "./pnr-lab/court";
 import { planShort, sideText } from "./pnr-lab/format";
+import { AutonomousSetupPanel } from "./pnr-lab/AutonomousSetupPanel";
 import {
   FormationGeneralizationPanel,
   F00FormationPanel,
@@ -124,10 +133,68 @@ const P01_AUDIT = scanP01Calibration();
 const P02_AUDIT = scanP02DefenseCalibration();
 const P03_AUDIT = scanP03PolicyMatrix();
 const FORMATION_GENERALIZATION_AUDIT = scanFormationGeneralization();
+const A00_AUTONOMOUS_SIDE_AUDIT = scanA00AutonomousSides();
+const A01_AUTONOMOUS_SETUP_AUDIT = scanA01AutonomousSetups();
+
+function cloneAutonomousSetup(
+  setup: NonNullable<TeamPlan["autonomousSetup"]>,
+): NonNullable<TeamPlan["autonomousSetup"]> {
+  const cloneProof = (proof: typeof setup.handlerRoute) => ({
+    ...proof,
+    waypoints: proof.waypoints.map((point) => ({ ...point })),
+    segmentProofs: proof.segmentProofs.map((segment) => ({
+      ...segment,
+      blockerIds: [...segment.blockerIds],
+      ...(segment.releasesExistingContactByBlocker
+        ? {
+            releasesExistingContactByBlocker: [
+              ...segment.releasesExistingContactByBlocker,
+            ],
+          }
+        : {}),
+    })),
+  });
+  return {
+    ...setup,
+    planningOrigin: { ...setup.planningOrigin },
+    landmarks: {
+      screenAnchor: { ...setup.landmarks.screenAnchor },
+      handlerWaitingPoint: { ...setup.landmarks.handlerWaitingPoint },
+      useGate: { ...setup.landmarks.useGate },
+      rejectGate: { ...setup.landmarks.rejectGate },
+    },
+    handlerRoute: cloneProof(setup.handlerRoute),
+    screenerRoute: cloneProof(setup.screenerRoute),
+  };
+}
+
+function cloneCandidate(candidate: CandidateEvaluation): CandidateEvaluation {
+  return {
+    ...candidate,
+    vetoes: [...candidate.vetoes],
+    evidence: [...candidate.evidence],
+    ...(candidate.autonomousSetup
+      ? { autonomousSetup: cloneAutonomousSetup(candidate.autonomousSetup) }
+      : {}),
+  };
+}
+
+function clonePlanningRecord(record: PlanningRecord): PlanningRecord {
+  return {
+    ...record,
+    triggerEventIds: [...record.triggerEventIds],
+    candidates: record.candidates.map(cloneCandidate),
+  };
+}
 
 function clonePlan(plan: TeamPlan): TeamPlan {
   return {
     ...plan,
+    primaryTarget: plan.primaryTarget ? { ...plan.primaryTarget } : undefined,
+    secondaryTarget: plan.secondaryTarget ? { ...plan.secondaryTarget } : undefined,
+    autonomousSetup: plan.autonomousSetup
+      ? cloneAutonomousSetup(plan.autonomousSetup)
+      : undefined,
     roles: Object.fromEntries(
       Object.entries(plan.roles).map(([id, role]) => [id, role ? { ...role } : role]),
     ),
@@ -172,6 +239,9 @@ function clonePlan(plan: TeamPlan): TeamPlan {
 }
 
 function takeSnapshot(simulation: PnrSimulation): UiSnapshot {
+  const formationPlanning = simulation.planningLog.find(
+    (record) => record.team === "offense" && record.decisionPhase === "offense_formation",
+  );
   return {
     world: {
       ...simulation.world,
@@ -217,14 +287,18 @@ function takeSnapshot(simulation: PnrSimulation): UiSnapshot {
     defensePlan: clonePlan(simulation.defensePlan),
     roles: simulation.getRoles().map((role) => ({ ...role })),
     events: simulation.eventLog.slice(-10).map((event) => ({ ...event })),
-    planning: simulation.planningLog.slice(-8).map((record) => ({
-      ...record,
-      candidates: record.candidates.map((candidate) => ({
-        ...candidate,
-        vetoes: [...candidate.vetoes],
-        evidence: [...candidate.evidence],
-      })),
-    })),
+    formationEvents: simulation.eventLog.filter((event) => [
+      "formation_side_committed",
+      "screen_set",
+      "formation_ready",
+      "formation_abort_requested",
+      "formation_aborted",
+      "formation_timeout",
+    ].includes(event.type)).map((event) => ({ ...event })),
+    planning: simulation.planningLog.slice(-8).map(clonePlanningRecord),
+    ...(formationPlanning
+      ? { formationPlanning: clonePlanningRecord(formationPlanning) }
+      : {}),
     strategies: {
       offense: simulation.getStrategyProfile("offense"),
       defense: simulation.getStrategyProfile("defense"),
@@ -274,6 +348,8 @@ export default function PnrLab() {
   const [f00Side, setF00Side] = useState<ScreenSide>("right");
   const [formationReplayId, setFormationReplayId] =
     useState<FormationGeneralizationReplayId>("longest-f01-arrival");
+  const [autonomousReplayId, setAutonomousReplayId] =
+    useState<A01RepresentativeReplay["id"]>("longest-formed");
   const [initialSimulation] = useState(
     () => new PnrSimulation(makeScenarioConfig(DEFAULT_SCENARIO_ID)),
   );
@@ -414,8 +490,24 @@ export default function PnrLab() {
     );
   }, [installSimulation]);
 
+  const replaceAutonomousSimulation = useCallback((
+    nextReplayId: A01RepresentativeReplay["id"],
+    shouldPlay: boolean,
+  ): void => {
+    const replay = A01_AUTONOMOUS_SETUP_AUDIT.replays.find(
+      (candidate) => candidate.id === nextReplayId,
+    );
+    if (!replay) throw new Error(`Unknown Autonomous Setup replay: ${nextReplayId}`);
+    installSimulation(
+      createA01AutonomousReplay(replay.inputId, replay.mirrored),
+      shouldPlay,
+    );
+  }, [installSimulation]);
+
   const replaceCurrentSimulation = useCallback((shouldPlay: boolean): void => {
-    if (labMode === "formation") {
+    if (labMode === "autonomous") {
+      replaceAutonomousSimulation(autonomousReplayId, shouldPlay);
+    } else if (labMode === "formation") {
       replaceFormationSimulation(formationReplayId, shouldPlay);
     } else if (labMode === "f00") {
       replaceF00Simulation(underR2ReplayId, f00Side, shouldPlay);
@@ -443,6 +535,7 @@ export default function PnrLab() {
       replaceSimulation(scenarioId, shouldPlay);
     }
   }, [
+    autonomousReplayId,
     g01ReplayId,
     g02ReplayId,
     g03ReplayId,
@@ -468,6 +561,7 @@ export default function PnrLab() {
     replaceG08Simulation,
     replaceF00Simulation,
     replaceFormationSimulation,
+    replaceAutonomousSimulation,
     replaceP00Simulation,
     replaceP01Simulation,
     replaceP03Simulation,
@@ -596,6 +690,14 @@ export default function PnrLab() {
     FORMATION_GENERALIZATION_AUDIT.replays.find(
       (replay) => replay.id === formationReplayId,
     ) ?? FORMATION_GENERALIZATION_AUDIT.replays[0];
+  const currentAutonomousReplay =
+    A01_AUTONOMOUS_SETUP_AUDIT.replays.find(
+      (replay) => replay.id === autonomousReplayId,
+    ) ?? A01_AUTONOMOUS_SETUP_AUDIT.replays[0];
+  const observerSide = snapshot.world.screenSide ??
+    snapshot.offensePlan.autonomousSetup?.side ??
+    (labMode === "autonomous" ? currentAutonomousReplay?.side : null);
+  const displaySide: ScreenSide = observerSide ?? "right";
 
   return (
     <main className="lab-shell">
@@ -603,7 +705,11 @@ export default function PnrLab() {
         <div className="brand-block">
           <span className="brand-mark">2×2</span>
           <div>
-            <p className="kicker">{snapshot.world.screenSide.toUpperCase()}-SIDE READ · MINIMAL LOOP</p>
+            <p className="kicker">
+              {labMode === "autonomous" && !observerSide
+                ? "AUTO · NO FEASIBLE SIDE"
+                : `${displaySide.toUpperCase()}-SIDE READ`} · MINIMAL LOOP
+            </p>
             <h1>挡拆因果实验台</h1>
           </div>
         </div>
@@ -616,7 +722,7 @@ export default function PnrLab() {
           {labMode === "g05" && <span>G05 · {currentG05Replay.sampleId}</span>}
           {labMode === "g06" && <span>G06 · {currentG06Replay.sampleId}</span>}
           {labMode === "g07" && <span>G07 · {g07Side.toUpperCase()} · {currentG07Replay.specId}</span>}
-          {labMode === "g08" && currentG08Replay && <span>G08 · {currentG08Replay.manifestId} · {snapshot.world.screenSide.toUpperCase()}</span>}
+          {labMode === "g08" && currentG08Replay && <span>G08 · {currentG08Replay.manifestId} · {displaySide.toUpperCase()}</span>}
           {labMode === "p00" && <span>P00 · {currentP00Replay.code} · {strategyLocked ? "LOCKED" : "READY"}</span>}
           {labMode === "p01" && <span>P01 · {currentP01Replay.code} · {strategyLocked ? "LOCKED" : "READY"}</span>}
           {labMode === "p03" && <span>P02–P03 · {currentP03Row.id} · {strategyLocked ? "LOCKED" : "READY"}</span>}
@@ -624,6 +730,11 @@ export default function PnrLab() {
           {labMode === "formation" && currentFormationReplay && (
             <span>
               F01–F03 · {currentFormationReplay.sampleId} · {currentFormationReplay.side.toUpperCase()} · {playing || snapshot.world.tick > 0 ? "LOCKED" : "READY"}
+            </span>
+          )}
+          {labMode === "autonomous" && currentAutonomousReplay && (
+            <span>
+              A00–A01 · {currentAutonomousReplay.inputId} · {currentAutonomousReplay.side?.toUpperCase() ?? "NO SIDE"} · {currentAutonomousReplay.anchorId ?? "NO ANCHOR"} · {playing || snapshot.world.tick > 0 ? "LOCKED" : "READY"}
             </span>
           )}
           <span>HASH {snapshot.world.stateHash}</span>
@@ -774,6 +885,17 @@ export default function PnrLab() {
         >
           F01–F03 · Formation 泛化
         </button>
+        <button
+          aria-pressed={labMode === "autonomous"}
+          className={labMode === "autonomous" ? "is-active" : ""}
+          onClick={() => {
+            setLabMode("autonomous");
+            replaceAutonomousSimulation(autonomousReplayId, false);
+          }}
+          type="button"
+        >
+          A00–A01 · 自动组织挡拆
+        </button>
       </nav>
 
       {labMode === "scenarios" ? (
@@ -903,6 +1025,18 @@ export default function PnrLab() {
           }}
           strategyLocked={strategyLocked}
         />
+      ) : labMode === "autonomous" ? (
+        <AutonomousSetupPanel
+          a00={A00_AUTONOMOUS_SIDE_AUDIT}
+          a01={A01_AUTONOMOUS_SETUP_AUDIT}
+          activeReplayId={autonomousReplayId}
+          locked={playing || snapshot.world.tick > 0}
+          onReplaySelect={(nextReplayId) => {
+            setAutonomousReplayId(nextReplayId);
+            replaceAutonomousSimulation(nextReplayId, false);
+          }}
+          snapshot={snapshot}
+        />
       ) : labMode === "formation" ? (
         <FormationGeneralizationPanel
           activeReplayId={formationReplayId}
@@ -976,8 +1110,8 @@ export default function PnrLab() {
         <section className="court-panel">
           <div className="court-panel__head">
             <div className="plan-pills">
-              <span className="plan-pill offense">{planShort(snapshot.offensePlan.id, snapshot.world.screenSide)}</span>
-              <span className="plan-pill defense">{planShort(snapshot.defensePlan.id, snapshot.world.screenSide)}</span>
+              <span className="plan-pill offense">{planShort(snapshot.offensePlan.id, displaySide)}</span>
+              <span className="plan-pill defense">{planShort(snapshot.defensePlan.id, displaySide)}</span>
             </div>
             <div className="timecode">
               <span>T+{snapshot.world.time.toFixed(2)}</span>
@@ -988,7 +1122,7 @@ export default function PnrLab() {
           <div className="court-wrap">
             <canvas
               ref={canvasRef}
-              aria-label={`2v2 ${snapshot.world.screenSide === "right" ? "右侧" : "左侧"}挡拆连续运动画面`}
+              aria-label={`2v2 ${observerSide ? (observerSide === "right" ? "右侧" : "左侧") : "自动选边"}挡拆连续运动画面`}
             />
             <div className="court-legend" aria-hidden="true">
               <span><i className="legend-dot offense" /> 进攻</span>
@@ -998,7 +1132,7 @@ export default function PnrLab() {
             {snapshot.world.terminal && (
               <div className="terminal-card">
                 <span className="eyebrow">LOOP CLOSED · {snapshot.world.time.toFixed(2)}s</span>
-                <strong>{sideText(snapshot.world.terminal.label, snapshot.world.screenSide)}</strong>
+                <strong>{sideText(snapshot.world.terminal.label, displaySide)}</strong>
                 <p>世界已冻结在第一个判断点；重放可验证相同输入是否复现。</p>
                 <button onClick={() => replaceCurrentSimulation(true)} type="button">从头重放</button>
               </div>
@@ -1193,7 +1327,7 @@ export default function PnrLab() {
               {reject.active
                 ? sideText(
                     `强踩右资格 ${reject.helpEligible ? "是" : "否"} · D5–O1 ${reject.d5O1Distance.toFixed(2)}m · D5–O5 ${reject.d5O5Distance.toFixed(2)}m · 净空 ${reject.passLaneClearance.toFixed(2)}m`,
-                    snapshot.world.screenSide,
+                    displaySide,
                   )
                 : under.active || snapshot.defensePlan.id === "UNDER"
                   ? `D1–O1 ${under.d1O1Distance.toFixed(2)}m · D5–O5 ${under.d5O5Distance.toFixed(2)}m · 原子换防 ${facts.matchupExchange ? "是" : "否"}`
@@ -1329,8 +1463,8 @@ export default function PnrLab() {
                 {planCommitRemaining > 0 ? "承诺中 " + planCommitRemaining.toFixed(2) + "s" : "事件可重评"}
               </span>
             </div>
-            <PlanCard plan={snapshot.offensePlan} screenSide={snapshot.world.screenSide} team="offense" />
-            <PlanCard plan={snapshot.defensePlan} screenSide={snapshot.world.screenSide} team="defense" />
+            <PlanCard plan={snapshot.offensePlan} screenSide={displaySide} team="offense" />
+            <PlanCard plan={snapshot.defensePlan} screenSide={displaySide} team="defense" />
           </div>
 
           <div className="inspector__section">
@@ -1343,7 +1477,7 @@ export default function PnrLab() {
             </div>
             <div className="role-list">
               {snapshot.roles.map((role) => (
-                <RoleRow key={role.playerId} role={role} screenSide={snapshot.world.screenSide} />
+                <RoleRow key={role.playerId} role={role} screenSide={displaySide} />
               ))}
             </div>
           </div>
@@ -1355,8 +1489,8 @@ export default function PnrLab() {
                 <h2>选择与否决</h2>
               </div>
             </div>
-            <DecisionTrace record={latestOffense} screenSide={snapshot.world.screenSide} />
-            <DecisionTrace record={latestDefense} screenSide={snapshot.world.screenSide} />
+            <DecisionTrace record={latestOffense} screenSide={displaySide} />
+            <DecisionTrace record={latestDefense} screenSide={displaySide} />
           </div>
 
           <div className="inspector__section event-section">
@@ -1372,7 +1506,7 @@ export default function PnrLab() {
             ) : (
               <ol className="event-list">
                 {[...snapshot.events].reverse().map((event) => (
-                  <EventItem event={event} key={event.id} screenSide={snapshot.world.screenSide} />
+                  <EventItem event={event} key={event.id} screenSide={displaySide} />
                 ))}
               </ol>
             )}

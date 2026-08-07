@@ -52,11 +52,16 @@ export function RoleRow({ role, screenSide }: { role: RoleAssignment; screenSide
 export function CandidateRow({
   candidate,
   screenSide,
+  worldFrame = false,
 }: {
   candidate: CandidateEvaluation;
   screenSide: ScreenSide;
+  worldFrame?: boolean;
 }) {
-  const label = sideText(candidate.label, screenSide);
+  const displayText = (value: string): string => worldFrame
+    ? value
+    : sideText(value, screenSide);
+  const label = displayText(candidate.label);
   const scoreEquation = candidate.feasible && candidate.baseScore !== null
     ? `BASE ${candidate.baseScore.toFixed(2)} + STRATEGY ${candidate.strategyAdjustment >= 0 ? "+" : ""}${candidate.strategyAdjustment.toFixed(2)} = ${candidate.effectiveScore?.toFixed(2) ?? "VETO"}`
     : "BASE VETO + STRATEGY BLOCKED = VETO";
@@ -67,12 +72,11 @@ export function CandidateRow({
         <strong>{scoreEquation}</strong>
       </div>
       <p>
-        {sideText(
+        {displayText(
           candidate.vetoes[0] ?? candidate.evidence.slice(1, 3).join(" · "),
-          screenSide,
         )}
       </p>
-      <small>{sideText(candidate.strategyReason, screenSide)}</small>
+      <small>{displayText(candidate.strategyReason)}</small>
     </div>
   );
 }
@@ -85,6 +89,8 @@ export function DecisionTrace({
   screenSide: ScreenSide;
 }) {
   if (!record) return null;
+  const worldFrame = record.decisionPhase === "offense_formation" &&
+    record.candidates.some((candidate) => candidate.autonomousSetup);
   return (
     <div className="decision-trace">
       <div className="decision-trace__head">
@@ -96,8 +102,13 @@ export function DecisionTrace({
         <time>T+{record.at.toFixed(2)}</time>
       </div>
       <div className="candidate-list">
-        {record.candidates.map((candidate) => (
-          <CandidateRow candidate={candidate} key={candidate.id} screenSide={screenSide} />
+        {record.candidates.map((candidate, index) => (
+          <CandidateRow
+            candidate={candidate}
+            key={`${candidate.id}/${candidate.label}/${index}`}
+            screenSide={screenSide}
+            worldFrame={worldFrame}
+          />
         ))}
       </div>
       <p className="boundary-note">{record.observationBoundary}</p>
@@ -106,12 +117,14 @@ export function DecisionTrace({
 }
 
 export function EventItem({ event, screenSide }: { event: WorldEvent; screenSide: ScreenSide }) {
+  const worldFrame = event.type === "formation_side_committed";
+  const displayText = (value: string): string => worldFrame ? value : sideText(value, screenSide);
   return (
     <li>
       <time>{event.at.toFixed(2)}</time>
       <span>
-        <strong>{sideText(event.label, screenSide)}</strong>
-        <small>{sideText(event.detail, screenSide)}</small>
+        <strong>{displayText(event.label)}</strong>
+        <small>{displayText(event.detail)}</small>
       </span>
     </li>
   );

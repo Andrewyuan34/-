@@ -8,13 +8,21 @@ import {
   type TeamStrategyReference,
   type TeamStrategySelection,
 } from "./pnr-strategy.ts";
-import { assertFormationInputInF01Domain } from "./pnr-formation-domain.ts";
+import {
+  F01_FORMATION_INPUT_DOMAIN,
+  assertFormationInputInF01Domain,
+} from "./pnr-formation-domain.ts";
 
 export const FIXED_DT = 1 / 60;
 export const FORMATION_TIMEOUT_SECONDS = 3.2;
 export const FORMATION_HANDLER_READY_RADIUS = 0.12;
 export const FORMATION_HANDLER_MAX_READY_SPEED = 0.32;
 export const FORMATION_SCREENER_MAX_SET_SPEED = 0.28;
+export const AUTONOMOUS_FORMATION_DOMAIN_VERSION = F01_FORMATION_INPUT_DOMAIN.version;
+export const AUTONOMOUS_SIDE_MINIMUM_COMMIT_SECONDS = 0.72;
+export const AUTONOMOUS_SIDE_HYSTERESIS = 0.32;
+export const AUTONOMOUS_SETUP_MAX_ETA_SECONDS = 1.65;
+export const AUTONOMOUS_ANCHOR_MIN_DEFENDER_CLEARANCE = 0.36;
 export const UNDER_PULLUP_MIN_BODY_CLEARANCE = 0.28;
 export const UNDER_PULLUP_MAX_STOP_SPEED = 0.34;
 export const UNDER_ROUTE_MIN_BODY_CLEARANCE = 0.04;
@@ -53,10 +61,37 @@ export const FORMATION_LANDMARK_OFFSETS = Object.freeze({
   rejectGate: Object.freeze({ x: -1.17, y: -1.76 }),
 });
 
+export const AUTONOMOUS_CANONICAL_ANCHORS = Object.freeze([
+  Object.freeze({
+    id: "standard" as const,
+    screenAnchor: Object.freeze({ x: 1.27, y: -0.96 }),
+    handlerWaitingPoint: Object.freeze({ x: 0.27, y: -0.6 }),
+    useGate: Object.freeze({ x: 2.03, y: -1.86 }),
+    rejectGate: Object.freeze({ x: -1.17, y: -1.76 }),
+  }),
+  Object.freeze({
+    id: "compact" as const,
+    screenAnchor: Object.freeze({ x: 1.12, y: -0.88 }),
+    handlerWaitingPoint: Object.freeze({ x: 0.22, y: -0.56 }),
+    useGate: Object.freeze({ x: 1.86, y: -1.74 }),
+    rejectGate: Object.freeze({ x: -1.1, y: -1.68 }),
+  }),
+  Object.freeze({
+    id: "deep" as const,
+    screenAnchor: Object.freeze({ x: 1.42, y: -1.06 }),
+    handlerWaitingPoint: Object.freeze({ x: 0.32, y: -0.66 }),
+    useGate: Object.freeze({ x: 2.18, y: -1.98 }),
+    rejectGate: Object.freeze({ x: -1.24, y: -1.86 }),
+  }),
+]);
+
 export const PLAYER_IDS = ["O1", "O5", "D1", "D5"] as const;
 export type PlayerId = (typeof PLAYER_IDS)[number];
 export type Team = "offense" | "defense";
 export type ScreenSide = "right" | "left";
+export type AutonomousAnchorId =
+  (typeof AUTONOMOUS_CANONICAL_ANCHORS)[number]["id"];
+export type SetupMode = "explicit" | "auto";
 export type PnrStartMode = "preset_pnr" | "form_pnr";
 export type SimulationPhase = "formation" | "pnr";
 export type SimulationHorizon =
@@ -70,6 +105,7 @@ export type SimulationHorizon =
   | "reject_slip";
 export type OffensePlanId =
   | "FORM_SCREEN"
+  | "ABORT_FORMATION"
   | "USE_RIGHT_SCREEN"
   | "REJECT_LEFT"
   | "ATTACK_UNDER_GAP"
@@ -126,6 +162,12 @@ export interface FormationLandmarkOffsets {
 export interface FormationState {
   mode: PnrStartMode;
   phase: SimulationPhase;
+  /** Present only for autonomous Formation; omitted from all sealed explicit traces. */
+  setupMode?: "auto";
+  /** Public only after neutral motion evidence establishes a side. */
+  committedSide?: ScreenSide | null;
+  /** Neutral-world receipt of an offense abort/reset intent. */
+  abortRequestedAtTick?: number | null;
   screenSet: boolean;
   screenSetTick: number | null;
   jointReady: boolean;
@@ -166,7 +208,10 @@ export interface ScreenFacts {
 }
 
 export type EventType =
+  | "formation_abort_requested"
+  | "formation_aborted"
   | "formation_timeout"
+  | "formation_side_committed"
   | "screen_set"
   | "formation_ready"
   | "branch_use"
@@ -209,7 +254,10 @@ export type EventType =
   | "terminal";
 
 export const EVENT_ORDER: Record<EventType, number> = {
+  formation_abort_requested: 16,
+  formation_aborted: 17,
   formation_timeout: 18,
+  formation_side_committed: 19,
   screen_set: 20,
   formation_ready: 22,
   branch_use: 30,
@@ -286,7 +334,7 @@ export interface TerminalState {
 export interface WorldState {
   tick: number;
   time: number;
-  screenSide: ScreenSide;
+  screenSide: ScreenSide | null;
   landmarks: TacticalLandmarks;
   tacticalLandmarks: TacticalLandmarks;
   formation: FormationState;
@@ -349,8 +397,9 @@ export interface TeamRouteTrack {
 
 export interface TeamPlanRoute {
   routeVersion: number;
-  boundary: "under_read" | "screen_cleared" | "under_blocked";
+  boundary: "formation_setup" | "under_read" | "screen_cleared" | "under_blocked";
   kind:
+    | "formation_arrival"
     | "under_preclear_use"
     | "under_postclear_attack"
     | "under_postclear_pullup"
@@ -380,6 +429,20 @@ export interface TeamPlan {
   passTarget?: PlayerId;
   /** Private to this team and the all-knowing UI; never copied into planner observations. */
   route?: TeamPlanRoute;
+  /** Offense-private autonomous Formation choice; never copied into defense observations. */
+  autonomousSetup?: AutonomousFormationSetup;
+}
+
+export interface AutonomousFormationSetup {
+  domainVersion: typeof AUTONOMOUS_FORMATION_DOMAIN_VERSION;
+  side: ScreenSide;
+  anchorId: AutonomousAnchorId;
+  planningOrigin: Vec2;
+  landmarks: TacticalLandmarks;
+  handlerRoute: StagedBodyRouteProof;
+  screenerRoute: StagedBodyRouteProof;
+  formationEta: number;
+  corridorClearance: number;
 }
 
 export interface CandidateEvaluation {
@@ -394,6 +457,8 @@ export interface CandidateEvaluation {
   strategyReason: string;
   vetoes: string[];
   evidence: string[];
+  /** Present only on offense-owned autonomous Formation candidates. */
+  autonomousSetup?: AutonomousFormationSetup;
 }
 
 export interface PlanningRecord {
@@ -413,15 +478,17 @@ export interface PlanningRecord {
 
 export interface SimulationConfig {
   initialPositions: InitialPlayerPositions;
-  screenSide: ScreenSide;
+  screenSide?: ScreenSide;
+  setupMode?: SetupMode;
+  formationDomainVersion?: typeof AUTONOMOUS_FORMATION_DOMAIN_VERSION;
   startMode?: PnrStartMode;
   formationLandmarkOffsets?: FormationLandmarkOffsets;
-  seed: number;
-  maxTime: number;
-  d1FrontReactionDelay: number;
-  d1PostCatchRecoveryDelay: number;
-  o1MaxSpeed: number;
-  horizon: SimulationHorizon;
+  seed?: number;
+  maxTime?: number;
+  d1FrontReactionDelay?: number;
+  d1PostCatchRecoveryDelay?: number;
+  o1MaxSpeed?: number;
+  horizon?: SimulationHorizon;
   strategies?: TeamStrategySelection;
   /** Audit-only execution order; plans must be identical for either value. */
   plannerEvaluationOrder?: "offense-first" | "defense-first";
@@ -431,7 +498,7 @@ export interface PublicObservation {
   tick: number;
   time: number;
   team: Team;
-  screenSide: ScreenSide;
+  screenSide: ScreenSide | null;
   landmarks: {
     screenAnchor: Vec2;
     handlerWaitingPoint?: Vec2;
@@ -458,6 +525,8 @@ export interface PublicObservation {
   reject: RejectFacts;
   court: typeof COURT;
   triggerEvents: WorldEvent[];
+  setupMode?: SetupMode;
+  formationDomainVersion?: typeof AUTONOMOUS_FORMATION_DOMAIN_VERSION;
 }
 
 interface MotionIntent {
@@ -846,8 +915,16 @@ function transformIntentFrame<T extends PlayerId>(
   ) as Record<T, MotionIntent>;
 }
 
+function requireWorldScreenSide(world: WorldState, boundary: string): ScreenSide {
+  if (world.screenSide !== "right" && world.screenSide !== "left") {
+    throw new Error(`${boundary} requires a public formation side commit`);
+  }
+  return world.screenSide;
+}
+
 function toTacticalWorld(world: WorldState): WorldState {
-  if (world.screenSide === "right") return world;
+  const screenSide = requireWorldScreenSide(world, "tactical frame");
+  if (screenSide === "right") return world;
   const players = {} as Record<PlayerId, PlayerState>;
   for (const id of PLAYER_IDS) {
     const player = world.players[id];
@@ -2070,9 +2147,74 @@ export function validateInitialPlayerPositions(input: unknown): InitialPlayerPos
   return copyInitialPlayerPositions(positions);
 }
 
+const AUTO_ALLOWED_CONFIG_FIELDS = new Set([
+  "initialPositions",
+  "setupMode",
+  "formationDomainVersion",
+  "startMode",
+  "seed",
+  "strategies",
+  "horizon",
+  "plannerEvaluationOrder",
+]);
+
+function assertAutonomousFormationInput(
+  config: SimulationConfig,
+  positions: InitialPlayerPositions,
+): void {
+  if (config.startMode !== "form_pnr") {
+    throw new Error('setupMode="auto" requires startMode="form_pnr"');
+  }
+  if (config.formationDomainVersion !== AUTONOMOUS_FORMATION_DOMAIN_VERSION) {
+    throw new Error(
+      `setupMode="auto" requires formationDomainVersion="${AUTONOMOUS_FORMATION_DOMAIN_VERSION}"`,
+    );
+  }
+  const record = config as unknown as Record<string, unknown>;
+  for (const field of Object.keys(record)) {
+    if (!AUTO_ALLOWED_CONFIG_FIELDS.has(field)) {
+      throw new Error(`setupMode="auto" rejects caller-owned ${field}`);
+    }
+  }
+  let rightFailure: unknown = null;
+  let leftFailure: unknown = null;
+  try {
+    assertFormationInputInF01Domain(positions);
+    return;
+  } catch (error) {
+    rightFailure = error;
+  }
+  try {
+    assertFormationInputInF01Domain(mirrorInitialPlayerPositions(positions));
+    return;
+  } catch (error) {
+    leftFailure = error;
+  }
+  const detail = rightFailure instanceof Error
+    ? rightFailure.message
+    : leftFailure instanceof Error
+      ? leftFailure.message
+      : "unknown Formation domain failure";
+  throw new Error(
+    `setupMode="auto" input is outside mirrored ${AUTONOMOUS_FORMATION_DOMAIN_VERSION}: ${detail}`,
+  );
+}
+
+function neutralAutonomousLandmarks(
+  positions: InitialPlayerPositions,
+): TacticalLandmarks {
+  return {
+    screenAnchor: { ...positions.O5 },
+    handlerWaitingPoint: { ...positions.O1 },
+    useGate: { ...positions.O1 },
+    rejectGate: { ...positions.O1 },
+  };
+}
+
 interface WorldInitializationInput {
   initialPositions: InitialPlayerPositions;
-  screenSide: ScreenSide;
+  screenSide: ScreenSide | null;
+  setupMode: SetupMode;
   startMode: PnrStartMode;
   tacticalLandmarks: TacticalLandmarks;
   o1MaxSpeed: number;
@@ -2086,11 +2228,20 @@ function initialWorld(input: WorldInitializationInput): WorldState {
     tick: 0,
     time: 0,
     screenSide: input.screenSide,
-    landmarks: landmarksToWorld(input.tacticalLandmarks, input.screenSide),
+    landmarks: input.screenSide
+      ? landmarksToWorld(input.tacticalLandmarks, input.screenSide)
+      : copyTacticalLandmarks(input.tacticalLandmarks),
     tacticalLandmarks: copyTacticalLandmarks(input.tacticalLandmarks),
     formation: {
       mode: input.startMode,
       phase: input.startMode === "form_pnr" ? "formation" : "pnr",
+      ...(input.setupMode === "auto"
+        ? {
+            setupMode: "auto" as const,
+            committedSide: null,
+            abortRequestedAtTick: null,
+          }
+        : {}),
       screenSet: false,
       screenSetTick: null,
       jointReady: false,
@@ -2152,14 +2303,18 @@ export function createPlannerObservation(
     };
   }
 
+  const autonomousFormation =
+    world.formation.setupMode === "auto" && world.formation.phase === "formation";
   const observation: PublicObservation = {
     tick: world.tick,
     time: world.time,
     team,
     screenSide: world.screenSide,
-    landmarks: team === "offense"
-      ? copyTacticalLandmarks(world.landmarks)
-      : { screenAnchor: { ...world.landmarks.screenAnchor } },
+    landmarks: autonomousFormation
+      ? { screenAnchor: { ...world.players.O5.pos } }
+      : team === "offense"
+        ? copyTacticalLandmarks(world.landmarks)
+        : { screenAnchor: { ...world.landmarks.screenAnchor } },
     formation: { ...world.formation },
     ownPlayerIds: [...(team === "offense" ? OFFENSE_IDS : DEFENSE_IDS)],
     opponentPlayerIds: [...(team === "offense" ? DEFENSE_IDS : OFFENSE_IDS)],
@@ -2180,6 +2335,12 @@ export function createPlannerObservation(
     reject: { ...world.reject },
     court: COURT,
     triggerEvents: triggerEvents.map((event) => ({ ...event })),
+    ...(world.formation.setupMode === "auto"
+      ? {
+          setupMode: "auto" as const,
+          formationDomainVersion: AUTONOMOUS_FORMATION_DOMAIN_VERSION,
+        }
+      : {}),
   };
 
   return Object.freeze(observation);
@@ -2194,6 +2355,288 @@ function offenseLocalLandmark(
     throw new Error(`offense planner landmark ${name} is unavailable outside the offense view`);
   }
   return point;
+}
+
+function copyStagedBodyRouteProof(
+  proof: Readonly<StagedBodyRouteProof>,
+): StagedBodyRouteProof {
+  return {
+    legal: proof.legal,
+    length: proof.length,
+    minimumBodyClearance: proof.minimumBodyClearance,
+    waypoints: proof.waypoints.map((point) => ({ ...point })),
+    segmentProofs: proof.segmentProofs.map((segment) => ({
+      ...segment,
+      blockerIds: [...segment.blockerIds],
+      ...(segment.releasesExistingContactByBlocker
+        ? {
+            releasesExistingContactByBlocker: [
+              ...segment.releasesExistingContactByBlocker,
+            ],
+          }
+        : {}),
+    })),
+  };
+}
+
+function copyAutonomousFormationSetup(
+  setup: Readonly<AutonomousFormationSetup>,
+): AutonomousFormationSetup {
+  return {
+    domainVersion: setup.domainVersion,
+    side: setup.side,
+    anchorId: setup.anchorId,
+    planningOrigin: { ...setup.planningOrigin },
+    landmarks: copyTacticalLandmarks(setup.landmarks),
+    handlerRoute: copyStagedBodyRouteProof(setup.handlerRoute),
+    screenerRoute: copyStagedBodyRouteProof(setup.screenerRoute),
+    formationEta: setup.formationEta,
+    corridorClearance: setup.corridorClearance,
+  };
+}
+
+function autonomousSideLandmarks(
+  origin: Vec2,
+  side: ScreenSide,
+  anchorId: AutonomousAnchorId,
+): TacticalLandmarks {
+  const sign = side === "right" ? 1 : -1;
+  const offsets = AUTONOMOUS_CANONICAL_ANCHORS.find(
+    (anchor) => anchor.id === anchorId,
+  );
+  if (!offsets) throw new Error(`Unknown autonomous anchor: ${anchorId}`);
+  return {
+    screenAnchor: {
+      x: round(origin.x + offsets.screenAnchor.x * sign, 6),
+      y: round(origin.y + offsets.screenAnchor.y, 6),
+    },
+    handlerWaitingPoint: {
+      x: round(origin.x + offsets.handlerWaitingPoint.x * sign, 6),
+      y: round(origin.y + offsets.handlerWaitingPoint.y, 6),
+    },
+    useGate: {
+      x: round(origin.x + offsets.useGate.x * sign, 6),
+      y: round(origin.y + offsets.useGate.y, 6),
+    },
+    rejectGate: {
+      x: round(origin.x + offsets.rejectGate.x * sign, 6),
+      y: round(origin.y + offsets.rejectGate.y, 6),
+    },
+  };
+}
+
+function routePointAtDistance(
+  start: Vec2,
+  proof: StagedBodyRouteProof,
+  travelled: number,
+): Vec2 {
+  const points = [start, ...proof.waypoints];
+  let remaining = travelled;
+  for (let index = 1; index < points.length; index += 1) {
+    const segment = distance(points[index - 1], points[index]);
+    if (remaining <= segment + 1e-12) {
+      return pointOnSegmentAt(
+        points[index - 1],
+        points[index],
+        segment <= 1e-12 ? 1 : remaining / segment,
+      );
+    }
+    remaining -= segment;
+  }
+  return { ...(points.at(-1) ?? start) };
+}
+
+function concurrentFormationCorridorClearance(
+  observation: PublicObservation,
+  handlerRoute: StagedBodyRouteProof,
+  screenerRoute: StagedBodyRouteProof,
+  formationEta: number,
+): number {
+  const handler = observation.players.O1;
+  const screener = observation.players.O5;
+  let minimum = Number.POSITIVE_INFINITY;
+  for (let index = 0; index <= 24; index += 1) {
+    const at = formationEta * (index / 24);
+    const handlerPoint = routePointAtDistance(
+      handler.pos,
+      handlerRoute,
+      at * Math.min(1.72, handler.maxSpeed),
+    );
+    const screenerPoint = routePointAtDistance(
+      screener.pos,
+      screenerRoute,
+      at * Math.min(2.48, screener.maxSpeed),
+    );
+    minimum = Math.min(
+      minimum,
+      distance(handlerPoint, screenerPoint) - handler.radius - screener.radius,
+    );
+  }
+  return round(minimum, 6);
+}
+
+function courtBoundaryMargin(point: Vec2, radius: number): number {
+  return Math.min(
+    point.x - radius,
+    COURT.width - radius - point.x,
+    point.y - radius,
+    COURT.height - radius - point.y,
+  );
+}
+
+function autonomousFormationCandidate(
+  observation: PublicObservation,
+  side: ScreenSide,
+  anchorId: AutonomousAnchorId,
+  currentSetup: AutonomousFormationSetup | null,
+  strategy: TeamStrategyProfile,
+): CandidateEvaluation {
+  const players = observation.players;
+  const currentSide = currentSetup?.side ?? null;
+  const currentChoice = currentSide === side && currentSetup?.anchorId === anchorId;
+  const planningOrigin = currentSetup?.planningOrigin ?? players.O1.pos;
+  const landmarks = currentChoice
+    ? copyTacticalLandmarks(currentSetup.landmarks)
+    : autonomousSideLandmarks(planningOrigin, side, anchorId);
+  const handlerBlockers: RouteProofBlocker[] = ["O5"].map((id) => ({
+    id: id as PlayerId,
+    pos: { ...players[id as PlayerId].pos },
+    radius: players[id as PlayerId].radius,
+  }));
+  const screenerBlockerIds: PlayerId[] = currentChoice
+    ? ["O1"]
+    : ["O1", "D1", "D5"];
+  const screenerBlockers: RouteProofBlocker[] = screenerBlockerIds.map((id) => ({
+    id: id as PlayerId,
+    pos: { ...players[id].pos },
+    radius: players[id].radius,
+  }));
+  const handlerRoute = proveUnderCompositeBodyRoute(
+    players.O1.pos,
+    landmarks.handlerWaitingPoint,
+    players.O1.radius,
+    handlerBlockers,
+    observation.tick,
+    0.025,
+  );
+  const screenerRoute = proveUnderCompositeBodyRoute(
+    players.O5.pos,
+    landmarks.screenAnchor,
+    players.O5.radius,
+    screenerBlockers,
+    observation.tick,
+    0.025,
+  );
+  const vetoes: string[] = [];
+  const boundaryMargin = Math.min(
+    courtBoundaryMargin(landmarks.screenAnchor, players.O5.radius),
+    courtBoundaryMargin(landmarks.handlerWaitingPoint, players.O1.radius),
+    courtBoundaryMargin(landmarks.useGate, players.O1.radius),
+    courtBoundaryMargin(landmarks.rejectGate, players.O1.radius),
+  );
+  if (boundaryMargin < -1e-9) {
+    vetoes.push(`球场边界不足 ${round(boundaryMargin, 3)}m`);
+  }
+  if (!handlerRoute) vetoes.push("O1 到等待区域没有连续合法身体路线");
+  if (!screenerRoute) vetoes.push("O5 到掩护区域没有连续合法身体路线");
+  if (
+    observation.formation.committedSide &&
+    observation.formation.committedSide !== side
+  ) {
+    vetoes.push(`公开 side commit 已锁定 ${observation.formation.committedSide}`);
+  }
+
+  const handlerEta = handlerRoute
+    ? handlerRoute.length / Math.min(1.72, players.O1.maxSpeed) + 0.18
+    : Number.POSITIVE_INFINITY;
+  const screenerEta = screenerRoute
+    ? screenerRoute.length / Math.min(2.48, players.O5.maxSpeed) + 0.24
+    : Number.POSITIVE_INFINITY;
+  const formationEta = Math.max(handlerEta, screenerEta);
+  if (formationEta > AUTONOMOUS_SETUP_MAX_ETA_SECONDS) {
+    vetoes.push(
+      `形成 ETA ${round(formationEta, 3)}s 超出有限 watchdog ${AUTONOMOUS_SETUP_MAX_ETA_SECONDS.toFixed(2)}s`,
+    );
+  }
+  const corridorClearance = handlerRoute && screenerRoute
+    ? concurrentFormationCorridorClearance(
+        observation,
+        handlerRoute,
+        screenerRoute,
+        formationEta,
+      )
+    : Number.NEGATIVE_INFINITY;
+  if (corridorClearance < 0.02 - 1e-9) {
+    vetoes.push(`O1/O5 同步移动走廊净空 ${round(corridorClearance, 3)}m`);
+  }
+
+  const minimumBodyClearance = Math.min(
+    handlerRoute?.minimumBodyClearance ?? Number.NEGATIVE_INFINITY,
+    screenerRoute?.minimumBodyClearance ?? Number.NEGATIVE_INFINITY,
+  );
+  const defenderAnchorClearance = Math.min(
+    distance(landmarks.screenAnchor, players.D1.pos) - players.O5.radius - players.D1.radius,
+    distance(landmarks.screenAnchor, players.D5.pos) - players.O5.radius - players.D5.radius,
+  );
+  if (
+    !currentChoice &&
+    defenderAnchorClearance < AUTONOMOUS_ANCHOR_MIN_DEFENDER_CLEARANCE - 1e-9
+  ) {
+    vetoes.push(
+      `anchor 防守身体净空 ${round(defenderAnchorClearance, 3)}m 低于 ${AUTONOMOUS_ANCHOR_MIN_DEFENDER_CLEARANCE.toFixed(2)}m`,
+    );
+  }
+  const hysteresis = currentChoice ? AUTONOMOUS_SIDE_HYSTERESIS : 0;
+  const baseScore = vetoes.length === 0
+    ? round(
+        (FORMATION_TIMEOUT_SECONDS - formationEta) * 0.88 +
+          clamp(minimumBodyClearance, 0, 1.4) * 0.72 +
+          clamp(corridorClearance, 0, 1.4) * 0.54 +
+          clamp(boundaryMargin, 0, 2) * 0.18 +
+          clamp(defenderAnchorClearance, 0, 2) * 0.3 +
+          hysteresis,
+      )
+    : null;
+  const setup = handlerRoute && screenerRoute
+    ? {
+        domainVersion: AUTONOMOUS_FORMATION_DOMAIN_VERSION,
+        side,
+        anchorId,
+        planningOrigin: { ...planningOrigin },
+        landmarks,
+        handlerRoute,
+        screenerRoute,
+        formationEta: round(formationEta, 6),
+        corridorClearance,
+      } satisfies AutonomousFormationSetup
+    : undefined;
+  const strategyScore = scoreCandidateWithStrategy(
+    strategy,
+    "offense_formation",
+    {
+      planId: "FORM_SCREEN",
+      feasible: vetoes.length === 0,
+      baseScore,
+    },
+  );
+  return {
+    id: "FORM_SCREEN",
+    label: `自动形成${side === "right" ? "右" : "左"}侧 · ${anchorId} anchor`,
+    feasible: vetoes.length === 0,
+    score: strategyScore.effectiveScore,
+    ...strategyScore,
+    vetoes,
+    evidence: [
+      `公开几何：形成 ETA ${Number.isFinite(formationEta) ? round(formationEta, 3) : "∞"}s`,
+      `边界余量 ${round(boundaryMargin, 3)}m / 身体净空 ${round(minimumBodyClearance, 3)}m`,
+      `同步走廊净空 ${round(corridorClearance, 3)}m / anchor 防守净空 ${round(defenderAnchorClearance, 3)}m`,
+      `全局固定 anchor：${anchorId}`,
+      currentChoice
+        ? `保留已承诺 side × anchor：滞回 +${AUTONOMOUS_SIDE_HYSTERESIS.toFixed(2)}`
+        : "仅使用公开位置、速度、身体与球场边界",
+    ],
+    ...(setup ? { autonomousSetup: copyAutonomousFormationSetup(setup) } : {}),
+  };
 }
 
 function defensePublicReadTargets(observation: PublicObservation): {
@@ -2536,6 +2979,47 @@ function evaluateOffenseCandidates(
   decisionPhase: DecisionPhase,
 ): CandidateEvaluation[] {
   if (decisionPhase === "offense_formation") {
+    if (observation.setupMode === "auto") {
+      const currentSetup = currentPlan?.autonomousSetup ?? null;
+      const mirrorEquivariantPreference: readonly ScreenSide[] =
+        observation.players.O1.pos.x <= COURT.centerlineX
+          ? ["right", "left"]
+          : ["left", "right"];
+      const setupCandidates = mirrorEquivariantPreference.flatMap((side) =>
+        AUTONOMOUS_CANONICAL_ANCHORS.map((anchor) =>
+          autonomousFormationCandidate(
+            observation,
+            side,
+            anchor.id,
+            currentSetup,
+            strategy,
+          )
+        )
+      );
+      if (setupCandidates.some((candidate) => candidate.feasible)) {
+        return setupCandidates;
+      }
+      const abortScore = scoreCandidateWithStrategy(strategy, decisionPhase, {
+        planId: "ABORT_FORMATION",
+        feasible: true,
+        baseScore: 0,
+      });
+      return [
+        ...setupCandidates,
+        {
+          id: "ABORT_FORMATION",
+          label: "安全退出无法形成的回合",
+          feasible: true,
+          score: abortScore.effectiveScore,
+          ...abortScore,
+          vetoes: [],
+          evidence: [
+            `${setupCandidates.length} 个固定 side × anchor 组合全部被硬可行性否决`,
+            "进攻只提交 abort/reset intent；世界等待真实静止与合法持球后终止",
+          ],
+        },
+      ];
+    }
     const baseScore = currentPlan?.id === "FORM_SCREEN" ? 1.2 : 1;
     const strategyScore = scoreCandidateWithStrategy(strategy, decisionPhase, {
       planId: "FORM_SCREEN",
@@ -3169,7 +3653,13 @@ function chooseCandidate(candidates: CandidateEvaluation[]): CandidateEvaluation
   const feasible = candidates.filter(
     (candidate) => candidate.feasible && candidate.effectiveScore !== null,
   );
-  if (feasible.length === 0) throw new Error("No feasible team plan");
+  if (feasible.length === 0) {
+    throw new Error(
+      `No feasible team plan: ${candidates.map((candidate) =>
+        `${candidate.label} [${candidate.vetoes.join("; ")}]`
+      ).join(" | ")}`,
+    );
+  }
   return [...feasible].sort(
     (a, b) => (b.effectiveScore ?? -Infinity) - (a.effectiveScore ?? -Infinity),
   )[0];
@@ -3845,6 +4335,112 @@ function makeOffensePlan(
   world: WorldState,
   version: number,
 ): TeamPlan {
+  if (chosen.id === "ABORT_FORMATION") {
+    return {
+      team: "offense",
+      id: chosen.id,
+      label: chosen.label,
+      version,
+      startedAt: world.time,
+      startedTick: world.tick,
+      commitUntil: world.time + 0.18,
+      watchdogAt: world.time + 0.42,
+      chosenScore: chosen.score ?? 0,
+      rationale:
+        "所有固定 side × anchor 组合均被硬可行性否决；保持球权并提交形成阶段安全退出意图。",
+      roles: {
+        O1: {
+          playerId: "O1",
+          roleCode: "formation_abort_handler",
+          roleLabel: "持球减速退出",
+          intent: "保持合法持球并减速；不传送到任何等待点",
+          owner: "offense-planner",
+        },
+        O5: {
+          playerId: "O5",
+          roleCode: "formation_abort_screener",
+          roleLabel: "停止无解形成路线",
+          intent: "原地减速；不穿过球员身体或边界补成掩护",
+          owner: "offense-planner",
+        },
+      },
+      primaryTarget: { ...world.players.O1.pos },
+      secondaryTarget: { ...world.players.O5.pos },
+    };
+  }
+  if (chosen.id === "FORM_SCREEN" && chosen.autonomousSetup) {
+    const setup = copyAutonomousFormationSetup(chosen.autonomousSetup);
+    const handlerTrack = routeTrackFromProof(
+      "O1",
+      world.players.O1.pos,
+      setup.handlerRoute,
+      setup.handlerRoute.waypoints.map((_, index) =>
+        index === setup.handlerRoute.waypoints.length - 1
+          ? "handler_wait"
+          : "handler_route"
+      ),
+      setup.handlerRoute.waypoints.map(() => 1.72),
+      setup.handlerRoute.waypoints.map((_, index) =>
+        index === setup.handlerRoute.waypoints.length - 1 ? 0.045 : 0.018
+      ),
+    );
+    const screenerTrack = routeTrackFromProof(
+      "O5",
+      world.players.O5.pos,
+      setup.screenerRoute,
+      setup.screenerRoute.waypoints.map((_, index) =>
+        index === setup.screenerRoute.waypoints.length - 1
+          ? "screen_anchor"
+          : "screen_route"
+      ),
+      setup.screenerRoute.waypoints.map(() => 2.48),
+      setup.screenerRoute.waypoints.map((_, index) =>
+        index === setup.screenerRoute.waypoints.length - 1 ? 0.045 : 0.018
+      ),
+    );
+    return {
+      team: "offense",
+      id: chosen.id,
+      label: chosen.label,
+      version,
+      startedAt: world.time,
+      startedTick: world.tick,
+      commitUntil: world.time + AUTONOMOUS_SIDE_MINIMUM_COMMIT_SECONDS,
+      watchdogAt: world.time + 1.18,
+      chosenScore: chosen.score ?? 0,
+      rationale:
+        "进攻按同一公开快照比较两侧硬可行性与基础评分；选择后保持最短承诺，沿已证明的私有连续路线形成掩护。",
+      roles: {
+        O1: {
+          playerId: "O1",
+          roleCode: "auto_setup_handler",
+          roleLabel: "自动组织持球等待",
+          intent: "沿已证明连续路线到私有等待点 → 控速持球 → 等待真实联合就绪",
+          owner: "offense-planner",
+        },
+        O5: {
+          playerId: "O5",
+          roleCode: "auto_arrive_screen",
+          roleLabel: "自动选择一侧到位",
+          intent: "沿已证明连续路线到私有 anchor → 减速站定；世界只从真实姿态发布事实",
+          owner: "offense-planner",
+        },
+      },
+      primaryTarget: { ...setup.landmarks.handlerWaitingPoint },
+      secondaryTarget: { ...setup.landmarks.screenAnchor },
+      autonomousSetup: setup,
+      route: {
+        routeVersion: version,
+        boundary: "formation_setup",
+        kind: "formation_arrival",
+        committedAtTick: world.tick,
+        minimumCommitUntilTick:
+          world.tick + Math.ceil(AUTONOMOUS_SIDE_MINIMUM_COMMIT_SECONDS / FIXED_DT),
+        tracks: { O1: handlerTrack, O5: screenerTrack },
+        fallback: "hold_until_replan",
+      },
+    };
+  }
   if (chosen.id === "FORM_SCREEN") {
     return {
       team: "offense",
@@ -4565,7 +5161,27 @@ function committedRouteInProgress(plan: TeamPlan): boolean {
 
 function offensiveIntents(plan: TeamPlan, world: WorldState): Record<"O1" | "O5", MotionIntent> {
   const o1 = world.players.O1;
+  if (plan.id === "ABORT_FORMATION") {
+    return {
+      O1: {
+        target: plan.primaryTarget ?? world.players.O1.pos,
+        maxSpeed: 0,
+        arriveRadius: 0.04,
+      },
+      O5: {
+        target: plan.secondaryTarget ?? world.players.O5.pos,
+        maxSpeed: 0,
+        arriveRadius: 0.04,
+      },
+    };
+  }
   if (plan.id === "FORM_SCREEN") {
+    if (plan.route?.boundary === "formation_setup") {
+      return {
+        O1: committedRouteIntent(plan, world, "O1"),
+        O5: committedRouteIntent(plan, world, "O5"),
+      };
+    }
     return {
       O1: {
         target: plan.primaryTarget ?? world.landmarks.handlerWaitingPoint,
@@ -4849,10 +5465,12 @@ function defensiveIntents(plan: TeamPlan, world: WorldState): Record<"D1" | "D5"
   if (plan.id === "TRACK_FORMATION") {
     const o1ToHoop = normalize(sub(COURT.hoop, o1.pos));
     const nonScreenShade = { x: o1ToHoop.y, y: -o1ToHoop.x };
-    const d1ContainPoint = add(
-      add(o1.pos, scale(o1ToHoop, 0.68)),
-      scale(nonScreenShade, 0.08),
-    );
+    const d1ContainPoint = world.formation.setupMode === "auto"
+      ? add(o1.pos, scale(o1ToHoop, 0.68))
+      : add(
+          add(o1.pos, scale(o1ToHoop, 0.68)),
+          scale(nonScreenShade, 0.08),
+        );
     const d5GoalSide = add(o5.pos, scale(normalize(sub(COURT.hoop, o5.pos)), 0.82));
     return {
       D1: {
@@ -5005,8 +5623,88 @@ function accelerationLimited(current: Vec2, target: Vec2, maxDelta: number): Vec
   return add(current, scale(delta, maxDelta / magnitude));
 }
 
+function inferAutonomousFormationSide(
+  world: WorldState,
+  initialPositions: InitialPlayerPositions,
+): ScreenSide | null {
+  if (
+    world.formation.setupMode !== "auto" ||
+    world.formation.committedSide ||
+    world.formation.phase !== "formation"
+  ) {
+    return world.formation.committedSide ?? null;
+  }
+  const o1 = world.players.O1;
+  const o5 = world.players.O5;
+  const visibleTravel = distance(o5.pos, initialPositions.O5);
+  const visibleSpeed = length(o5.vel);
+  if (visibleTravel < 0.025 || visibleSpeed < 0.12) return null;
+  const publicLookahead = 0.46;
+  const projectedO1 = add(o1.pos, scale(o1.vel, publicLookahead));
+  const projectedO5 = add(o5.pos, scale(o5.vel, publicLookahead));
+  const projectedLateral = projectedO5.x - projectedO1.x;
+  if (Math.abs(projectedLateral) < 0.58) return null;
+  return projectedLateral > 0 ? "right" : "left";
+}
+
+function publicAutonomousLandmarks(
+  world: WorldState,
+  side: ScreenSide,
+): TacticalLandmarks {
+  const sign = side === "right" ? 1 : -1;
+  const handler = world.players.O1.pos;
+  return {
+    screenAnchor: { ...world.players.O5.pos },
+    handlerWaitingPoint: { ...handler },
+    useGate: {
+      x: round(
+        handler.x +
+          (FORMATION_LANDMARK_OFFSETS.useGate.x -
+            FORMATION_LANDMARK_OFFSETS.handlerWaitingPoint.x) * sign,
+        6,
+      ),
+      y: round(
+        handler.y +
+          FORMATION_LANDMARK_OFFSETS.useGate.y -
+          FORMATION_LANDMARK_OFFSETS.handlerWaitingPoint.y,
+        6,
+      ),
+    },
+    rejectGate: {
+      x: round(
+        handler.x +
+          (FORMATION_LANDMARK_OFFSETS.rejectGate.x -
+            FORMATION_LANDMARK_OFFSETS.handlerWaitingPoint.x) * sign,
+        6,
+      ),
+      y: round(
+        handler.y +
+          FORMATION_LANDMARK_OFFSETS.rejectGate.y -
+          FORMATION_LANDMARK_OFFSETS.handlerWaitingPoint.y,
+        6,
+      ),
+    },
+  };
+}
+
+function autonomousFormationPose(world: WorldState): boolean {
+  const side = world.formation.committedSide;
+  if (!side) return false;
+  const o1 = world.players.O1;
+  const o5 = world.players.O5;
+  const sign = side === "right" ? 1 : -1;
+  const lateral = (o5.pos.x - o1.pos.x) * sign;
+  const rimwardDepth = o1.pos.y - o5.pos.y;
+  return lateral >= 0.76 && lateral <= 1.24 &&
+    rimwardDepth >= 0.12 && rimwardDepth <= 0.62 &&
+    length(o5.vel) <= FORMATION_SCREENER_MAX_SET_SPEED;
+}
+
 function screenPose(world: WorldState): boolean {
   const o5 = world.players.O5;
+  if (world.formation.setupMode === "auto" && world.formation.phase === "formation") {
+    return autonomousFormationPose(world);
+  }
   const maximumSetSpeed = world.formation.mode === "form_pnr"
     ? FORMATION_SCREENER_MAX_SET_SPEED
     : 0.42;
@@ -5016,9 +5714,12 @@ function screenPose(world: WorldState): boolean {
 
 export function formationReadiness(world: WorldState): FormationReadiness {
   const o1 = world.players.O1;
-  const handlerInWaitingRegion =
-    distance(o1.pos, world.landmarks.handlerWaitingPoint) <=
-    FORMATION_HANDLER_READY_RADIUS;
+  const autonomousFormation =
+    world.formation.setupMode === "auto" && world.formation.phase === "formation";
+  const handlerInWaitingRegion = autonomousFormation
+    ? autonomousFormationPose(world)
+    : distance(o1.pos, world.landmarks.handlerWaitingPoint) <=
+      FORMATION_HANDLER_READY_RADIUS;
   const handlerSpeedReady = length(o1.vel) <= FORMATION_HANDLER_MAX_READY_SPEED;
   const handlerOwnsBall = world.ballOwner === "O1" && !world.ball.inFlight;
   const screenerSet = screenPose(world);
@@ -5103,6 +5804,12 @@ export class PnrSimulation {
     strategies: TeamStrategySelection;
     startMode: PnrStartMode;
     tacticalLandmarks: TacticalLandmarks;
+    seed: number;
+    maxTime: number;
+    d1FrontReactionDelay: number;
+    d1PostCatchRecoveryDelay: number;
+    o1MaxSpeed: number;
+    horizon: SimulationHorizon;
   };
   world: WorldState;
   offensePlan: TeamPlan;
@@ -5117,31 +5824,50 @@ export class PnrSimulation {
   private readonly offenseStrategyProfile: TeamStrategyProfile;
   private readonly defenseStrategyProfile: TeamStrategyProfile;
   private readonly plannerEvaluationOrder: "offense-first" | "defense-first";
+  private readonly setupMode: SetupMode;
   private roundStarted = false;
 
   constructor(config: SimulationConfig) {
     const initialPositions = validateInitialPlayerPositions(config?.initialPositions);
-    const screenSide = config?.screenSide;
-    if (screenSide !== "right" && screenSide !== "left") {
-      throw new Error(`screenSide must be "right" or "left"; received ${String(screenSide)}`);
+    const setupMode = config?.setupMode ?? "explicit";
+    if (setupMode !== "explicit" && setupMode !== "auto") {
+      throw new Error(
+        `setupMode must be "explicit" or "auto"; received ${String(setupMode)}`,
+      );
     }
+    this.setupMode = setupMode;
     const startMode = config.startMode ?? "preset_pnr";
     if (startMode !== "preset_pnr" && startMode !== "form_pnr") {
       throw new Error(
         `startMode must be "preset_pnr" or "form_pnr"; received ${String(startMode)}`,
       );
     }
-    const formationLandmarkOffsets = startMode === "form_pnr"
+    if (setupMode === "auto") {
+      assertAutonomousFormationInput(config, initialPositions);
+    }
+    const screenSide = setupMode === "auto" ? null : config?.screenSide;
+    if (
+      setupMode === "explicit" &&
+      screenSide !== "right" &&
+      screenSide !== "left"
+    ) {
+      throw new Error(`screenSide must be "right" or "left"; received ${String(screenSide)}`);
+    }
+    const formationLandmarkOffsets = setupMode === "auto"
+      ? undefined
+      : startMode === "form_pnr"
       ? validateFormationLandmarkOffsets(
           config.formationLandmarkOffsets ?? FORMATION_LANDMARK_OFFSETS,
         )
       : config.formationLandmarkOffsets;
-    const tacticalLandmarks = deriveTacticalLandmarks(
-      startMode,
-      initialPositions,
-      screenSide,
-      formationLandmarkOffsets,
-    );
+    const tacticalLandmarks = setupMode === "auto"
+      ? neutralAutonomousLandmarks(initialPositions)
+      : deriveTacticalLandmarks(
+          startMode,
+          initialPositions,
+          screenSide as ScreenSide,
+          formationLandmarkOffsets,
+        );
     const strategies = copyTeamStrategySelection(
       config.strategies ?? DEFAULT_TEAM_STRATEGY_SELECTION,
     );
@@ -5156,7 +5882,11 @@ export class PnrSimulation {
     this.plannerEvaluationOrder = config.plannerEvaluationOrder ?? "offense-first";
     this.config = {
       initialPositions,
-      screenSide,
+      screenSide: screenSide ?? undefined,
+      ...(config.setupMode !== undefined ? { setupMode } : {}),
+      ...(setupMode === "auto"
+        ? { formationDomainVersion: AUTONOMOUS_FORMATION_DOMAIN_VERSION }
+        : {}),
       startMode,
       formationLandmarkOffsets: formationLandmarkOffsets
         ? copyFormationLandmarkOffsets(formationLandmarkOffsets)
@@ -5172,7 +5902,8 @@ export class PnrSimulation {
     };
     this.world = initialWorld({
       initialPositions: this.config.initialPositions,
-      screenSide: this.config.screenSide,
+      screenSide,
+      setupMode,
       startMode: this.config.startMode,
       tacticalLandmarks: this.config.tacticalLandmarks,
       o1MaxSpeed: this.config.o1MaxSpeed,
@@ -5189,10 +5920,19 @@ export class PnrSimulation {
     triggerEvents: WorldEvent[],
     planningWorld: WorldState = this.world,
   ): TeamPlan {
-    const tacticalWorld = toTacticalWorld(planningWorld);
+    const autonomousFormation =
+      this.setupMode === "auto" && planningWorld.formation.phase === "formation";
+    const screenSide = autonomousFormation
+      ? null
+      : requireWorldScreenSide(planningWorld, "offense planning");
+    const tacticalWorld = autonomousFormation
+      ? planningWorld
+      : toTacticalWorld(planningWorld);
     const observation = createPlannerObservation(tacticalWorld, "offense", triggerEvents);
     const current = this.offenseVersion > 0
-      ? transformPlanFrame(this.offensePlan, this.config.screenSide)
+      ? autonomousFormation
+        ? this.offensePlan
+        : transformPlanFrame(this.offensePlan, screenSide as ScreenSide)
       : null;
     const decisionPhase = offenseDecisionPhase(observation, current);
     const candidates = evaluateOffenseCandidates(
@@ -5204,7 +5944,9 @@ export class PnrSimulation {
     const chosen = chooseCandidate(candidates);
     this.offenseVersion += 1;
     const tacticalPlan = makeOffensePlan(chosen, tacticalWorld, this.offenseVersion);
-    const plan = transformPlanFrame(tacticalPlan, this.config.screenSide);
+    const plan = autonomousFormation
+      ? tacticalPlan
+      : transformPlanFrame(tacticalPlan, screenSide as ScreenSide);
     this.planningLog.push({
       tick: planningWorld.tick,
       at: planningWorld.time,
@@ -5231,10 +5973,19 @@ export class PnrSimulation {
     triggerEvents: WorldEvent[],
     planningWorld: WorldState = this.world,
   ): TeamPlan {
-    const tacticalWorld = toTacticalWorld(planningWorld);
+    const autonomousFormation =
+      this.setupMode === "auto" && planningWorld.formation.phase === "formation";
+    const screenSide = autonomousFormation
+      ? null
+      : requireWorldScreenSide(planningWorld, "defense planning");
+    const tacticalWorld = autonomousFormation
+      ? planningWorld
+      : toTacticalWorld(planningWorld);
     const observation = createPlannerObservation(tacticalWorld, "defense", triggerEvents);
     const current = this.defenseVersion > 0
-      ? transformPlanFrame(this.defensePlan, this.config.screenSide)
+      ? autonomousFormation
+        ? this.defensePlan
+        : transformPlanFrame(this.defensePlan, screenSide as ScreenSide)
       : null;
     const decisionPhase = defenseDecisionPhase(observation);
     const candidates = evaluateDefenseCandidates(
@@ -5246,7 +5997,9 @@ export class PnrSimulation {
     const chosen = chooseCandidate(candidates);
     this.defenseVersion += 1;
     const tacticalPlan = makeDefensePlan(chosen, tacticalWorld, this.defenseVersion);
-    const plan = transformPlanFrame(tacticalPlan, this.config.screenSide);
+    const plan = autonomousFormation
+      ? tacticalPlan
+      : transformPlanFrame(tacticalPlan, screenSide as ScreenSide);
     this.planningLog.push({
       tick: planningWorld.tick,
       at: planningWorld.time,
@@ -5384,6 +6137,7 @@ export class PnrSimulation {
 
     const urgentDefenseBoundary = this.defenseQueue.some(
       (event) =>
+        event.type === "formation_side_committed" ||
         event.type === "screen_cleared" ||
         event.type === "under_recovery_blocked" ||
         event.type === "branch_reject" ||
@@ -5425,8 +6179,16 @@ export class PnrSimulation {
 
     const actualPoseBefore = screenPose(this.world);
     const legalPoseBefore = this.world.formation.phase === "pnr" && actualPoseBefore;
-    const tacticalWorld = toTacticalWorld(this.world);
-    const tacticalDesiredD1 = toTacticalVector(rawDesired.D1, this.world.screenSide);
+    const autonomousFormation =
+      this.world.formation.setupMode === "auto" &&
+      this.world.formation.phase === "formation";
+    const tacticalWorld = autonomousFormation ? this.world : toTacticalWorld(this.world);
+    const screenSide = autonomousFormation
+      ? null
+      : requireWorldScreenSide(this.world, "collision navigation frame");
+    const tacticalDesiredD1 = autonomousFormation
+      ? rawDesired.D1
+      : toTacticalVector(rawDesired.D1, screenSide as ScreenSide);
     const geometryBefore = screenGeometry({
       d1: tacticalWorld.players.D1,
       o5: tacticalWorld.players.O5,
@@ -5445,7 +6207,9 @@ export class PnrSimulation {
       if (length(tacticalAdjusted) > max) {
         tacticalAdjusted = scale(normalize(tacticalAdjusted), max);
       }
-      adjusted.D1 = toTacticalVector(tacticalAdjusted, this.world.screenSide);
+      adjusted.D1 = autonomousFormation
+        ? tacticalAdjusted
+        : toTacticalVector(tacticalAdjusted, screenSide as ScreenSide);
     }
 
     for (const id of PLAYER_IDS) {
@@ -5536,13 +6300,32 @@ export class PnrSimulation {
   }
 
   private resolveFacts(rawDesiredD1: Vec2, progressLoss: number): ScreenFacts {
+    const legalPose = screenPose(this.world);
+    if (
+      this.world.formation.setupMode === "auto" &&
+      this.world.formation.phase === "formation"
+    ) {
+      const geometry = screenGeometry({
+        d1: this.world.players.D1,
+        o5: this.world.players.O5,
+        desiredD1Velocity: rawDesiredD1,
+        screenLegalPose: false,
+      });
+      return {
+        ...EMPTY_FACTS,
+        contact: geometry.contact,
+        screenLegalPose: legalPose,
+      };
+    }
     const tacticalWorld = toTacticalWorld(this.world);
     const o1 = tacticalWorld.players.O1;
     const o5 = tacticalWorld.players.O5;
     const d1 = tacticalWorld.players.D1;
     const d5 = tacticalWorld.players.D5;
-    const tacticalDesiredD1 = toTacticalVector(rawDesiredD1, this.world.screenSide);
-    const legalPose = screenPose(this.world);
+    const tacticalDesiredD1 = toTacticalVector(
+      rawDesiredD1,
+      requireWorldScreenSide(this.world, "screen fact frame"),
+    );
     if (this.world.formation.phase === "formation") {
       const geometry = screenGeometry({
         d1,
@@ -5843,7 +6626,10 @@ export class PnrSimulation {
       previous.d5HelpCommitted ||
       (previous.active && d5O5Distance <= 1.12 && d5O1Distance >= 1.28);
     const o1Spacing = distance(o1.pos, o5.pos);
-    const tacticalO1 = toTacticalPoint(o1.pos, this.world.screenSide);
+    const tacticalO1 = toTacticalPoint(
+      o1.pos,
+      requireWorldScreenSide(this.world, "post-catch frame"),
+    );
     const o1Relocated = o1Spacing >= 2.62 && tacticalO1.x >= 7.55;
     const kickoutClearances = (["D1", "D5"] as const).map((id) => {
       const defender = this.world.players[id];
@@ -6158,8 +6944,9 @@ export class PnrSimulation {
     const o5 = this.world.players.O5;
     const d1 = this.world.players.D1;
     const d5 = this.world.players.D5;
-    const tacticalO1 = toTacticalPoint(o1.pos, this.world.screenSide);
-    const tacticalD1 = toTacticalPoint(d1.pos, this.world.screenSide);
+    const screenSide = requireWorldScreenSide(this.world, "reject frame");
+    const tacticalO1 = toTacticalPoint(o1.pos, screenSide);
+    const tacticalD1 = toTacticalPoint(d1.pos, screenSide);
     const helpEligible = previous.active
       ? previous.helpEligible
       : tacticalD1.x - tacticalO1.x >= 1.08;
@@ -6218,9 +7005,10 @@ export class PnrSimulation {
     if (this.world.branch !== "undecided") return this.world.branch;
     if (this.world.formation.phase === "formation") return "undecided";
     const o1 = this.world.players.O1;
-    const tacticalO1 = toTacticalPoint(o1.pos, this.world.screenSide);
-    const tacticalVelocity = toTacticalVector(o1.vel, this.world.screenSide);
-    const initialO1 = toTacticalPoint(this.config.initialPositions.O1, this.world.screenSide);
+    const screenSide = requireWorldScreenSide(this.world, "branch frame");
+    const tacticalO1 = toTacticalPoint(o1.pos, screenSide);
+    const tacticalVelocity = toTacticalVector(o1.vel, screenSide);
+    const initialO1 = toTacticalPoint(this.config.initialPositions.O1, screenSide);
     if (tacticalO1.x <= initialO1.x - 0.17 && tacticalVelocity.x < -0.5) return "reject";
     if (
       this.world.facts.screenLegalPose &&
@@ -6248,6 +7036,32 @@ export class PnrSimulation {
     const at = this.world.time;
     const facts = this.world.facts;
     const underNavigationSettled = previousUnder.active || this.world.under.active;
+    if (
+      this.world.formation.setupMode === "auto" &&
+      previousFormation.abortRequestedAtTick === null &&
+      this.world.formation.abortRequestedAtTick !== null
+    ) {
+      events.push(makeEvent(
+        "formation_abort_requested",
+        tick,
+        at,
+        "进攻请求安全退出形成",
+        "固定 side × anchor 组合全部被硬可行性否决；世界只接收退出意图，不读取或修补隐藏目标。",
+      ));
+    }
+    if (
+      this.world.formation.setupMode === "auto" &&
+      !previousFormation.committedSide &&
+      this.world.formation.committedSide
+    ) {
+      events.push(makeEvent(
+        "formation_side_committed",
+        tick,
+        at,
+        "掩护侧公开确认",
+        `O5 的公开位移、速度与 O1 相对几何已确认${this.world.formation.committedSide === "right" ? "右" : "左"}侧形成方向；防守此前未读取进攻目标。`,
+      ));
+    }
     if (!underNavigationSettled && !previousFacts.screenLegalPose && facts.screenLegalPose) {
       events.push(makeEvent(
         "screen_set",
@@ -6621,7 +7435,34 @@ export class PnrSimulation {
     );
     let terminal: TerminalState | null = null;
 
-    if (
+    const formationAbortSettled =
+      this.world.formation.setupMode === "auto" &&
+      this.world.formation.phase === "formation" &&
+      this.world.formation.abortRequestedAtTick !== null &&
+      this.world.tick > this.world.formation.abortRequestedAtTick &&
+      this.world.ballOwner === "O1" &&
+      !this.world.ball.inFlight &&
+      length(this.world.players.O1.vel) <= 0.12 &&
+      length(this.world.players.O5.vel) <= 0.12 &&
+      this.world.lastStepMaxDisplacement <= 0.004;
+    if (formationAbortSettled) {
+      this.world.formation = {
+        ...this.world.formation,
+        abortedReason: "no_feasible_canonical_setup",
+      };
+      events.push(makeEvent(
+        "formation_aborted",
+        this.world.tick,
+        this.world.time,
+        "挡拆形成安全退出",
+        "O1 合法持球且 O1/O5 已真实减速停止；世界未传送球员，也未从隐藏 anchor 宣布成功。",
+      ));
+      terminal = {
+        reason: "formation_aborted",
+        label: "没有合法 canonical 挡拆落点，安全保留球权并退出",
+        at: this.world.time,
+      };
+    } else if (
       this.world.formation.phase === "formation" &&
       this.world.formation.deadlineAt !== null &&
       this.world.time + 1e-9 >= this.world.formation.deadlineAt &&
@@ -6785,7 +7626,7 @@ export class PnrSimulation {
   private computeStateHash(): string {
     return stableHash({
       seed: this.config.seed,
-      screenSide: this.config.screenSide,
+      screenSide: this.world.screenSide,
       initialPositions: PLAYER_IDS.map((id) => ({
         id,
         x: this.config.initialPositions[id].x,
@@ -6849,27 +7690,44 @@ export class PnrSimulation {
       this.offensePlan = advanceTeamPlanRoute(this.offensePlan, this.world);
       this.defensePlan = advanceTeamPlanRoute(this.defensePlan, this.world);
 
-      const tacticalWorld = toTacticalWorld(this.world);
-      const tacticalOffensePlan = transformPlanFrame(
-        this.offensePlan,
-        this.config.screenSide,
-      );
-      const tacticalDefensePlan = transformPlanFrame(
-        this.defensePlan,
-        this.config.screenSide,
-      );
-      const offense = transformIntentFrame(
-        offensiveIntents(tacticalOffensePlan, tacticalWorld),
-        this.config.screenSide,
-      );
+      const autonomousFormation =
+        this.setupMode === "auto" && this.world.formation.phase === "formation";
+      const screenSide = autonomousFormation
+        ? null
+        : requireWorldScreenSide(this.world, "motion intent frame");
+      const tacticalWorld = autonomousFormation ? this.world : toTacticalWorld(this.world);
+      const tacticalOffensePlan = autonomousFormation
+        ? this.offensePlan
+        : transformPlanFrame(this.offensePlan, screenSide as ScreenSide);
+      const tacticalDefensePlan = autonomousFormation
+        ? this.defensePlan
+        : transformPlanFrame(this.defensePlan, screenSide as ScreenSide);
+      const offense = autonomousFormation
+        ? offensiveIntents(tacticalOffensePlan, tacticalWorld)
+        : transformIntentFrame(
+            offensiveIntents(tacticalOffensePlan, tacticalWorld),
+            screenSide as ScreenSide,
+          );
       const passIntent = offensivePassIntent(this.offensePlan, this.world);
-      const defense = transformIntentFrame(
-        defensiveIntents(tacticalDefensePlan, tacticalWorld),
-        this.config.screenSide,
-      );
+      const defense = autonomousFormation
+        ? defensiveIntents(tacticalDefensePlan, tacticalWorld)
+        : transformIntentFrame(
+            defensiveIntents(tacticalDefensePlan, tacticalWorld),
+            screenSide as ScreenSide,
+          );
       const intents: Record<PlayerId, MotionIntent> = { ...offense, ...defense };
       const previousFacts = { ...this.world.facts };
       const previousFormation = { ...this.world.formation };
+      if (
+        autonomousFormation &&
+        this.offensePlan.id === "ABORT_FORMATION" &&
+        this.world.formation.abortRequestedAtTick === null
+      ) {
+        this.world.formation = {
+          ...this.world.formation,
+          abortRequestedAtTick: this.world.tick,
+        };
+      }
       const previousMismatch = { ...this.world.mismatch };
       const previousSeal = { ...this.world.seal };
       const previousPostCatch = { ...this.world.postCatch };
@@ -6887,9 +7745,35 @@ export class PnrSimulation {
 
       this.world.tick += 1;
       this.world.time = round(this.world.tick * FIXED_DT, 6);
+      if (autonomousFormation && !this.world.formation.committedSide) {
+        const committedSide = inferAutonomousFormationSide(
+          this.world,
+          this.config.initialPositions,
+        );
+        if (committedSide) {
+          this.world.screenSide = committedSide;
+          this.world.formation = {
+            ...this.world.formation,
+            committedSide,
+          };
+        }
+      }
       this.world.branch = this.resolveBranch();
       this.world.facts = this.resolveFacts(integration.rawDesiredD1, integration.progressLoss);
       if (this.world.facts.screenLegalPose && !this.world.formation.screenSet) {
+        if (
+          this.world.formation.setupMode === "auto" &&
+          this.world.formation.committedSide
+        ) {
+          const publicLandmarks = publicAutonomousLandmarks(
+            this.world,
+            this.world.formation.committedSide,
+          );
+          this.world.landmarks = publicLandmarks;
+          this.world.tacticalLandmarks = this.world.formation.committedSide === "right"
+            ? copyTacticalLandmarks(publicLandmarks)
+            : landmarksToWorld(publicLandmarks, "left");
+        }
         this.world.formation = {
           ...this.world.formation,
           screenSet: true,

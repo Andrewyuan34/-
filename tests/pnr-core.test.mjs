@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import {
+  AUTONOMOUS_CANONICAL_ANCHORS,
   FORMATION_LANDMARK_OFFSETS,
   FORMATION_HANDLER_MAX_READY_SPEED,
   FORMATION_HANDLER_READY_RADIUS,
@@ -79,6 +80,27 @@ import {
   makeFormationGeneralizationReplayConfig,
   scanFormationGeneralization,
 } from "../lib/pnr-formation-generalization-results.ts";
+import {
+  A00_AUTONOMOUS_SIDE_INPUTS,
+  A00_INPUT_HASH,
+  canonicalA00InputJson,
+  findA00ProhibitedOutputFields,
+} from "../lib/pnr-a00-autonomous-side-manifest.ts";
+import {
+  makeA00AutonomousConfig,
+  scanA00AutonomousSides,
+} from "../lib/pnr-a00-autonomous-side-audit.ts";
+import {
+  A01_AUTONOMOUS_SETUP_INPUTS,
+  A01_INPUT_HASH,
+  canonicalA01InputJson,
+  findA01ProhibitedOutputFields,
+} from "../lib/pnr-a01-autonomous-setup-manifest.ts";
+import {
+  createA01AutonomousReplay,
+  makeA01RepresentativeReplayConfig,
+  scanA01AutonomousSetups,
+} from "../lib/pnr-a01-autonomous-setup-audit.ts";
 import {
   UNDER_R2_AUDIT,
   UNDER_R2_DEEP_RETREAT_RIGHT_INITIAL_POSITIONS,
@@ -2690,6 +2712,267 @@ test("F01-F03 representative replays are selected only from completed public aud
     assert.equal(config.screenSide, replay.side);
     assert.equal(config.startMode, "form_pnr");
   }
+});
+
+test("A00 locks an input-only audit set spanning the sealed Formation domain", () => {
+  assert.equal(A00_AUTONOMOUS_SIDE_INPUTS.length, 12);
+  assert.deepEqual(
+    A00_AUTONOMOUS_SIDE_INPUTS.map((input) => input.sourceStage),
+    ["F01", "F01", "F01", "F01", "F02", "F02", "F02", "F02", "F03", "F03", "F03", "F03"],
+  );
+  assert.equal(new Set(A00_AUTONOMOUS_SIDE_INPUTS.map((input) => input.id)).size, 12);
+  assert.deepEqual(findA00ProhibitedOutputFields(A00_AUTONOMOUS_SIDE_INPUTS), []);
+  assert.equal(
+    `sha256:${createHash("sha256").update(canonicalA00InputJson()).digest("hex")}`,
+    A00_INPUT_HASH,
+  );
+  const source = readFileSync(
+    new URL("../lib/pnr-a00-autonomous-side-manifest.ts", import.meta.url),
+    "utf8",
+  );
+  assert.doesNotMatch(
+    source,
+    /new\s+PnrSimulation|planningLog|eventLog|terminalReason|world\.|scanA00AutonomousSides/,
+  );
+});
+
+test("A00 auto input rejects caller side, anchor, sample identity, and expected outcome", () => {
+  const input = A00_AUTONOMOUS_SIDE_INPUTS[0];
+  const base = makeA00AutonomousConfig(input);
+  assert.equal(Object.hasOwn(base, "screenSide"), false);
+  assert.equal(Object.hasOwn(base, "formationLandmarkOffsets"), false);
+  assert.equal(new PnrSimulation(base).world.screenSide, null);
+
+  for (const [field, value] of [
+    ["screenSide", "right"],
+    ["formationLandmarkOffsets", FORMATION_LANDMARK_OFFSETS],
+    ["anchor", { x: 5.1, y: 5.8 }],
+    ["sampleId", "F01-C01"],
+    ["legacyInputId", "F03-R03"],
+    ["expectedOutcome", "formation_ready"],
+    ["maxTime", 4],
+  ]) {
+    assert.throws(
+      () => new PnrSimulation({ ...base, [field]: value }),
+      new RegExp(`rejects caller-owned ${field}`),
+    );
+  }
+  assert.throws(
+    () => new PnrSimulation({ ...base, formationDomainVersion: "F01-v0" }),
+    /requires formationDomainVersion="F01-v1"/,
+  );
+});
+
+test("A00 selects a private side from public geometry with deterministic mirror and commitment gates", () => {
+  const audit = scanA00AutonomousSides();
+  assert.equal(audit.inputHash, A00_INPUT_HASH);
+  assert.equal(audit.inputCount, 12);
+  assert.equal(audit.worldCount, 24);
+  assert.equal(audit.executionsPerWorld, 2);
+  assert.equal(audit.firstFailure, null);
+  assert.equal(audit.deterministic, true);
+  assert.equal(audit.mirrored, true);
+  assert.equal(audit.minimumCommitPassed, true);
+  assert.equal(audit.hysteresisPassed, true);
+  assert.equal(audit.zeroStrategyAdjustment, true);
+  assert.equal(audit.privateBeforeCommit, true);
+  assert.equal(audit.passed, true);
+  for (const row of audit.rows) {
+    assert.equal(row.mirroredSelectedSide, row.selectedSide === "right" ? "left" : "right", row.id);
+    assert.equal(row.publicCommitTick, row.mirroredPublicCommitTick, row.id);
+    assert.ok((row.publicCommitTick ?? 0) > 0, row.id);
+    assert.ok(row.mirrorMaximumError <= 1e-9, row.id);
+    assert.deepEqual(row.failures, [], row.id);
+  }
+});
+
+test("A00 leaves omitted and explicit setup modes identical at every sealed Formation tick", () => {
+  for (const side of ["right", "left"]) {
+    const legacy = makeF01Config("F01-C01", side);
+    const explicit = { ...makeF01Config("F01-C01", side), setupMode: "explicit" };
+    assert.deepEqual(
+      frozenFormationTraceDigest(explicit),
+      frozenFormationTraceDigest(legacy),
+      side,
+    );
+  }
+});
+
+test("A01 locks an input-only side x anchor audit set without derived outputs", () => {
+  assert.equal(A01_AUTONOMOUS_SETUP_INPUTS.length, 13);
+  assert.deepEqual(
+    A01_AUTONOMOUS_SETUP_INPUTS.map((input) => input.sourceStage),
+    [
+      "F01",
+      "F01",
+      "F01",
+      "F01",
+      "F02",
+      "F02",
+      "F02",
+      "F02",
+      "F03",
+      "F03",
+      "F03",
+      "F03",
+      "domain_cross_combination",
+    ],
+  );
+  assert.equal(new Set(A01_AUTONOMOUS_SETUP_INPUTS.map((input) => input.id)).size, 13);
+  assert.deepEqual(findA01ProhibitedOutputFields(A01_AUTONOMOUS_SETUP_INPUTS), []);
+  assert.equal(
+    `sha256:${createHash("sha256").update(canonicalA01InputJson()).digest("hex")}`,
+    A01_INPUT_HASH,
+  );
+  const source = readFileSync(
+    new URL("../lib/pnr-a01-autonomous-setup-manifest.ts", import.meta.url),
+    "utf8",
+  );
+  assert.doesNotMatch(
+    source,
+    /new\s+PnrSimulation|planningLog|eventLog|terminalReason|world\.|scanA01AutonomousSetups/,
+  );
+});
+
+test("A01 selects only fixed canonical side x anchor pairs and safely exits all-veto worlds", () => {
+  const audit = scanA01AutonomousSetups();
+  assert.equal(audit.inputHash, A01_INPUT_HASH);
+  assert.equal(audit.inputCount, 13);
+  assert.equal(audit.worldCount, 26);
+  assert.equal(audit.executionsPerWorld, 2);
+  assert.deepEqual(audit.canonicalAnchorIds, ["standard", "compact", "deep"]);
+  assert.deepEqual(AUTONOMOUS_CANONICAL_ANCHORS, [
+    {
+      id: "standard",
+      screenAnchor: { x: 1.27, y: -0.96 },
+      handlerWaitingPoint: { x: 0.27, y: -0.6 },
+      useGate: { x: 2.03, y: -1.86 },
+      rejectGate: { x: -1.17, y: -1.76 },
+    },
+    {
+      id: "compact",
+      screenAnchor: { x: 1.12, y: -0.88 },
+      handlerWaitingPoint: { x: 0.22, y: -0.56 },
+      useGate: { x: 1.86, y: -1.74 },
+      rejectGate: { x: -1.1, y: -1.68 },
+    },
+    {
+      id: "deep",
+      screenAnchor: { x: 1.42, y: -1.06 },
+      handlerWaitingPoint: { x: 0.32, y: -0.66 },
+      useGate: { x: 2.18, y: -1.98 },
+      rejectGate: { x: -1.24, y: -1.86 },
+    },
+  ]);
+  assert.equal(audit.formedWorlds, 22);
+  assert.equal(audit.timeoutWorlds, 2);
+  assert.equal(audit.safeExitWorlds, 2);
+  assert.equal(audit.firstFailure, null);
+  assert.equal(audit.deterministic, true);
+  assert.equal(audit.evaluationOrderStable, true);
+  assert.equal(audit.mirrored, true);
+  assert.equal(audit.routeSegmentsMonotonic, true);
+  assert.equal(audit.informationBoundaryPassed, true);
+  assert.equal(audit.publicCausalityPassed, true);
+  assert.equal(audit.zeroStrategyAdjustment, true);
+  assert.equal(audit.passed, true);
+
+  for (const row of audit.rows) {
+    assert.deepEqual(row.failures, [], row.id);
+    assert.ok(row.mirrorMaximumError <= 1e-9, row.id);
+    assert.equal(row.choiceStable, true, row.id);
+    assert.equal(row.safeExitReal, true, row.id);
+    if (row.resolution === "formation_aborted") {
+      assert.equal(row.id, "A01-X01");
+      assert.equal(row.selectedSide, null);
+      assert.equal(row.selectedAnchorId, null);
+      assert.equal(row.publicCommitTick, null);
+      assert.equal(row.resolvedTick, 1);
+    } else {
+      assert.notEqual(row.selectedSide, null, row.id);
+      assert.ok(audit.canonicalAnchorIds.includes(row.selectedAnchorId), row.id);
+      assert.equal(
+        row.mirroredSelectedSide,
+        row.selectedSide === "right" ? "left" : "right",
+        row.id,
+      );
+      assert.equal(row.mirroredSelectedAnchorId, row.selectedAnchorId, row.id);
+      assert.ok((row.publicCommitTick ?? 0) > 0, row.id);
+      if (row.resolution === "formation_timeout") {
+        assert.equal(row.id, "A01-F01-08");
+        assert.equal(row.resolvedTick, 192);
+        assert.equal(row.screenSetTick, null);
+        assert.equal(row.jointReadyTick, null);
+      } else {
+        assert.ok((row.screenSetTick ?? 0) >= row.publicCommitTick, row.id);
+        assert.ok((row.jointReadyTick ?? 0) >= row.screenSetTick, row.id);
+      }
+    }
+  }
+});
+
+test("A01 derives four representative replays only from completed audit facts", () => {
+  const audit = scanA01AutonomousSetups();
+  assert.deepEqual(
+    audit.replays.map((replay) => replay.id),
+    ["longest-formed", "tightest-corridor", "diverse-mirror", "safe-exit"],
+  );
+  assert.equal(new Set(audit.replays.map((replay) => replay.inputId)).size, 4);
+
+  for (const replay of audit.replays) {
+    const config = makeA01RepresentativeReplayConfig(replay);
+    assert.equal(config.setupMode, "auto");
+    assert.equal(config.startMode, "form_pnr");
+    assert.equal(Object.hasOwn(config, "screenSide"), false);
+    assert.equal(Object.hasOwn(config, "formationLandmarkOffsets"), false);
+    const simulation = createA01AutonomousReplay(replay.inputId, replay.mirrored);
+    if (replay.resolution === "formation_aborted") {
+      assert.equal(simulation.offensePlan.id, "ABORT_FORMATION");
+      assert.equal(simulation.offensePlan.autonomousSetup, undefined);
+    } else {
+      assert.equal(simulation.offensePlan.autonomousSetup?.side, replay.side);
+      assert.equal(simulation.offensePlan.autonomousSetup?.anchorId, replay.anchorId);
+    }
+    for (
+      let tick = 0;
+      tick <= Math.ceil(3.35 / FIXED_DT) &&
+        simulation.world.formation.phase !== "pnr" &&
+        !simulation.world.terminal;
+      tick += 1
+    ) {
+      simulation.step();
+    }
+    const resolution = simulation.world.terminal?.reason === "formation_aborted"
+      ? "formation_aborted"
+      : simulation.world.terminal?.reason === "formation_timeout"
+        ? "formation_timeout"
+        : "formation_ready";
+    assert.equal(resolution, replay.resolution, replay.id);
+  }
+});
+
+test("A01 deep-copies auto inputs and keeps the private anchor outside defense observations", () => {
+  const replay = scanA01AutonomousSetups().replays.find(
+    (candidate) => candidate.resolution === "formation_ready",
+  );
+  assert.ok(replay);
+  const config = makeA01RepresentativeReplayConfig(replay);
+  const simulation = new PnrSimulation(config);
+  const originalO1 = { ...simulation.world.players.O1.pos };
+  const privateAnchor = simulation.offensePlan.autonomousSetup?.landmarks.screenAnchor;
+  assert.ok(privateAnchor);
+
+  config.initialPositions.O1.x += 0.5;
+  config.initialPositions.O5.y -= 0.5;
+  assert.deepEqual(simulation.world.players.O1.pos, originalO1);
+  const defenseObservation = createPlannerObservation(simulation.world, "defense");
+  assert.equal(defenseObservation.screenSide, null);
+  assert.deepEqual(Object.keys(defenseObservation.landmarks), ["screenAnchor"]);
+  assert.deepEqual(
+    defenseObservation.landmarks.screenAnchor,
+    simulation.world.players.O5.pos,
+  );
+  assert.notDeepEqual(defenseObservation.landmarks.screenAnchor, privateAnchor);
 });
 
 test("G01 scans 19 speed-only samples twice and finds one deterministic decision boundary", () => {

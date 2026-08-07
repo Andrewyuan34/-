@@ -2,6 +2,7 @@ import type { ScreenSide } from "@/lib/pnr-core";
 
 const PLAN_SHORT: Record<string, string> = {
   FORM_SCREEN: "FORM · 到位设掩护",
+  ABORT_FORMATION: "ABORT · 安全退出形成",
   USE_RIGHT_SCREEN: "USE · 右侧使用",
   REJECT_LEFT: "REJECT · 左侧拒绝",
   ATTACK_BIG: "ATTACK · 攻击换防大个",

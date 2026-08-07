@@ -153,7 +153,9 @@ export function drawCourt(
   );
   context.stroke();
 
-  const screenSpot = point(simulation.world.landmarks.screenAnchor);
+  const observerFormationLandmarks = simulation.offensePlan.autonomousSetup?.landmarks ??
+    simulation.world.landmarks;
+  const screenSpot = point(observerFormationLandmarks.screenAnchor);
   context.save();
   context.setLineDash([5, 6]);
   context.lineWidth = 1.2;
@@ -162,10 +164,14 @@ export function drawCourt(
   context.arc(screenSpot.x, screenSpot.y, 0.48 * scale, 0, Math.PI * 2);
   context.stroke();
   if (simulation.config.startMode === "form_pnr") {
-    const waitingPoint = point(simulation.world.landmarks.handlerWaitingPoint);
+    const waitingPoint = point(observerFormationLandmarks.handlerWaitingPoint);
     context.fillStyle = "rgba(255, 243, 223, 0.9)";
     context.font = "600 11px ui-monospace, SFMono-Regular, Menlo, monospace";
-    context.fillText("SCREEN ANCHOR", screenSpot.x + 8, screenSpot.y - 8);
+    context.fillText(
+      simulation.offensePlan.autonomousSetup ? "PRIVATE ANCHOR · OBSERVER" : "SCREEN ANCHOR",
+      screenSpot.x + 8,
+      screenSpot.y - 8,
+    );
     context.strokeStyle = "rgba(255, 243, 223, 0.72)";
     context.strokeRect(
       waitingPoint.x - 0.16 * scale,
@@ -173,7 +179,11 @@ export function drawCourt(
       0.32 * scale,
       0.32 * scale,
     );
-    context.fillText("O1 WAIT", waitingPoint.x + 8, waitingPoint.y - 8);
+    context.fillText(
+      simulation.offensePlan.autonomousSetup ? "PRIVATE O1 WAIT" : "O1 WAIT",
+      waitingPoint.x + 8,
+      waitingPoint.y - 8,
+    );
   }
   context.restore();
 

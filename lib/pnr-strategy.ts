@@ -84,6 +84,7 @@ const DEFENSE_PHASES = new Set<DecisionPhase>([
 
 const OFFENSE_PLAN_IDS = [
   "FORM_SCREEN",
+  "ABORT_FORMATION",
   "USE_RIGHT_SCREEN",
   "REJECT_LEFT",
   "ATTACK_UNDER_GAP",
