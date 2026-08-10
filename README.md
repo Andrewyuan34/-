@@ -27,12 +27,13 @@ npm run dev
 打开终端显示的本地地址。验证命令：
 
 ```bash
+npm run context:check
 npm test
 npm run lint
 npm run build
 ```
 
-`npm test` 与聚焦测试默认使用紧凑 dot reporter，并自动发现各阶段的 `tests/*.test.mjs`。开发中先运行 `npm run test:focus -- "<name pattern>"`；只有失败时才用 `npm run test:focus:detail -- "<name pattern>"` 展开对应失败。`npm run test:detail` 可展开整套测试；`npm run check` 运行测试与构建，但不能替代单独的 lint。
+`npm test` 与聚焦测试默认使用紧凑 dot reporter，并自动发现各阶段的 `tests/*.test.mjs`。开发中先运行 `npm run test:focus -- "<name pattern>"`；只有失败时才用 `npm run test:focus:detail -- "<name pattern>"` 展开对应失败。`npm run test:detail` 可展开整套测试。源文件变化后先运行 `npm run context:map` 更新派生地图；`npm run check` 会依次验证地图与架构边界、测试、lint 和 build。
 
 ## 架构
 
@@ -60,6 +61,14 @@ npm run build
 - 相同输入、seed 与策略逐 tick 确定复现。
 
 ## 代码地图
+
+模块职责、规模和运行时/类型依赖由 [`docs/generated/CODEMAP.md`](./docs/generated/CODEMAP.md) 自动生成；具体符号与行段只按需查询 [`docs/generated/SYMBOLS.md`](./docs/generated/SYMBOLS.md)：
+
+```bash
+rg -n "<symbol-or-file>" docs/generated/SYMBOLS.md
+```
+
+以下人工地图只描述稳定语义职责，不复制完整符号表。
 
 ### 运行内核
 

@@ -4,6 +4,7 @@
 > 当前交付分支：`prototype/pnr-formation-loop`
 > A00–A01 行为检查点：`7ecedea1319ecf714549c1da3946d5fa3c8ed430`
 > T00–T01 行为检查点：`e735f4768696bb423937c94ec3dea17a13a5ea94`；修复后已由用户重新验收
+> 仓库上下文工具：自动模块/符号地图与 9 类机械架构门已实现，随当前工作树待提交
 > P2/P4 基线：`dd6287b97dc3b33b8070a45ccfcb7280a24a1951`
 > F01/F02 冻结核心：`90631359ba5a52eacfdbfc1434d657f8743df45e`
 > F03 manifest：`ba39ef025f29d181af8c7d137d6807f7825c9717`
@@ -11,6 +12,10 @@
 > 稳定 Policy 基线：`c4ada7d`
 
 这份文件只回答“现在在哪里、接下来做什么”。阶段历史和决策原因分别放在[进度账本](./2026-08-06-generalization-goals-plan-progress.md)与[决策索引](./DECISIONS.md)。接手前仍须运行 `git status --short`，不得把本快照当作覆盖本地事实的许可。
+
+跨文件定位先看 [`generated/CODEMAP.md`](./generated/CODEMAP.md)，具体符号只用 `rg` 查询 [`generated/SYMBOLS.md`](./generated/SYMBOLS.md)。两者均由 `npm run context:map` 生成；`npm run context:check` 同时拒绝陈旧地图与架构边界漂移。
+
+当前工具门为架构/地图自测 4/4、9 类仓库架构契约零违规；与最新 T 工作树合并后，`npm test` 92/92、lint、build 与 `git diff --check` 通过。该工具增量不改变已经验收的 T 篮球行为，仍作为独立未提交工作保留。
 
 ## 一句话状态
 
@@ -57,4 +62,4 @@ S01–S08、G01–G08、P00–P03、Formation F00–F03、Autonomous Setup A00�
 
 ## 下一停止点
 
-T00–T01 已完成首轮人工失败所揭示的队友通道修复、加严审计、自动门、本地浏览器复验与用户重新验收，并以 `e735f47` 封存。未获得 I 的独立实现授权前不得开始 I。
+T00–T01 已完成首轮人工失败所揭示的队友通道修复、加严审计、自动门、本地浏览器复验与用户重新验收，并以 `e735f47` 封存。未获得 I 的独立实现授权前不得开始 I；仓库上下文工具仍是独立未提交增量，不得混入 T 检查点。

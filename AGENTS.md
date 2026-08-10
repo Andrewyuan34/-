@@ -38,7 +38,7 @@
 
 ## 当前范围与停止点
 
-- A00–A01 与 T00–T01 已封存并由用户验收；当前不自动开始 I。
+- A00–A01 与 T00–T01 已封存并由用户验收；当前不自动开始 I。仓库上下文工具是独立未提交增量，不得混入 T 检查点。
 - `explicit | auto`、缺省 `explicit`、进攻私有 side/anchor/waypoint、公开 commit 后防守响应以及中立世界不评分选点，都是已封存契约。
 - T 只在显式 `preset_pnr + explicit + minimum-t@1` 下启用，不接入 Formation / Autonomous，也不增加策略菜单；持球通道优先、RESET 无继续 roll、pocket 健康释放与真实多 tick 飞行均为硬门，其 input-only manifest、行为、自动门与代表回放见 `docs/CURRENT.md`。
 - A 只证明 F01/F02/F03 合法 Formation 域，T 只证明冻结显式 preset 输入及其镜像；不得外推到任意位置、角色识别、拖拽、手动控制、ICE/blitz/hedge/switch-back、投篮结果、更多人数、5v5、ML/RL 或生产化。
@@ -49,9 +49,9 @@
 ## 修改、验证与文档纪律
 
 - 一轮只解决一个可观看的篮球问题；失败先保留最小反例，不堆场景或补丁。
-- 默认用 `rg`、符号名和窄行段定位代码与测试；不得为接手或单点改动整份读取 `pnr-core.ts`、无关阶段测试文件、长文档或 DOM snapshot。先看 `git diff --stat`，再按文件/符号检查 diff。
+- 默认先从 `docs/generated/CODEMAP.md` 查模块职责与依赖，再用 `rg -n "<symbol-or-file>" docs/generated/SYMBOLS.md` 定位精确行段；不得为接手或单点改动整份读取 `pnr-core.ts`、无关阶段测试文件、长文档或 DOM snapshot。先看 `git diff --stat`，再按文件/符号检查 diff。
 - 开发中先用 `npm run test:focus -- "<name pattern>"`；成功输出保持 dot 级别，失败才用 `npm run test:focus:detail -- "<name pattern>"` 展开对应测试。不要把成功日志、完整 DOM 或重复快照复制进任务消息。
-- 行为改动同步维护紧凑的因果/不变量测试。完成前运行 `npm test`、`npm run lint` 和 `npm run build`。
+- 行为改动同步维护紧凑的因果/不变量测试。源文件变化后运行 `npm run context:map`；完成前运行 `npm run context:check`、`npm test`、`npm run lint` 和 `npm run build`，或直接运行覆盖四者的 `npm run check`。
 - 只暂存本任务明确拥有的路径；不使用 `git add .` 或 `git add -A`。
 - 当前状态改变时更新 `docs/CURRENT.md`；范围、架构或验收原则改变时追加 `docs/DECISIONS.md`。不要把每个实现细节写成决策。
 - 长篇阶段证据保留在历史文档；README 和 AGENTS 只保留导航、稳定契约与当前一句话状态。

@@ -9,6 +9,8 @@
 | 0 | [`../AGENTS.md`](../AGENTS.md) | 稳定约束、当前范围一句话、阅读路由 | 是，自动入口 |
 | 1 | [`CURRENT.md`](./CURRENT.md) | 当前分支、工作树、已知问题、下一动作和停止点 | 是 |
 | 1 | [`../README.md`](../README.md) | 运行方式、架构、代码地图与能力边界 | 是，但只读相关章节 |
+| 1 | [`generated/CODEMAP.md`](./generated/CODEMAP.md) | 自动生成的模块职责、规模和依赖地图 | 跨文件定位时按需读取 |
+| 1 | [`generated/SYMBOLS.md`](./generated/SYMBOLS.md) | 自动生成的顶层符号与行段 | 只用 `rg` 窄查，不通读 |
 | 2 | [`DECISIONS.md`](./DECISIONS.md) | 重要决策、原因、替代方案和证据入口 | 需要判断或改变路线时 |
 | 3 | [`2026-08-06-generalization-goals-plan-progress.md`](./2026-08-06-generalization-goals-plan-progress.md) | S/G/P/F 完整进度与验收账本 | 只读相关阶段 |
 | 3 | [`2026-08-07-tactical-coverage-and-generalization-model.md`](./2026-08-07-tactical-coverage-and-generalization-model.md) | 判断泛化、组合、策略、新原语和新范围 | 扩大能力时 |
@@ -23,7 +25,7 @@
 1. `git status --short` 与 `git log -5 --oneline --decorate`。
 2. 读 `AGENTS.md`。
 3. 读 `CURRENT.md`。
-4. 从 README 找到当前涉及的 2–4 个代码文件。
+4. 从 README 找到当前涉及的 2–4 个代码文件；位置或依赖不明确时，窄查生成地图。
 5. 先运行或读取最窄的相关测试，再决定是否需要加载决策或历史章节。
 
 在这一步之前，不需要通读 300 多行进度账本、全部战术模型或整个核心文件。
@@ -121,6 +123,7 @@ A00 必须先用输入-only 固定审计集证明自动选边、双运行、镜�
 每次文档更新后至少运行：
 
 ```bash
+npm run context:check
 git diff --check
 rg -n "CURRENT.md|DECISIONS.md|2026-08-06-generalization|2026-08-07-tactical" AGENTS.md README.md docs
 ```

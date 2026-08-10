@@ -13,7 +13,10 @@
     "test:detail": "node --experimental-strip-types --test --test-reporter=spec",
     "test:focus": "node --experimental-strip-types --test --test-reporter=dot --test-name-pattern",
     "test:focus:detail": "node --experimental-strip-types --test --test-reporter=spec --test-name-pattern",
-    "check": "npm run test && npm run build",
+    "architecture:check": "node scripts/check-architecture.mjs",
+    "context:map": "node scripts/generate-code-map.mjs",
+    "context:check": "node scripts/generate-code-map.mjs --check && npm run architecture:check",
+    "check": "npm run context:check && npm run test && npm run lint && npm run build",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next"
   },
   "dependencies": {
