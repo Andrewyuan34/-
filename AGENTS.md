@@ -28,6 +28,7 @@
 - S01–S08、G01–G08 与 P00–P03 已完成并由用户验收；Policy 收口提交是 `c4ada7d`。
 - Formation F00–F03 已完成并由用户验收；F01/F02 冻结核心为 `9063135`，F03 manifest 为 `ba39ef0`，最终审计与回放提交为 `f8163c2`。
 - Autonomous Setup A00–A01 已完成并由用户验收；自动选边、固定 canonical anchor、安全退出、只读回放与自动门行为提交为 `7ecedea`。
+- Minimum Tactical Vocabulary T00–T01 已完成并由用户验收；队级时空通道修复、加严审计与只读回放行为提交为 `e735f47`。
 - G08 manifest 与冻结输入不得改写；失败时报告最早失败轨迹，不能按 case ID 调参。
 - P00 默认策略 adjustment 必须保持 0；策略只能重排硬可行候选，不能恢复 veto 候选。
 - 既有 170 个批准输入、G08/F03 manifest、真实左右镜像和核心不变量是 Autonomous Setup 改动的回归基线。
@@ -37,10 +38,11 @@
 
 ## 当前范围与停止点
 
-- A00–A01 已封存；当前没有获批的新实现增量。等待用户明确下一阶段，不自动开始 T。
+- A00–A01 与 T00–T01 已封存并由用户验收；当前不自动开始 I。
 - `explicit | auto`、缺省 `explicit`、进攻私有 side/anchor/waypoint、公开 commit 后防守响应以及中立世界不评分选点，都是已封存契约。
-- A 只证明 F01/F02/F03 合法 Formation 域，O1/O5 与 D1/D5 职责固定；不得外推到任意位置、角色识别、拖拽、手动控制、新战术、投篮结果、更多人数、5v5、ML/RL 或生产化。
-- 若未来批准 T，仍须单独定义输入、行为、自动门与停止点；不得借维护或回归修复提前实现。
+- T 只在显式 `preset_pnr + explicit + minimum-t@1` 下启用，不接入 Formation / Autonomous，也不增加策略菜单；持球通道优先、RESET 无继续 roll、pocket 健康释放与真实多 tick 飞行均为硬门，其 input-only manifest、行为、自动门与代表回放见 `docs/CURRENT.md`。
+- A 只证明 F01/F02/F03 合法 Formation 域，T 只证明冻结显式 preset 输入及其镜像；不得外推到任意位置、角色识别、拖拽、手动控制、ICE/blitz/hedge/switch-back、投篮结果、更多人数、5v5、ML/RL 或生产化。
+- 若未来批准 I，须另行定义 F/A/T/P/held-out 串联输入、自动门与停止点；不得借 T 验收或修复提前实现。
 
 实时细节和工作树状态以 [`docs/CURRENT.md`](./docs/CURRENT.md) 为准。
 

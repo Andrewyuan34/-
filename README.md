@@ -2,7 +2,7 @@
 
 这是一个独立、确定性、可观看且可解释的 2v2 挡拆算法实验台。它不是预录轨迹：两支球队分别产生队级计划，中立世界以固定时间步解析运动、身体几何、球权、传球和事件。
 
-当前稳定检查点已经覆盖 S01–S08 战术证人、G01–G08 受限域泛化、P00–P03 的两套进攻策略 × 三套防守策略、Formation F00–F03，以及已由用户验收的 Autonomous Setup A00–A01：在同一受限 Formation 域内自动选择掩护侧与合法 anchor，并在不可形成时真实安全退出。当前没有获批的新实现增量。实时状态见 [`docs/CURRENT.md`](./docs/CURRENT.md)。
+当前稳定检查点已经覆盖 S01–S08 战术证人、G01–G08 受限域泛化、P00–P03 的两套进攻策略 × 三套防守策略、Formation F00–F03、Autonomous Setup A00–A01，以及已由用户验收的 T00–T01。T 首轮人眼验收发现队友通道缺陷后，RESET、snake 与 pocket 的队级时空协调已经修复，并通过加严自动门、本地可视复验与用户重新验收；行为检查点为 `e735f47`。实时状态见 [`docs/CURRENT.md`](./docs/CURRENT.md)。
 
 ## 新 agent 从哪里开始
 
@@ -67,7 +67,7 @@ npm run build
 - `lib/pnr-strategy.ts`：双方策略注册、阶段所有权、硬否决后的统一计分入口。
 - `lib/pnr-scenarios.ts`：S01–S08 网页预设以及旧 cue 到公开初始坐标的适配；cue 不进入核心。
 
-### Formation 与当前 Autonomous Setup 增量
+### Formation、Autonomous Setup 与当前 T 增量
 
 - `lib/pnr-f00-formation.ts`：F00 固定起手、左右回放和形成阶段审计。
 - `lib/pnr-under-r2.ts`：F00/真实 deep-retreat 两条观察回放、旧假 deep 负回归及私有 route/镜像审计。
@@ -76,8 +76,9 @@ npm run build
 - `lib/pnr-formation-generalization-results.ts`：F01–F03 汇总与审计后代表回放选择。
 - `lib/pnr-a00-autonomous-side-manifest.ts`、`pnr-a00-autonomous-side-audit.ts`：A00 input-only 自动选边清单、双运行与严格镜像门。
 - `lib/pnr-a01-autonomous-setup-manifest.ts`、`pnr-a01-autonomous-setup-audit.ts`：A01 固定 side × anchor、真实形成/安全退出审计与代表回放选择。
+- `lib/pnr-tactical-manifest.ts`、`pnr-tactical-audit.ts`：T00–T01 input-only 清单，以及 drop/chase/read 的三次运行、镜像、路线、队友通道、pocket 飞行、因果与信息边界门。
 - `components/PnrLab.tsx`：可丢弃观察壳的状态与回放编排；保持唯一默认页面入口，不承载球队决策。
-- `components/pnr-lab/`：Canvas 绘制、共享展示与 G/P/F/A 审计面板；`AutonomousSetupPanel.tsx` 只读展示 A00–A01 审计与回放，不回流球队规划输入。
+- `components/pnr-lab/`：Canvas 绘制、共享展示与 G/P/F/A/T 审计面板；`AutonomousSetupPanel.tsx` 与 `TacticalVocabularyPanel.tsx` 都只读展示审计与回放，不回流球队规划输入。
 
 ### 泛化与策略审计
 
@@ -92,7 +93,8 @@ npm run build
 - `tests/pnr-core-s.test.mjs`：核心不变量与 S01–S08 回归。
 - `tests/pnr-generalization.test.mjs`：G01–G08 泛化、镜像与 held-out 审计。
 - `tests/pnr-policy.test.mjs`：P00–P03 策略与 policy 回归。
-- `tests/pnr-formation-autonomous.test.mjs`：F00–F03 与 A00–A01 的确定性、镜像、信息边界、形成与安全退出门；T 阶段用例落入独立的 `tests/pnr-tactical.test.mjs`。
+- `tests/pnr-formation-autonomous.test.mjs`：F00–F03 与 A00–A01 的确定性、镜像、信息边界、形成与安全退出门。
+- `tests/pnr-tactical.test.mjs`：T00–T01 显式版本、冻结 manifest、真实 drop/chase/read、队友通道、pocket 多 tick 飞行接球、路线与全审计门。
 - `app/`：页面入口和全局样式。
 - `worker/`、`build/`：本地运行与构建适配，不承载篮球决策。
 
@@ -103,13 +105,15 @@ npm run build
 - 同一批准输入域支持两套进攻和三套防守策略；策略只改变合法候选的优先级。
 - Formation 的少量结构化起手与冻结有界随机域共用同一套形成原语，能够真实形成或明确安全退出；用户已验收四条 F01–F03 代表回放。
 - Autonomous Setup 能在同一域内按公开几何确定性选择 side × anchor，并通过真实运动形成或在全-veto 时保球安全退出；用户已验收四条 A00–A01 代表回放。
+- 显式 `minimum-t@1` 回放能从真实退守、追过和公开 coverage 事实产生急停、contain、snake 或 pocket 接球；队友通道与 pocket 真实飞行已经进入硬门，用户已验收四条代表回放及 pocket 复看片段。
 - 用户可以从真实回放、计划、角色、候选、否决与事件中判断篮球语义。
 
 ## 仍不能声称什么
 
 - 半场任意位置都能自动组织挡拆。
 - A00–A01 只证明已批准 Formation 域、固定 O1/O5 与 D1/D5 职责；不能外推到任意半场位置或任意角色识别。
-- 真正的沉退、追过、ICE、夹击、外弹、二次掩护等未实现原语已经存在。
+- Formation、Autonomous Setup、T、Policy 与冻结 held-out 已经串成一个自动集成闭环；这属于尚未开始的 I。
+- ICE、blitz、hedge、switch-back、外弹、二次掩护等战术原语已经实现。
 - 完整 `2 × 3` 策略矩阵通过了全新策略 held-out 起手；P04 被明确跳过。
 - 已处理投篮、犯规、篮板、完整比赛、第三名协防人或 5v5。
 

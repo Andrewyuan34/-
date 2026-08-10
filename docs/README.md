@@ -30,6 +30,20 @@
 
 ## 按任务选择上下文
 
+### 继续或验收 T00–T01 Minimum Tactical Vocabulary
+
+读取：
+
+- `AGENTS.md` 与 `CURRENT.md`
+- `lib/pnr-tactical-manifest.ts`、`pnr-tactical-audit.ts`
+- `lib/pnr-core.ts` 中 `minimum-t@1` 输入校验、T planner 候选/路线、coverage 事实、pocket flight/catch 与 T 终止相关符号
+- `lib/pnr-strategy.ts` 中 T 阶段所有权与零 adjustment 入口
+- `tests/pnr-tactical.test.mjs`
+- `DECISIONS.md` 的 D016–D017
+- 进度账本中“T00–T01 当前实现证据”与“当前判断与下一停止点”
+
+T 当前只接受显式 `preset_pnr + explicit + minimum-t@1`，不接入 Formation / Autonomous。首轮人工验收暴露并触发队友时空通道修复；修复后自动门、本地可视复验和用户重新验收均已通过，行为检查点为 `e735f47`。T 已封存但不自动开始 I；ICE、blitz、hedge、switch-back、策略菜单扩展和更多人数仍不在该增量内。只有旧门失败时才按失败测试回读对应 S/G/P/F/A 历史。
+
 ### 开始 A00–A01 Autonomous Setup 合并增量
 
 读取：

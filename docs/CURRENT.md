@@ -1,8 +1,9 @@
 # 当前交接快照
 
-> 快照日期：2026-08-07
+> 快照日期：2026-08-10
 > 当前交付分支：`prototype/pnr-formation-loop`
 > A00–A01 行为检查点：`7ecedea1319ecf714549c1da3946d5fa3c8ed430`
+> T00–T01 行为检查点：`e735f4768696bb423937c94ec3dea17a13a5ea94`；修复后已由用户重新验收
 > P2/P4 基线：`dd6287b97dc3b33b8070a45ccfcb7280a24a1951`
 > F01/F02 冻结核心：`90631359ba5a52eacfdbfc1434d657f8743df45e`
 > F03 manifest：`ba39ef025f29d181af8c7d137d6807f7825c9717`
@@ -13,7 +14,7 @@
 
 ## 一句话状态
 
-S01–S08、G01–G08、P00–P03、Formation F00–F03 与 Autonomous Setup A00–A01 已封存并由用户验收。当前没有获批的新实现增量；保持停止，不自动开始 T。
+S01–S08、G01–G08、P00–P03、Formation F00–F03、Autonomous Setup A00–A01 与 T00–T01 已封存并由用户验收。T 首轮自动门未覆盖队友时空通道，用户人眼验收据此失败；RESET、snake 与 pocket 的队级通道随后修复并通过加严自动门、本地可视复验与用户重新验收，行为检查点为 `e735f47`。当前不开始 I。
 
 ## F 阶段封存事实
 
@@ -35,13 +36,25 @@ S01–S08、G01–G08、P00–P03、Formation F00–F03 与 Autonomous Setup A00
 
 交付证据：A00 锁定 12 个输入、24 个镜像世界并各双运行，input-only hash 为 `sha256:ed568eb77c78bc62cffa0dba06aa59df660bd7df181b2eb9b254c37d4887bcc4`；A01 锁定 13 个输入、26 个镜像世界并各双运行，22 个真实形成、2 个继承 Formation timeout、2 个真实安全退出，input-only hash 为 `sha256:0518aadfcea925a6736f16bfaf4843f7c842290c1bff9c959f3c8afceaba42b6`。用户已人眼验收最晚形成、最窄走廊、不同 anchor 镜像与全-veto 安全退出四条审计回放；UI 只读，不回流规划输入。最终自动门为 A00 4/4、A01 4/4、F00–F03 16/16、`npm test` 80/80、lint、build 与 `git diff --check` 全部通过；行为提交为 `7ecedea`。
 
+## T00–T01 封存事实
+
+1. **显式输入契约。** T 只在 `preset_pnr + explicit + minimum-t@1` 下 opt-in；旧 preset、Formation 与 Autonomous 入口不自动获得 T 行为。T 不新增策略配置，双方 strategy adjustment 保持 0。
+2. **T00：真实 drop/contain。** D5 通过私有连续路线真实退到球与顺下之间，D1 保持原 O1 责任；世界只从实际退守进度、掩护深度、身体几何与运动发布 `drop_committed`。进攻在公开 commit 后选择攻击 drop gap、急停窗口或安全重置。
+3. **T01：真实 chase/over。** D1 只在公开掩护姿态成立后沿合法上方路线追过，D5 延续 contain；进攻根据公开追尾与双人约束事实选择 snake、pocket pass 或重置。pocket pass 必须经历真实发球、固定步飞行与 O5 第一触球，不能由计划直接写成接球结果。
+4. **队友时空通道。** 持球通道优先；O5 在 snake 通道相交时等待或进入独立短顺下通道，不能绕 O1 运行。RESET 只允许 hold、清空 D1 恢复走廊或做最短间距调整。POCKET 先发展实时短顺下空档，窗口公开成立后才停位出球；健康队友净空、近距绕转、双人同动挤道、释放距离与多 tick 飞行都进入硬门。
+5. **信息与解析边界。** 两队只读取公开世界、自队职责与自队计划；UI 可全知展示但不回流。T 的联合重规划边界只读取公开 `tacticalCoverage`，飞行与终局只读取公开 coverage、球状态和事件；中立世界不读取隐藏 plan id，不为球队评分或指定终局。
+6. **冻结输入与修复后审计。** input-only manifest `minimum-t-inputs@1` 未改写，仍含 4 个输入、8 个左右镜像世界，每个世界运行 primary、duplicate 与 defense-first 三次；hash 为 `sha256:eccf50dbfaa532412bf854afaffcb6277d3b0908a3b882a2d94fa686c8e296f8`。修复后代表终局为 T00-C01 pullup tick 181、T00-C02 contained tick 230、T01-C01 snake tick 260、T01-C02 pocket caught tick 231；左右完全镜像。四案 O1/O5 最小身体净空为 0.0681–0.0690m，低于 5cm 的连续 tick 为 0，双人近距同动挤道为 0；T00-C02 的实际 RESET 相对绕转 5.36° 且无 roll/tangent。T01-C02 以 1.448m 中心释放距离在 tick 226 出球，飞行 5 ticks 后于 tick 231 接球。
+
+首轮 T 聚焦 10/10、完整 86/86 与当时的本地可视检查，只证明旧门没有捕捉“各自合法但队级通道冲突”；用户随后在 T00-C02、T01-C01、T01-C02 人眼验收中确认该轮失败，旧 tick 与可视结论不能作为 T 验收证据。修复后 T 聚焦 12/12、`npm test` 88/88、lint、build 与 `git diff --check` 通过；本地浏览器重新跑通四个代表终局，并逐步确认 T01-C02 right 的 tick 226/228 仍为真实飞行、tick 231 才接球，left 同 tick 镜像接球，控制台无 warning/error。用户复看 pocket 出球画面后确认该停止点在 T 当前范围内可接受，并正式通过 T 人工验收。T 面板仍是显式只读回放入口；行为检查点为 `e735f47`。
+
 ## 不可扩大范围
 
-- A 只在 F01/F02/F03 已批准的 Formation 输入域工作，不等于任意半场站位；不增加拖拽、手动控制或任意角色识别。
-- 不新增 drop、chase、ICE、夹击等战术原语；它们属于后续 T 阶段，且本轮不得启动。
+- A 仍只在 F01/F02/F03 已批准的 Formation 输入域工作；T 也只证明 4 个冻结显式 preset 输入及其真实镜像，不等于任意半场站位或 A/F/T 已集成。
+- 不增加 ICE、blitz、hedge、switch-back、外弹、二次掩护、拖拽、手动控制或任意角色识别。
 - 不模拟投篮命中率、篮板、犯规、完整比赛、更多人数或 5v5。
 - 不重开 P04，不改写 G08/F03 manifest，不增加 ML/RL 或生产级 UI。
+- 不开始 I；Formation、Autonomous、T、Policy 与 held-out 的串联必须另行定义输入、自动门与停止点。
 
 ## 下一停止点
 
-A00–A01 闭环、input-only 审计、严格镜像、逐 tick 回归、全自动门、独立只读页面与四条代表回放均已通过并由用户验收。当前没有下一实现授权；保持封存状态，不开始 T00。
+T00–T01 已完成首轮人工失败所揭示的队友通道修复、加严审计、自动门、本地浏览器复验与用户重新验收，并以 `e735f47` 封存。未获得 I 的独立实现授权前不得开始 I。
