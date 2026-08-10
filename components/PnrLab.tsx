@@ -89,9 +89,15 @@ import {
   createTacticalReplay,
   scanTacticalVocabulary,
 } from "@/lib/pnr-tactical-audit";
+import {
+  createI01IntegrationReplay,
+  scanI01Integration,
+  type I01RepresentativeReplay,
+} from "@/lib/pnr-integration-audit";
 import { drawCourt } from "./pnr-lab/court";
 import { planShort, sideText } from "./pnr-lab/format";
 import { AutonomousSetupPanel } from "./pnr-lab/AutonomousSetupPanel";
+import { IntegrationHandoffPanel } from "./pnr-lab/IntegrationHandoffPanel";
 import { TacticalVocabularyPanel } from "./pnr-lab/TacticalVocabularyPanel";
 import {
   FormationGeneralizationPanel,
@@ -141,6 +147,7 @@ const FORMATION_GENERALIZATION_AUDIT = scanFormationGeneralization();
 const A00_AUTONOMOUS_SIDE_AUDIT = scanA00AutonomousSides();
 const A01_AUTONOMOUS_SETUP_AUDIT = scanA01AutonomousSetups();
 const TACTICAL_VOCABULARY_AUDIT = scanTacticalVocabulary();
+const I01_INTEGRATION_AUDIT = scanI01Integration();
 
 function cloneAutonomousSetup(
   setup: NonNullable<TeamPlan["autonomousSetup"]>,
@@ -372,6 +379,8 @@ export default function PnrLab() {
     useState<A01RepresentativeReplay["id"]>("longest-formed");
   const [tacticalInputId, setTacticalInputId] = useState("T00-C01");
   const [tacticalSide, setTacticalSide] = useState<ScreenSide>("right");
+  const [integrationReplayId, setIntegrationReplayId] =
+    useState<I01RepresentativeReplay["id"]>("formed-handoff");
   const [initialSimulation] = useState(
     () => new PnrSimulation(makeScenarioConfig(DEFAULT_SCENARIO_ID)),
   );
@@ -534,8 +543,24 @@ export default function PnrLab() {
     installSimulation(createTacticalReplay(nextInputId, nextSide), shouldPlay);
   }, [installSimulation]);
 
+  const replaceIntegrationSimulation = useCallback((
+    nextReplayId: I01RepresentativeReplay["id"],
+    shouldPlay: boolean,
+  ): void => {
+    const replay = I01_INTEGRATION_AUDIT.replays.find(
+      (candidate) => candidate.id === nextReplayId,
+    );
+    if (!replay) throw new Error(`Unknown I01 integration replay: ${nextReplayId}`);
+    installSimulation(
+      createI01IntegrationReplay(replay.inputId, replay.mirrored),
+      shouldPlay,
+    );
+  }, [installSimulation]);
+
   const replaceCurrentSimulation = useCallback((shouldPlay: boolean): void => {
-    if (labMode === "tactical") {
+    if (labMode === "integration") {
+      replaceIntegrationSimulation(integrationReplayId, shouldPlay);
+    } else if (labMode === "tactical") {
       replaceTacticalSimulation(tacticalInputId, tacticalSide, shouldPlay);
     } else if (labMode === "autonomous") {
       replaceAutonomousSimulation(autonomousReplayId, shouldPlay);
@@ -578,6 +603,7 @@ export default function PnrLab() {
     g08ReplayId,
     f00Side,
     formationReplayId,
+    integrationReplayId,
     underR2ReplayId,
     p00ReplayId,
     p01ReplayId,
@@ -596,6 +622,7 @@ export default function PnrLab() {
     replaceF00Simulation,
     replaceFormationSimulation,
     replaceAutonomousSimulation,
+    replaceIntegrationSimulation,
     replaceTacticalSimulation,
     replaceP00Simulation,
     replaceP01Simulation,
@@ -732,9 +759,17 @@ export default function PnrLab() {
   const currentTacticalRow =
     TACTICAL_VOCABULARY_AUDIT.rows.find((row) => row.id === tacticalInputId) ??
     TACTICAL_VOCABULARY_AUDIT.rows[0];
+  const currentIntegrationReplay =
+    I01_INTEGRATION_AUDIT.replays.find(
+      (replay) => replay.id === integrationReplayId,
+    ) ?? I01_INTEGRATION_AUDIT.replays[0];
   const observerSide = snapshot.world.screenSide ??
     snapshot.offensePlan.autonomousSetup?.side ??
-    (labMode === "autonomous" ? currentAutonomousReplay?.side : null);
+    (labMode === "autonomous"
+      ? currentAutonomousReplay?.side
+      : labMode === "integration"
+        ? currentIntegrationReplay?.side
+        : null);
   const displaySide: ScreenSide = observerSide ?? "right";
 
   return (
@@ -778,6 +813,11 @@ export default function PnrLab() {
           {labMode === "tactical" && currentTacticalRow && (
             <span>
               T00–T01 · {currentTacticalRow.id} · {tacticalSide.toUpperCase()} · {playing || snapshot.world.tick > 0 ? "LOCKED" : "READY"}
+            </span>
+          )}
+          {labMode === "integration" && currentIntegrationReplay && (
+            <span>
+              I00–I01 · {currentIntegrationReplay.inputId} · {currentIntegrationReplay.side?.toUpperCase() ?? "NO SIDE"} · {playing || snapshot.world.tick > 0 ? "LOCKED" : "READY"}
             </span>
           )}
           <span>HASH {snapshot.world.stateHash}</span>
@@ -950,6 +990,17 @@ export default function PnrLab() {
         >
           T00–T01 · Drop / Chase
         </button>
+        <button
+          aria-pressed={labMode === "integration"}
+          className={labMode === "integration" ? "is-active" : ""}
+          onClick={() => {
+            setLabMode("integration");
+            replaceIntegrationSimulation(integrationReplayId, false);
+          }}
+          type="button"
+        >
+          I00–I01 · Formation → T
+        </button>
       </nav>
 
       {labMode === "scenarios" ? (
@@ -1078,6 +1129,17 @@ export default function PnrLab() {
             replaceP01Simulation(p01ReplayId, nextStrategyId, false);
           }}
           strategyLocked={strategyLocked}
+        />
+      ) : labMode === "integration" ? (
+        <IntegrationHandoffPanel
+          activeReplayId={integrationReplayId}
+          audit={I01_INTEGRATION_AUDIT}
+          locked={playing || snapshot.world.tick > 0}
+          onReplaySelect={(nextReplayId) => {
+            setIntegrationReplayId(nextReplayId);
+            replaceIntegrationSimulation(nextReplayId, false);
+          }}
+          snapshot={snapshot}
         />
       ) : labMode === "tactical" ? (
         <TacticalVocabularyPanel

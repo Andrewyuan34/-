@@ -38,11 +38,12 @@
 
 ## 当前范围与停止点
 
-- A00–A01 与 T00–T01 已封存并由用户验收；当前不自动开始 I。仓库上下文工具是独立未提交增量，不得混入 T 检查点。
+- A00–A01 与 T00–T01 已封存并由用户验收；仓库上下文工具已由 `7eb4bd2` 独立提交推送。I00–I01 当前工作树实现已通过自动门与本地可视检查，仍待用户人眼验收，未封存、未提交。
 - `explicit | auto`、缺省 `explicit`、进攻私有 side/anchor/waypoint、公开 commit 后防守响应以及中立世界不评分选点，都是已封存契约。
-- T 只在显式 `preset_pnr + explicit + minimum-t@1` 下启用，不接入 Formation / Autonomous，也不增加策略菜单；持球通道优先、RESET 无继续 roll、pocket 健康释放与真实多 tick 飞行均为硬门，其 input-only manifest、行为、自动门与代表回放见 `docs/CURRENT.md`。
-- A 只证明 F01/F02/F03 合法 Formation 域，T 只证明冻结显式 preset 输入及其镜像；不得外推到任意位置、角色识别、拖拽、手动控制、ICE/blitz/hedge/switch-back、投篮结果、更多人数、5v5、ML/RL 或生产化。
-- 若未来批准 I，须另行定义 F/A/T/P/held-out 串联输入、自动门与停止点；不得借 T 验收或修复提前实现。
+- 独立 T 只在显式 `preset_pnr + explicit + minimum-t@1` 下启用；唯一 Formation 例外是精确 `formation-minimum-t@1 + auto + form_pnr + F01-v1 + tactical_resolution` 的 I01 opt-in。持球通道优先、RESET 无继续 roll、pocket 健康释放与真实多 tick 飞行均为硬门。
+- I00 已先验锁定 13 个 A01 输入、A/T 版本与 hash、P00 默认零调整策略、许可终局、自动门和回退点 `7eb4bd2`；I01 只允许同一 simulation/world 在公开 `formation_ready` 下一边界激活 T，不得重建或重置 tick/位置/速度/球权。
+- A/T/I01 仍只证明 F01/F02/F03 合法 Formation 域、冻结 preset T 输入及锁定 A01 集成输入的镜像；不得外推到任意位置、角色识别、拖拽、手动控制、ICE/blitz/hedge/switch-back、投篮结果、更多人数、5v5、ML/RL 或生产化。
+- 当前停止在 I01 用户人眼验收；不得开始 I02 非默认策略整合或 V held-out，不得提交/推送直到用户明确批准。
 
 实时细节和工作树状态以 [`docs/CURRENT.md`](./docs/CURRENT.md) 为准。
 

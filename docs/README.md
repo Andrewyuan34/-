@@ -32,6 +32,19 @@
 
 ## 按任务选择上下文
 
+### 继续或验收 I00–I01 Formation → T 连续集成
+
+读取：
+
+- `AGENTS.md` 与 `CURRENT.md`
+- `lib/pnr-integration-manifest.ts`、`pnr-integration-audit.ts`
+- `lib/pnr-core.ts` 中 integration version 校验、延迟 T 激活、`formation_ready` next-boundary 与 T contained 相关符号
+- `lib/pnr-a01-autonomous-setup-manifest.ts` 与 `lib/pnr-tactical-manifest.ts` 的冻结输入/hash 入口；默认不回读完整 A/T 审计
+- `tests/pnr-integration.test.mjs`；只有冻结 A/T 回归失败时，再分别读取 Formation/Autonomous 或 T 测试
+- `DECISIONS.md` 的 D019
+
+I00 必须保持先于任何结果锁定的 input-only/hash 合同；I01 只允许精确 `formation-minimum-t@1` 从同一 simulation/world 的公开 next-boundary 串联，不得重建回合、重置 tick/位置/速度/球权或读取隐藏 side/anchor/plan/result。完成自动门和只读代表回放后停在用户人眼验收；不得开始 I02 策略串联或 V。
+
 ### 继续或验收 T00–T01 Minimum Tactical Vocabulary
 
 读取：

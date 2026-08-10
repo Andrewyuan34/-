@@ -28,6 +28,7 @@
 | D013 | 完成 | UNDER 私有路线归球队，终局真实性归中立世界 | 分离队级意图与真实世界结果，修复远程 pull-up 伪影 |
 | D014 | 完成 | F01–F03 作为带三道内部停止门的合并增量 | 同一输入域逐层扩大，同时保持 manifest 预锁定与失败可归因 |
 | D015 | 生效 | A 使用 explicit/auto 输入边界并联合比较 side × anchor | 保持旧行为零变化，防止隐藏输入泄漏和先锁死无合法 anchor 的一侧 |
+| D019 | 生效 | I00 先锁集成契约，I01 只在同一世界的公开 next-boundary 串联 A 与 T | 防止重建回合、隐藏结果或通用 watchdog 伪装成阶段集成 |
 
 ## D001：三层架构与信息所有权
 
@@ -216,6 +217,16 @@
 **后果：** `docs/generated/CODEMAP.md` 和 `SYMBOLS.md` 只由 `npm run context:map` 更新，前者可按任务读取，后者只能用 `rg` 窄查。`npm run context:check` 拒绝陈旧地图并运行架构门；`npm run check` 进一步包含测试、lint 与 build。检查器只证明静态边界，不代替篮球因果、镜像、确定性轨迹和人眼验收；有意移动 planner/kernel 边界时必须在同一变更中更新并测试政策，不能绕过检查。
 
 **证据：** `tests/architecture-boundaries.test.mjs` 同时验证当前仓库零违规、地图确定性与陈旧检测，并用故意违规 fixture 证明错误依赖、隐私泄漏、非确定性 API、错误固定步和中立解析器越权都会产生带修复建议的失败。
+
+## D019：I00 先锁输入契约，I01 只做同世界连续交接
+
+**决定：** I00 必须在运行任何集成结果前，以独立、显式、版本化的 input-only manifest 锁定全部 A01 输入域、seed、A/T 版本与上游 hash、默认零调整策略、允许终局、自动门和回退点。I01 只有在精确 `formation-minimum-t@1` opt-in 下，才允许 `auto + form_pnr + minimum-t@1 + tactical_resolution`；Formation 阶段不创建或暴露 T facts，`formation_ready` 事件到达下一规划边界时，才在同一个 `PnrSimulation`、world、tick、球员对象和球状态上激活 T，并从同一公开快照重规划双方。`formation_aborted` / `formation_timeout` 继续由原 Formation 世界真实终止，不进入 T。
+
+**原因：** 单独通过 A 和 T 不能证明二者连续串联。若在交接时重建 simulation、重置时钟/位置/速度/球权，或从 hidden side、anchor、plan、expected outcome 选择结果，动画看似连贯也不是真实集成；若允许通用 `defense_contained` watchdog 进入通过集合，又会把尚未完成的 T 阅读误报为合法收口。先锁输入与许可集合，再揭示运行结果，才能让失败保持可归因且不能按 case 回填答案。
+
+**后果：** 无 integration version 的 A、显式 preset T 及所有旧输入保持原路径；I handoff 前的 planner 只能处于 Formation phase，看不到 T vocabulary 或 coverage。成功形成后，防守先建立 drop/chase 原对位覆盖，进攻只能在中立世界发布真实 coverage event 的下一边界做二级读取；合法收住必须来自公开队级几何与有限承诺，不能由 max-time watchdog 代替。I01 只使用 P00 默认策略且所有 adjustment 为 0；策略串联属于 I02，新的 held-out 组合属于 V，本增量自动门与只读回放完成后必须停下等待用户人眼验收。
+
+**证据：** I00 回退点为 `7eb4bd2`；静态合同、全域三执行审计、同对象连续性、镜像、信息边界、A/T 冻结回归与代表回放见 `lib/pnr-integration-manifest.ts`、`lib/pnr-integration-audit.ts`、`tests/pnr-integration.test.mjs` 和 `docs/CURRENT.md`。
 
 ## 何时追加新决策
 

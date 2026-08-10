@@ -4,7 +4,7 @@
 > 当前交付分支：`prototype/pnr-formation-loop`
 > A00–A01 行为检查点：`7ecedea1319ecf714549c1da3946d5fa3c8ed430`
 > T00–T01 行为检查点：`e735f4768696bb423937c94ec3dea17a13a5ea94`；修复后已由用户重新验收
-> 仓库上下文工具：自动模块/符号地图与 9 类机械架构门已实现，随当前工作树待提交
+> 仓库上下文工具：自动模块/符号地图与 9 类机械架构门已由 `7eb4bd2` 提交并推送
 > P2/P4 基线：`dd6287b97dc3b33b8070a45ccfcb7280a24a1951`
 > F01/F02 冻结核心：`90631359ba5a52eacfdbfc1434d657f8743df45e`
 > F03 manifest：`ba39ef025f29d181af8c7d137d6807f7825c9717`
@@ -15,11 +15,11 @@
 
 跨文件定位先看 [`generated/CODEMAP.md`](./generated/CODEMAP.md)，具体符号只用 `rg` 查询 [`generated/SYMBOLS.md`](./generated/SYMBOLS.md)。两者均由 `npm run context:map` 生成；`npm run context:check` 同时拒绝陈旧地图与架构边界漂移。
 
-当前工具门为架构/地图自测 4/4、9 类仓库架构契约零违规；与最新 T 工作树合并后，`npm test` 92/92、lint、build 与 `git diff --check` 通过。该工具增量不改变已经验收的 T 篮球行为，仍作为独立未提交工作保留。
+当前工具门为架构/地图自测 4/4、9 类仓库架构契约零违规；与最新 T 工作树合并后，`npm test` 92/92、lint、build 与 `git diff --check` 通过。该工具增量不改变已经验收的 T 篮球行为，已作为独立提交 `7eb4bd2` 推送。
 
 ## 一句话状态
 
-S01–S08、G01–G08、P00–P03、Formation F00–F03、Autonomous Setup A00–A01 与 T00–T01 已封存并由用户验收。T 首轮自动门未覆盖队友时空通道，用户人眼验收据此失败；RESET、snake 与 pocket 的队级通道随后修复并通过加严自动门、本地可视复验与用户重新验收，行为检查点为 `e735f47`。当前不开始 I。
+S01–S08、G01–G08、P00–P03、Formation F00–F03、Autonomous Setup A00–A01 与 T00–T01 已封存并由用户验收。I00 input-only 契约与 I01 同世界连续交接已在当前工作树实现：自动门与本地可视检查通过，尚待用户人眼验收，不提交、不推送、不封存。
 
 ## F 阶段封存事实
 
@@ -43,7 +43,7 @@ S01–S08、G01–G08、P00–P03、Formation F00–F03、Autonomous Setup A00�
 
 ## T00–T01 封存事实
 
-1. **显式输入契约。** T 只在 `preset_pnr + explicit + minimum-t@1` 下 opt-in；旧 preset、Formation 与 Autonomous 入口不自动获得 T 行为。T 不新增策略配置，双方 strategy adjustment 保持 0。
+1. **显式输入契约。** 独立 T 只在 `preset_pnr + explicit + minimum-t@1` 下 opt-in；旧 preset、Formation 与 Autonomous 入口不自动获得 T 行为。唯一例外是 I01 的精确 `formation-minimum-t@1 + auto + form_pnr + F01-v1 + tactical_resolution` 版本元组。T 不新增策略配置，双方 strategy adjustment 保持 0。
 2. **T00：真实 drop/contain。** D5 通过私有连续路线真实退到球与顺下之间，D1 保持原 O1 责任；世界只从实际退守进度、掩护深度、身体几何与运动发布 `drop_committed`。进攻在公开 commit 后选择攻击 drop gap、急停窗口或安全重置。
 3. **T01：真实 chase/over。** D1 只在公开掩护姿态成立后沿合法上方路线追过，D5 延续 contain；进攻根据公开追尾与双人约束事实选择 snake、pocket pass 或重置。pocket pass 必须经历真实发球、固定步飞行与 O5 第一触球，不能由计划直接写成接球结果。
 4. **队友时空通道。** 持球通道优先；O5 在 snake 通道相交时等待或进入独立短顺下通道，不能绕 O1 运行。RESET 只允许 hold、清空 D1 恢复走廊或做最短间距调整。POCKET 先发展实时短顺下空档，窗口公开成立后才停位出球；健康队友净空、近距绕转、双人同动挤道、释放距离与多 tick 飞行都进入硬门。
@@ -52,14 +52,22 @@ S01–S08、G01–G08、P00–P03、Formation F00–F03、Autonomous Setup A00�
 
 首轮 T 聚焦 10/10、完整 86/86 与当时的本地可视检查，只证明旧门没有捕捉“各自合法但队级通道冲突”；用户随后在 T00-C02、T01-C01、T01-C02 人眼验收中确认该轮失败，旧 tick 与可视结论不能作为 T 验收证据。修复后 T 聚焦 12/12、`npm test` 88/88、lint、build 与 `git diff --check` 通过；本地浏览器重新跑通四个代表终局，并逐步确认 T01-C02 right 的 tick 226/228 仍为真实飞行、tick 231 才接球，left 同 tick 镜像接球，控制台无 warning/error。用户复看 pocket 出球画面后确认该停止点在 T 当前范围内可接受，并正式通过 T 人工验收。T 面板仍是显式只读回放入口；行为检查点为 `e735f47`。
 
+## I00–I01 当前待验收事实
+
+1. **I00 先验契约。** `formation-minimum-t-contract@1` 与 `formation-minimum-t-inputs@1` 在运行任何集成结果前锁定 13 个 A01 输入、seed、A/T 版本、默认零 adjustment 策略、许可终局、自动门与回退点 `7eb4bd2`；input-only hash 为 `sha256:e4b0bec29c54b51157ae0b82681eb7f7ad01c5222f2e6802eab7ee0cd27d7554`，不含 expected outcome、case 定向或隐藏 side/anchor/plan/result。
+2. **I01 连续交接。** `formation_ready` 在 tick N 成为公开事实后，同一个 `PnrSimulation`、world、固定时钟、球权、位置与速度在 tick N+1 的规划边界同时交给防守 drop/chase 与进攻二级读取；交接前没有 T 版本、coverage 或 T 读取，不重建 simulation，不重置 tick，不瞬移。
+3. **自动审计。** 13 个输入及真实镜像共 26 个世界，每个世界运行 primary、duplicate 与 defense-first 三次；22 个世界真实形成后进入 T，2 个 `formation_timeout` 与 2 个 `formation_aborted` 保持 Formation 真实终局。12 个形成世界终止于 `tactical_contained`，10 个终止于 `tactical_snake_advantage`；确定性、规划顺序、镜像、信息边界、连续性、合法终局与零 adjustment 全部通过。
+4. **冻结基线不变。** 旧 Autonomous 输入在未提供 I 版本时逐 tick 不变；四个独立 T 代表终局仍为 tick 181/230/260/231。当前总门为 `npm test` 96/96、9 类架构契约、context check、lint 与 build 全部通过。
+5. **只读验收入口。** I 面板只展示冻结契约与已完成审计，不回流规划输入。本地浏览器已跑通 I00-C01：`formation_ready@147`、handoff@148、`tactical_contained@294`；并跑通 I00-C13：`formation_aborted@1` 且无提前 T 读取，控制台无 warning/error。当前仅待用户人眼验收。
+
 ## 不可扩大范围
 
-- A 仍只在 F01/F02/F03 已批准的 Formation 输入域工作；T 也只证明 4 个冻结显式 preset 输入及其真实镜像，不等于任意半场站位或 A/F/T 已集成。
+- I01 只证明 13 个锁定 A01 输入及其真实镜像在精确版本元组下的 A→T 连续交接；不等于任意半场站位或通用 A/F/T 集成。
 - 不增加 ICE、blitz、hedge、switch-back、外弹、二次掩护、拖拽、手动控制或任意角色识别。
 - 不模拟投篮命中率、篮板、犯规、完整比赛、更多人数或 5v5。
 - 不重开 P04，不改写 G08/F03 manifest，不增加 ML/RL 或生产级 UI。
-- 不开始 I；Formation、Autonomous、T、Policy 与 held-out 的串联必须另行定义输入、自动门与停止点。
+- 不开始 I02 非默认策略整合或 V held-out；不得把当前 I01 待验收实现写成已封存检查点。
 
 ## 下一停止点
 
-T00–T01 已完成首轮人工失败所揭示的队友通道修复、加严审计、自动门、本地浏览器复验与用户重新验收，并以 `e735f47` 封存。未获得 I 的独立实现授权前不得开始 I；仓库上下文工具仍是独立未提交增量，不得混入 T 检查点。
+请用户在只读 I00–I01 面板人眼检查形成后交接、CHASE 读取、真实镜像与安全退出。用户确认前保持当前工作树，不提交、不推送；不得开始 I02 或 V，也不得改写 A/T 冻结检查点。

@@ -43,6 +43,8 @@ export const UNDER_PULLUP_MIN_RIMWARD_PROGRESS = 0.25;
 export const UNDER_PULLUP_CLEAN_STOP_MIN_BODY_GAP = 0.08;
 export const UNDER_PULLUP_MIN_APPROACH_SPEED = 0.55;
 export const MINIMUM_TACTICAL_VOCABULARY_VERSION = "minimum-t@1" as const;
+export const FORMATION_TACTICAL_INTEGRATION_VERSION =
+  "formation-minimum-t@1" as const;
 export const TACTICAL_DROP_MIN_RETREAT_PROGRESS = 0.12;
 export const TACTICAL_DROP_MIN_SCREEN_DEPTH = 0.46;
 export const TACTICAL_CHASE_MIN_ROUTE_CLEARANCE = 0.035;
@@ -108,6 +110,8 @@ export type SetupMode = "explicit" | "auto";
 export type PnrStartMode = "preset_pnr" | "form_pnr";
 export type SimulationPhase = "formation" | "pnr";
 export type TacticalVocabularyVersion = typeof MINIMUM_TACTICAL_VOCABULARY_VERSION;
+export type FormationTacticalIntegrationVersion =
+  typeof FORMATION_TACTICAL_INTEGRATION_VERSION;
 export type SimulationHorizon =
   | "pnr_resolution"
   | "formation_resolution"
@@ -555,6 +559,7 @@ export interface SimulationConfig {
   o1MaxSpeed?: number;
   horizon?: SimulationHorizon;
   tacticalVocabularyVersion?: TacticalVocabularyVersion;
+  integrationVersion?: FormationTacticalIntegrationVersion;
   strategies?: TeamStrategySelection;
   /** Audit-only execution order; plans must be identical for either value. */
   plannerEvaluationOrder?: "offense-first" | "defense-first";
@@ -2876,6 +2881,8 @@ const AUTO_ALLOWED_CONFIG_FIELDS = new Set([
   "strategies",
   "horizon",
   "plannerEvaluationOrder",
+  "tacticalVocabularyVersion",
+  "integrationVersion",
 ]);
 
 function assertAutonomousFormationInput(
@@ -4540,6 +4547,9 @@ function evaluateDefenseCandidates(
 
   const tacticalVocabularyEnabled =
     observation.tacticalVocabularyVersion === MINIMUM_TACTICAL_VOCABULARY_VERSION;
+  const tacticalFormationHandoff =
+    tacticalVocabularyEnabled &&
+    observation.triggerEvents.some((event) => event.type === "formation_ready");
   const tacticalGeometry = tacticalVocabularyEnabled
     ? evaluateTacticalCoverageCandidateGeometry(observation)
     : null;
@@ -4578,6 +4588,9 @@ function evaluateDefenseCandidates(
       id === "BACKSIDE_CONTEST" ||
       postCatchCandidate ||
       id === "PRESSURE_MISMATCH";
+    if (tacticalFormationHandoff && !tacticalCoverageCandidate) {
+      vetoes.push("Formation 已在公开联合就绪边界交给 minimum-t；防守须先建立 drop/chase 原对位覆盖");
+    }
     if (observation.facts.matchupExchange && !postSwitchCandidate) {
       vetoes.push("换防已完成，必须进入 D5 守球、D1 守 O5 的错位阶段");
     }
@@ -7657,6 +7670,15 @@ export class PnrSimulation {
       );
     }
     const tacticalVocabularyVersion = config.tacticalVocabularyVersion;
+    const integrationVersion = config.integrationVersion;
+    if (
+      integrationVersion !== undefined &&
+      integrationVersion !== FORMATION_TACTICAL_INTEGRATION_VERSION
+    ) {
+      throw new Error(
+        `integrationVersion must be "${FORMATION_TACTICAL_INTEGRATION_VERSION}"; received ${String(integrationVersion)}`,
+      );
+    }
     if (
       tacticalVocabularyVersion !== undefined &&
       tacticalVocabularyVersion !== MINIMUM_TACTICAL_VOCABULARY_VERSION
@@ -7665,9 +7687,24 @@ export class PnrSimulation {
         `tacticalVocabularyVersion must be "${MINIMUM_TACTICAL_VOCABULARY_VERSION}"; received ${String(tacticalVocabularyVersion)}`,
       );
     }
+    const integratedTacticalOptIn =
+      integrationVersion === FORMATION_TACTICAL_INTEGRATION_VERSION;
+    if (
+      integratedTacticalOptIn &&
+      (setupMode !== "auto" ||
+        startMode !== "form_pnr" ||
+        config.formationDomainVersion !== AUTONOMOUS_FORMATION_DOMAIN_VERSION ||
+        tacticalVocabularyVersion !== MINIMUM_TACTICAL_VOCABULARY_VERSION ||
+        config.horizon !== "tactical_resolution")
+    ) {
+      throw new Error(
+        `integrationVersion="${FORMATION_TACTICAL_INTEGRATION_VERSION}" requires auto form_pnr, formationDomainVersion="${AUTONOMOUS_FORMATION_DOMAIN_VERSION}", tacticalVocabularyVersion="${MINIMUM_TACTICAL_VOCABULARY_VERSION}", and tactical_resolution`,
+      );
+    }
     if (
       tacticalVocabularyVersion === MINIMUM_TACTICAL_VOCABULARY_VERSION &&
-      (setupMode !== "explicit" || startMode !== "preset_pnr")
+      (setupMode !== "explicit" || startMode !== "preset_pnr") &&
+      !integratedTacticalOptIn
     ) {
       throw new Error(
         `tacticalVocabularyVersion="${MINIMUM_TACTICAL_VOCABULARY_VERSION}" requires explicit preset_pnr; Formation integration belongs to I`,
@@ -7702,6 +7739,17 @@ export class PnrSimulation {
     const strategies = copyTeamStrategySelection(
       config.strategies ?? DEFAULT_TEAM_STRATEGY_SELECTION,
     );
+    if (
+      integratedTacticalOptIn &&
+      (strategies.offense.id !== DEFAULT_TEAM_STRATEGY_SELECTION.offense.id ||
+        strategies.offense.version !== DEFAULT_TEAM_STRATEGY_SELECTION.offense.version ||
+        strategies.defense.id !== DEFAULT_TEAM_STRATEGY_SELECTION.defense.id ||
+        strategies.defense.version !== DEFAULT_TEAM_STRATEGY_SELECTION.defense.version)
+    ) {
+      throw new Error(
+        `integrationVersion="${FORMATION_TACTICAL_INTEGRATION_VERSION}" requires the P00 default zero-adjustment strategies; strategy integration belongs to I02`,
+      );
+    }
     this.offenseStrategyProfile = resolveRegisteredTeamStrategy(
       strategies.offense,
       "offense",
@@ -7730,6 +7778,7 @@ export class PnrSimulation {
       o1MaxSpeed: clamp(config.o1MaxSpeed ?? 3.72, 3.4, 4.4),
       horizon: config.horizon ?? "pnr_resolution",
       ...(tacticalVocabularyVersion ? { tacticalVocabularyVersion } : {}),
+      ...(integrationVersion ? { integrationVersion } : {}),
       strategies,
     };
     this.world = initialWorld({
@@ -7741,7 +7790,9 @@ export class PnrSimulation {
       o1MaxSpeed: this.config.o1MaxSpeed,
       d1FrontReactionDelay: this.config.d1FrontReactionDelay,
       d1PostCatchRecoveryDelay: this.config.d1PostCatchRecoveryDelay,
-      tacticalVocabularyVersion: this.config.tacticalVocabularyVersion,
+      tacticalVocabularyVersion: integratedTacticalOptIn
+        ? undefined
+        : this.config.tacticalVocabularyVersion,
     });
     this.offensePlan = this.replanOffense("初始边界", []);
     this.defensePlan = this.replanDefense("初始边界", []);
@@ -7907,6 +7958,12 @@ export class PnrSimulation {
         phase: "pnr",
         enteredPnrAtTick: this.world.tick,
       };
+      if (
+        this.config.integrationVersion === FORMATION_TACTICAL_INTEGRATION_VERSION
+      ) {
+        this.world.tacticalVocabularyVersion = MINIMUM_TACTICAL_VOCABULARY_VERSION;
+        this.world.tacticalCoverage = { ...EMPTY_TACTICAL_COVERAGE };
+      }
       this.offenseQueue = [];
       this.defenseQueue = [];
       this.replanBothFromSameSnapshot(
@@ -8770,12 +8827,26 @@ export class PnrSimulation {
               handlerCenterwardLead >=
                 TACTICAL_TEAMMATE_CHANNEL_CLEARANCE - 1e-9))) &&
         this.world.ballOwner === "O1");
+    const d1RearPressure =
+      chaseOverCommitted &&
+      d1Trail &&
+      d1O1Distance <= 1.45 + 1e-9;
+    const chaseContainSettled =
+      chaseOverCommittedAtTick !== null &&
+      this.world.tick - chaseOverCommittedAtTick >=
+        Math.ceil(TACTICAL_READ_MIN_COMMIT_SECONDS / FIXED_DT);
+    const integratedTeamContainShape =
+      this.config.integrationVersion === FORMATION_TACTICAL_INTEGRATION_VERSION &&
+      chaseContainSettled &&
+      (d1Recovered || d1RearPressure) &&
+      contest.goalSideMargin >= 0.04 - 1e-9 &&
+      contest.containLineDistance <= 0.52 + 1e-9 &&
+      contest.distance <= 2.15 + 1e-9;
     const contained =
       previous.contained ||
       (active &&
         elapsed >= 0.92 &&
-        d1Recovered &&
-        contest.containsBall &&
+        ((d1Recovered && contest.containsBall) || integratedTeamContainShape) &&
         !o5RollingNow &&
         o1Speed <= 0.45 &&
         !driveAdvantage &&
@@ -9978,6 +10049,9 @@ export class PnrSimulation {
             tacticalVocabularyVersion: this.config.tacticalVocabularyVersion,
             tacticalCoverage: this.world.tacticalCoverage,
           }
+        : {}),
+      ...(this.config.integrationVersion
+        ? { integrationVersion: this.config.integrationVersion }
         : {}),
       ...(this.config.startMode === "form_pnr"
         ? {
