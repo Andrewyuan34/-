@@ -4,8 +4,8 @@
 > 状态日期：2026-08-10
 > 工作分支：`prototype/pnr-formation-loop`
 > 最近行为提交：`6f7af55`（I02 既有 `2 × 3` P 策略贯穿与 I03 集成审计/代表回放）
-> 已封存检查点：Policy `c4ada7d`；Formation F00/F00-R2 `fb9bea5`、F01/F02 `9063135`、F03 manifest `ba39ef0`、最终审计 `f8163c2`；Autonomous Setup A00–A01 `7ecedea`；T00–T01 `e735f47`；I00–I01 `676176c`、I02–I03 `6f7af55`
-> 当前状态：I00–I03 已由用户验收并封存；V00 已锁定，V01 已按合同通过并形成 result checkpoint，V03 收口中
+> 已封存检查点：Policy `c4ada7d`；Formation F00/F00-R2 `fb9bea5`、F01/F02 `9063135`、F03 manifest `ba39ef0`、最终审计 `f8163c2`；Autonomous Setup A00–A01 `7ecedea`；T00–T01 `e735f47`；I00–I01 `676176c`、I02–I03 `6f7af55`；V00 lock `f1eb7786`、V01 result `569fa6fb`
+> 当前状态：V00–V03 已完整封存；V02 为 no-op，V03 未改变行为或增加产品入口
 > 本文记录总体目标、阶段路线和当下判断；运行方式及代码事实仍以根目录 `README.md` 与自动检查为准。
 > 战术覆盖、场景证人、泛化、组合与策略之间的长期关系，见[《2v2 挡拆战术覆盖与泛化模型》](./2026-08-07-tactical-coverage-and-generalization-model.md)。
 
@@ -23,7 +23,7 @@
 
 Policy 检查点已经完成第一层理想演示：选择一个处于批准输入域内的 2v2 起手和双方策略，点击运行后配置锁定，两支队伍按照各自策略与公开世界自动对局。Formation 阶段开始补第二层能力：从尚未站成掩护的合理起手出发，由双方队级计划先形成站位，再无缝接入同一个挡拆内核。相同输入与策略仍必须完全复现，不能因为增加形成阶段而改写已经批准的 S/G/P 行为。
 
-用户已经批准后续按 `F → A → T → I → V` 逐层收敛；Formation F00–F03、Autonomous Setup A00–A01、T00–T01 与 I00–I03 均已封存并由用户验收。A 仍只在 F01/F02/F03 已证明的合法形成域工作；独立 T 也只证明显式冻结 preset 输入，I02 只把封存 P03 策略接入锁定 A01 集成域，不等于完全无结构的半场任意摆放。V00 锁定的 bounded integrated held-out 已由 V01 完整执行并通过，聚合结果进入后续 result checkpoint，用户已授权完成 V03 收口；拖拽编辑、手动控制、ML/RL、5v5、完整比赛、投篮结果、犯规、转换进攻、旧项目迁移和生产级 UI 仍不在当前路线内。
+用户已经批准并完成 `F → A → T → I → V` 逐层收敛；Formation F00–F03、Autonomous Setup A00–A01、T00–T01、I00–I03 与 V00–V03 均已封存。A 仍只在 F01/F02/F03 已证明的合法形成域工作；独立 T 也只证明显式冻结 preset 输入，I02 只把封存 P03 策略接入锁定 A01 集成域，V 也只验证锁定 bounded integrated held-out，不等于完全无结构的半场任意摆放。拖拽编辑、手动控制、ML/RL、5v5、完整比赛、投篮结果、犯规、转换进攻、旧项目迁移和生产级 UI 仍不在当前路线内。
 
 ## 2. 不可破坏的架构与篮球边界
 
@@ -334,11 +334,19 @@ I03 在未改写 I00 manifest/hash 的前提下，对 13 inputs × 6 matchups = 
 
 #### V00 锁定证据
 
-V00 在任何 V01 simulation 运行前锁定 `locked-integrated-validation-contract@1` / `locked-integrated-validation-inputs@1`。manifest 使用生成 seed `20260811`，从冻结 F01 域接受 12 个未进入既有 F/A/I canonical 集合或其镜像的 input-only 起手，simulation seeds 为 `20261001..20261012`；复用封存 P03/I02 的 `2 × 3` 策略顺序，并锁定 right/真实 left mirror、primary/duplicate/defense-first、六 simulation 逐 tick lockstep、许可终局、阈值、OOD、失败复现、四条代表 replay、证据 schema、完整门禁及 rollback `28cf70e8c95710665f7ee2322a2dca8ff57e1951`。canonical manifest 为 `sha256:1fef82a37a1d610dcd8e5b91b00a123fd46312c8bb71c46566093cd4c57dd27a`；V01 仅能一次性完整消费 72 cells、144 worlds、432 simulations，证据文件不得覆盖。此处只形成 V00 本地锁，不代表 V01 已通过，也不进入 V02/V03。
+V00 在任何 V01 simulation 运行前锁定 `locked-integrated-validation-contract@1` / `locked-integrated-validation-inputs@1`。manifest 使用生成 seed `20260811`，从冻结 F01 域接受 12 个未进入既有 F/A/I canonical 集合或其镜像的 input-only 起手，simulation seeds 为 `20261001..20261012`；复用封存 P03/I02 的 `2 × 3` 策略顺序，并锁定 right/真实 left mirror、primary/duplicate/defense-first、六 simulation 逐 tick lockstep、许可终局、阈值、OOD、失败复现、四条代表 replay、证据 schema、完整门禁及 rollback `28cf70e8c95710665f7ee2322a2dca8ff57e1951`。canonical manifest 为 `sha256:1fef82a37a1d610dcd8e5b91b00a123fd46312c8bb71c46566093cd4c57dd27a`；V01 仅能一次性完整消费 72 cells、144 worlds、432 simulations，证据文件不得覆盖。该步骤当时只形成 V00 独立锁，不代表 V01 已通过，也不进入 V02/V03。
 
 #### V01 执行证据
 
-V00 本地 lock commit 为 `f1eb7786b24677ba3264f7b2433fd069401fa4a4`，其 parent 精确为 rollback `28cf70e8c95710665f7ee2322a2dca8ff57e1951`。V01 只执行一次：12 inputs、六个封存 matchup、72 cells、144 worlds、432 simulations 全部完成；72/72 cells 通过，候选通用缺陷 0、OOD 合同失败 0、失败复现键 0。144 worlds 全部真实形成，其中 `tactical_pocket_caught` 36、`tactical_contained` 108；最小队友身体净空 `0.06793875835737445m`，最大镜像误差 `1.221974324176267e-13`。锁定的确定性、镜像、阶段/球权连续性、合法状态/动作、策略携带、planner 顺序、信息隔离、角色/路线/球权、hard veto、公开因果、战术完成/安全退出、队友通道/pocket、局部 screen 与策略因果门全部通过。四条代表回放依次为 `V00-C04/OB-DB right@332`、`V00-C01/OB-DB right@256`、`V00-C01/OB-DM right@256`、`V00-C04/OB-DB left@332`，终局均为 `tactical_pocket_caught`。完整证据保留在忽略文件 `outputs/v01-integrated-validation.json`；result checkpoint 只记录聚合，V03 再固定 evidence digest、V02 no-op 与只读 QA。
+V00 lock commit 为 `f1eb7786b24677ba3264f7b2433fd069401fa4a4`，其 parent 精确为 rollback `28cf70e8c95710665f7ee2322a2dca8ff57e1951`。V01 只执行一次：12 inputs、六个封存 matchup、72 cells、144 worlds、432 simulations 全部完成；72/72 cells 通过，候选通用缺陷 0、OOD 合同失败 0、失败复现键 0。144 worlds 全部真实形成，其中 `tactical_pocket_caught` 36、`tactical_contained` 108；最小队友身体净空 `0.06793875835737445m`，最大镜像误差 `1.221974324176267e-13`。锁定的确定性、镜像、阶段/球权连续性、合法状态/动作、策略携带、planner 顺序、信息隔离、角色/路线/球权、hard veto、公开因果、战术完成/安全退出、队友通道/pocket、局部 screen 与策略因果门全部通过。四条代表回放依次为 `V00-C04/OB-DB right@332`、`V00-C01/OB-DB right@256`、`V00-C01/OB-DM right@256`、`V00-C04/OB-DB left@332`，终局均为 `tactical_pocket_caught`。完整证据保留在忽略文件 `outputs/v01-integrated-validation.json`；result checkpoint 只记录聚合，其 digest、V02 no-op 与只读 QA 由下节 V03 封存事实固定。
+
+#### V02–V03 封存证据
+
+V01 无失败、无 OOD，因此 V02 机械记录为 `not required / no-op`：没有修复输入，也没有行为、manifest、seed、阈值、样本、策略或参数变化。V03 再次核对 V00 commit/parent/tree 为 `f1eb7786…` / `28cf70e8…` / `d3aab316e1994a134363a9476374f950a619745e`，manifest hash 不变；runner 的直接 parent、tracked-clean、manifest、evidence-absent 与 exclusive-create `wx` 门保证原始执行不能无痕覆盖。V01 聚合 result checkpoint 为 `569fa6fb421f340994fd317eaf17d512e408fdbd`；evidence 使用 `locked-integrated-validation-evidence@1` / `locked-integrated-validation-audit@1`，42,185 bytes，SHA-256 为 `6948f7c6939e6b38a623e3901df842bab7ab8e74ac821a507c4cb380eb78656a`，原始执行环境为 Node `24.16.0` / `win32-x64`。
+
+浏览器只读 QA 严格复放预选四条代表项：C04 OB-DB right/left 均沿 `formation_side@4 → screen_set/formation_ready@156 → coverage/read@162 → route exposure/impeded@169 → contact@190 → pass launch@327 → catch/terminal@332` 连续推进；C01 OB-DB 与 OB-DM right 均在 ready 81、coverage/read 85、contact 120、launch 251、catch/terminal 256，OB-DM 正确展示 `DEFENSE_MISMATCH_PRESSURE@1`。C04 right/left 在中途与终局均真实镜像、事件顺序与 tick 相同，代表回放级最大镜像误差为 `4.44e-15`；四案路线、球权与 5-tick pocket 飞行连贯，无远程 screen。默认布局及 880×900、700×900 视口下 court、策略标签、事件和控件均无横向溢出或遮挡，console warning/error 为 0。临时 `app/v03-qa/page.tsx` 只用于本地诊断，完成检查后删除且未进入任何提交；短期服务已停止。
+
+42KB raw evidence 按仓库约定保持 local ignored，不随 clone 分发；封存文档记录其版本、bytes、digest、聚合与重放键。新 clone 可从最终维护分支取得 V00 lock；只有另行批准 audit reproduction 后，才能在干净 checkout `f1eb7786…` 上一次性运行 lock runner 并比较 digest，不得覆盖原件或改变合同。V03 最终执行 `npm run context:map`、`npm run check`（103/103 回归、9 类架构契约、context check、lint、build）与 `git diff --check`，全部通过；没有源代码或产品功能变化。
 
 ### F 之后的批准主线：A → T → I → V
 
@@ -378,8 +386,8 @@ G06 有限参数组合（已完成）
 → T00–T01 最小防守覆盖与进攻反制词汇（首轮人工失败已修复、复验并由用户重新验收，`e735f47`）
 → I00 先验集成合同 → I01 默认策略同世界连续回合（`676176c` 已提交推送）
 → I02 既有 `2 × 3` 策略贯穿 → I03 集成审计与代表回放（已验收并封存，`6f7af55`）
-→ V 冻结的集成 held-out（未开始）
-→ 有界自动 2v2 检查点
+→ V00 先验锁定 → V01 唯一执行 → V02 no-op → V03 证据/回放封存（已完成，`f1eb7786`、`569fa6fb`）
+→ 有界自动 2v2 检查点（已形成）
 ```
 
 ## 8. 里程碑与可以声称的范围
@@ -398,7 +406,7 @@ G06 有限参数组合（已完成）
 | A 系列通过后 | 可以声称固定 O1/O5 职责下，系统能从公开几何自动选择掩护侧与合法 anchor。 | 新防守覆盖词汇、任意球员角色分配。 |
 | T 系列通过后 | 可以声称现有换防/绕下/拒绝加最小 drop/contain、chase/over 形成可复用的覆盖与反制词汇。 | ICE、blitz、hedge 等未实现战术已经被泛化覆盖。 |
 | I 系列通过后 | 可以声称已实现的形成、覆盖、二级读取和 P 策略在一个连续回合中共享同一因果链。 | 投篮命中、篮板、犯规或完整比赛。 |
-| V 系列通过后 | 可以声称有界合法起手域内的自动 2v2 闭环经过冻结集成验证，确定、合法、可解释、可重放。 | 任意半场局面、5v5 或现实全部挡拆变化。 |
+| V 系列通过并封存 | 可以声称有界合法起手域内的自动 2v2 闭环经过冻结集成验证，确定、合法、可解释、可重放。 | 任意半场局面、5v5 或现实全部挡拆变化。 |
 
 G/P 检查点已经满足以下完成判断：
 
@@ -447,7 +455,7 @@ F00 在此基础上增加一个新的完成条件：掩护尚未就位时，四�
 - A00–A01 已按公开几何自动选边、选择有限合法 anchor，并在全-veto 时真实安全退出；用户验收后以 `7ecedea` 封存。
 - T00–T01 的显式冻结输入已用真实退守、追过、coverage commit、snake 与 pocket 飞行/接球产生四类合法终局；首轮人工发现的队友绕行、贴身挤道和一 tick pocket 假阳性已经用队级时空通道修复，并通过加严自动门、本地可视复验与用户重新验收，以 `e735f47` 封存。
 - I00 已在结果揭示前锁定全部 13 个 A01 输入、A/T 上游版本与 hash、许可终局和回退点；I01 已在同一 world/tick/球权中完成 next-boundary 交接并以 `676176c` 提交推送。I02–I03 让封存 P03 的六种策略组合从 tick 0 贯穿锁定 I 输入，通过 78 cells / 156 worlds / 468 simulations 的自动审计，并在用户验收代表回放后以 `6f7af55` 封存。
-- V00 在揭示前锁定全新 bounded integrated held-out；V01 的 72 cells / 144 worlds / 432 simulations 全部通过，0 候选通用缺陷、0 OOD，并按预先规则产出四条代表 replay。聚合已进入 result checkpoint，尚待 V03 封存。
+- V00 在揭示前锁定全新 bounded integrated held-out；V01 的 72 cells / 144 worlds / 432 simulations 全部通过，0 候选通用缺陷、0 OOD，并按预先规则产出四条代表 replay。V02 为 no-op；V03 已固定 result/evidence digest、完成只读浏览器 QA 与全门禁，且没有提交临时 harness 或改动篮球行为。
 
 当前仍未证明：
 
@@ -459,4 +467,4 @@ F00 在此基础上增加一个新的完成条件：掩护尚未就位时，四�
 
 P04 仍未执行并保持跳过；I02 只复用封存 P03，不借机重新开启策略校准或 held-out，也不改变 Policy 已完成的结论。
 
-A00–A01、T00–T01 与 I00–I03 均已完成、由用户验收并封存；I 行为检查点为 `676176c`、`6f7af55`。V00 lock commit 为 `f1eb7786b24677ba3264f7b2433fd069401fa4a4`，V01 已按锁定合同唯一执行并通过。用户已授权完成剩余 V：V02 为 no-op，当前只进行 V03 只读 QA、证据摘要与 Git 收口。
+A00–A01、T00–T01、I00–I03 与 V00–V03 均已完成并封存；I 行为检查点为 `676176c`、`6f7af55`，V00 lock / V01 result 为 `f1eb7786b24677ba3264f7b2433fd069401fa4a4` / `569fa6fb421f340994fd317eaf17d512e408fdbd`。当前没有自动下一阶段，后续唯一动作是等待用户另行决定新的有界增量。

@@ -46,17 +46,17 @@
 
 I00 必须保持先于任何结果锁定的 input-only/hash 合同；I01 只允许精确 `formation-minimum-t@1` 从同一 simulation/world 的公开 next-boundary 串联，不得重建回合、重置 tick/位置/速度/球权或读取隐藏 side/anchor/plan/result。I02 只复用封存 P03 的两套进攻 × 三套防守，从 tick 0 到终局保持同一策略选择并服从硬 veto；I03 只在锁定 I 输入及镜像上审计并选择少量只读回放。策略没有产生差异同样是合法结果，不得为展示调基础评分。I00–I03 已由用户验收并以 `676176c`、`6f7af55` 封存。
 
-### 执行 V00–V01 冻结集成验证
+### 复核已封存 V00–V03 冻结集成验证
 
 读取：
 
 - `lib/pnr-v00-validation-manifest.ts`：只读 V00 输入、seed、策略顺序、阈值、OOD、代表 replay、证据与 rollback 合同
 - `lib/pnr-v01-validation-audit.ts`：复用 I 审计的全量 cell 聚合与分类，不复制 planner/kernel
 - `tests/pnr-validation.test.mjs`：只运行 V00 静态锁测试，不揭示 V01
-- `scripts/run-v01-validation.mjs`：仅在 V00 本地 lock commit 后执行一次
-- `DECISIONS.md` 的 D021
+- `scripts/run-v01-validation.mjs`：V01 原始一次性 runner；日常开发禁止再运行
+- `DECISIONS.md` 的 D021–D022
 
-V00 必须先于任何 V01 world 独立提交；V01 只能按 manifest 顺序执行全部 input × matchup × mirror × 三执行，不得改 seed、阈值、筛选或按结果重排。锁入 manifest 的输入一律视为 in-domain；若锁后静态域检查失败，应记为 OOD 合同失败并使 V01 失败，不能替换样本。`formation_aborted` / `formation_timeout` 是合法安全退出，不是 OOD。V01 只分类候选通用缺陷或 OOD，不修代码、不调参、不进入 V02/V03。
+V00 已先于任何 V01 world 以 `f1eb7786…` 独立锁定，V01 唯一执行的全部 input × matchup × mirror × 三执行已经通过；V02 因无失败为 no-op，V03 只固定聚合、digest 与四条代表 replay QA。raw evidence 保持 local ignored，不属于 clone 内容。除非用户另行批准独立 audit reproduction，不得再次运行 V01；若获批准，新 clone 应从维护分支 checkout `f1eb7786…`，在无既有 evidence 的干净 tracked tree 上只运行一次，并将产物 SHA-256 与 `6948f7c6939e6b38a623e3901df842bab7ab8e74ac821a507c4cb380eb78656a` 比较，不得改 seed、阈值、筛选、执行顺序或锁定合同。
 
 ### 继续或验收 T00–T01 Minimum Tactical Vocabulary
 

@@ -2,7 +2,7 @@
 
 这是一个独立、确定性、可观看且可解释的 2v2 挡拆算法实验台。它不是预录轨迹：两支球队分别产生队级计划，中立世界以固定时间步解析运动、身体几何、球权、传球和事件。
 
-当前稳定检查点已经覆盖 S01–S08 战术证人、G01–G08 受限域泛化、P00–P03 的两套进攻策略 × 三套防守策略、Formation F00–F03、Autonomous Setup A00–A01、T00–T01，以及已由用户验收的 Integrated Possession I00–I03。I00–I01 连续交接基线为 `676176c`，I02–I03 行为提交为 `6f7af55`；V00 已由本地 lock commit 锁定，V01 已按合同通过并形成 result checkpoint，V03 尚未封存或 push，因此仍不属于稳定检查点。实时状态见 [`docs/CURRENT.md`](./docs/CURRENT.md)。
+当前稳定检查点已经覆盖 S01–S08 战术证人、G01–G08 受限域泛化、P00–P03 的两套进攻策略 × 三套防守策略、Formation F00–F03、Autonomous Setup A00–A01、T00–T01、Integrated Possession I00–I03，以及 Locked Integrated Validation V00–V03。I00–I01 连续交接基线为 `676176c`，I02–I03 行为提交为 `6f7af55`；V00 lock commit 为 `f1eb7786b24677ba3264f7b2433fd069401fa4a4`，V01 result checkpoint 为 `569fa6fb421f340994fd317eaf17d512e408fdbd`。实时状态与证据摘要见 [`docs/CURRENT.md`](./docs/CURRENT.md)。
 
 ## 新 agent 从哪里开始
 
@@ -35,7 +35,7 @@ npm run build
 
 `npm test` 与聚焦测试默认使用紧凑 dot reporter，并自动发现各阶段的 `tests/*.test.mjs`。开发中先运行 `npm run test:focus -- "<name pattern>"`；只有失败时才用 `npm run test:focus:detail -- "<name pattern>"` 展开对应失败。`npm run test:detail` 可展开整套测试。源文件变化后先运行 `npm run context:map` 更新派生地图；`npm run check` 会依次验证地图与架构边界、测试、lint 和 build。
 
-V01 只能在 V00 lock commit 后、工作树无 tracked 改动时运行一次锁定入口：`npm run validate:v01`。命令只消费已锁定 manifest，并把聚合证据写到被忽略的 `outputs/v01-integrated-validation.json`；不得用它改 seed、阈值或筛掉失败 cell。
+V01 已在 V00 lock commit 上唯一执行完毕，日常开发不得再次运行 `npm run validate:v01`。只有另行批准的独立审计复核，才可在干净的新 clone 中 checkout V00 lock、一次性消费原 manifest，并把新生成的 ignored evidence 与封存摘要中的 SHA-256 比较；不得改 seed、阈值、样本、顺序或筛掉失败 cell。
 
 ## 架构
 
@@ -123,13 +123,14 @@ rg -n "<symbol-or-file>" docs/generated/SYMBOLS.md
 - Autonomous Setup 能在同一域内按公开几何确定性选择 side × anchor，并通过真实运动形成或在全-veto 时保球安全退出；用户已验收四条 A00–A01 代表回放。
 - 显式 `minimum-t@1` 回放能从真实退守、追过和公开 coverage 事实产生急停、contain、snake 或 pocket 接球；队友通道与 pocket 真实飞行已经进入硬门，用户已验收四条代表回放及 pocket 复看片段。
 - 已封存的 I00–I03 只在锁定 A01 域与精确 `formation-minimum-t@1` 下，把 Formation 的公开联合就绪连续交给 drop/chase 与进攻二级读取，并让封存 P03 的既有 `2 × 3` 策略配置从 tick 0 贯穿到终局；形成失败仍真实 timeout/abort。
+- 已封存的 V00–V03 在先验锁定的 12 个新起手 × 既有 `2 × 3` 策略 × 真实左右镜像上完成 72 cells / 144 worlds / 432 simulations；确定性、连续性、信息边界、角色/路线/球权、局部 screen 因果和代表回放均通过。
 - 用户可以从真实回放、计划、角色、候选、否决与事件中判断篮球语义。
 
 ## 仍不能声称什么
 
 - 半场任意位置都能自动组织挡拆。
 - A00–A01 只证明已批准 Formation 域、固定 O1/O5 与 D1/D5 职责；不能外推到任意半场位置或任意角色识别。
-- V01 通过即可视为 V03 已封存、P04 已完成或全新策略 held-out 已验证；当前只证明既有 `2 × 3` 策略在锁定 bounded integrated held-out 上通过。
+- 不得把 V00–V03 封存视为 P04 已完成、全新策略词汇已经验证或任意起手已经泛化；它只证明既有 `2 × 3` 策略在锁定 bounded integrated held-out 上通过。
 - ICE、blitz、hedge、switch-back、外弹、二次掩护等战术原语已经实现。
 - 完整 `2 × 3` 策略矩阵通过了全新策略 held-out 起手；P04 被明确跳过。
 - 已处理投篮、犯规、篮板、完整比赛、第三名协防人或 5v5。

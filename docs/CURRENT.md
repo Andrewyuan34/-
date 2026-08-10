@@ -6,7 +6,8 @@
 > T00–T01 行为检查点：`e735f4768696bb423937c94ec3dea17a13a5ea94`；修复后已由用户重新验收
 > I00–I01 连续交接基线：`676176c`；已提交并推送
 > I02–I03 行为检查点：`6f7af556823f372b012053b7eaa8ea194be7b5df`；已由用户验收
-> V00 input-only manifest：`sha256:1fef82a37a1d610dcd8e5b91b00a123fd46312c8bb71c46566093cd4c57dd27a`；本地 lock commit `f1eb7786b24677ba3264f7b2433fd069401fa4a4`，未 push
+> V00 input-only manifest：`sha256:1fef82a37a1d610dcd8e5b91b00a123fd46312c8bb71c46566093cd4c57dd27a`；lock commit `f1eb7786b24677ba3264f7b2433fd069401fa4a4`，parent `28cf70e8c95710665f7ee2322a2dca8ff57e1951`
+> V01 result checkpoint：`569fa6fb421f340994fd317eaf17d512e408fdbd`；evidence 42,185 bytes，`sha256:6948f7c6939e6b38a623e3901df842bab7ab8e74ac821a507c4cb380eb78656a`
 > 仓库上下文工具：自动模块/符号地图与 9 类机械架构门已由 `7eb4bd2` 提交并推送
 > P2/P4 基线：`dd6287b97dc3b33b8070a45ccfcb7280a24a1951`
 > F01/F02 冻结核心：`90631359ba5a52eacfdbfc1434d657f8743df45e`
@@ -18,11 +19,11 @@
 
 跨文件定位先看 [`generated/CODEMAP.md`](./generated/CODEMAP.md)，具体符号只用 `rg` 查询 [`generated/SYMBOLS.md`](./generated/SYMBOLS.md)。两者均由 `npm run context:map` 生成；`npm run context:check` 同时拒绝陈旧地图与架构边界漂移。
 
-仓库上下文工具的架构/地图自测与 9 类机械契约已作为独立提交 `7eb4bd2` 推送，不改变已经验收的篮球行为。本轮 I00–I03 聚焦 12/12、仓库总门 98/98、9 类架构契约、context check、lint、build 与 `git diff --check` 全部通过。
+仓库上下文工具的架构/地图自测与 9 类机械契约已作为独立提交 `7eb4bd2` 推送，不改变已经验收的篮球行为。V 最终门为仓库总回归 103/103、9 类架构契约、context map/check、lint、build 与 `git diff --check` 全部通过。
 
 ## 一句话状态
 
-S01–S08、G01–G08、P00–P03、Formation F00–F03、Autonomous Setup A00–A01、T00–T01 与 I00–I03 均已封存并由用户验收。V00 已在揭示前锁定；V01 唯一执行的 12 inputs / 72 cells / 144 worlds / 432 simulations 全部通过，0 失败、0 OOD，聚合结果由后续 result checkpoint 记录，当前正在完成 V03 封存。
+S01–S08、G01–G08、P00–P03、Formation F00–F03、Autonomous Setup A00–A01、T00–T01、I00–I03 与 V00–V03 均已封存。V01 唯一执行的 12 inputs / 72 cells / 144 worlds / 432 simulations 全部通过，0 失败、0 OOD；V02 为 no-op，V03 已完成不可变证据复核与四条代表回放 QA，没有改变篮球行为或增加产品入口。
 
 ## F 阶段封存事实
 
@@ -66,19 +67,27 @@ S01–S08、G01–G08、P00–P03、Formation F00–F03、Autonomous Setup A00�
 
 ## V00 锁定合同
 
-1. **起点与回退。** V 只能从 I 封存检查点 `28cf70e8c95710665f7ee2322a2dca8ff57e1951`（行为 `6f7af55`）启动；V00 为仅本地 lock commit，不 push。
+1. **起点与回退。** V 只能从 I 封存检查点 `28cf70e8c95710665f7ee2322a2dca8ff57e1951`（行为 `6f7af55`）启动；V00 在揭示前形成其直接子 lock commit `f1eb7786b24677ba3264f7b2433fd069401fa4a4`，该位置不得改写。
 2. **输入与 seed。** 从冻结 `F01-v1` 域使用 `mulberry32-v1`、manifest seed `20260811` 按顺序接受 12 个未出现在既有 F01/F02/F03/A01/I00 canonical 集合或其镜像中的 right-canonical 合法输入；simulation seeds 固定为 `20261001..20261012`。S/G/P/T 的 preset 输入不是同一 Formation 起手语义，不参与该重复键。V01 对每个输入运行真实 left mirror，不预写 side/anchor/result。
 3. **矩阵与执行顺序。** 只复用 P03/I02 的 `OB-DB → OB-DM → OB-DE → OM-DB → OM-DM → OM-DE`。每个 cell 固定构造 `right-primary → right-duplicate → right-defense-first → left-primary → left-duplicate → left-defense-first` 六个 simulation，并逐 tick lockstep 推进；先终止的一项只记录首个 mismatch，其余非终止项继续到各自终局或锁定 watchdog。共 72 cells、144 worlds、432 simulations。
 4. **通过门。** 全部 cell 必须通过确定性、真实镜像、同 simulation 连续阶段/球权、合法状态与动作、策略引用/冻结、planner 顺序与双方信息隔离、角色归属、路线/球权、hard veto、公开事件因果、战术完成或真实安全退出、队友通道/pocket 与无远程 screen；镜像误差上限 `1e-9`，O1/O5 最小身体净空下限 `0.059999m`。
 5. **OOD 与失败纪律。** 只在生成阶段排除参数越界、非法几何、重复或旧输入；一旦锁入 manifest 即视为 in-domain。V01 若发现锁后域失败，记录为 OOD 合同失败并整体失败，不替换；`formation_aborted` / `formation_timeout` 是合法安全退出。其他失败只记候选通用缺陷，禁止在 V01 修代码、调参、改题或挑选重跑。
-6. **回放与证据。** 通过时按最长终局、最窄队友通道、首个形成成功的非默认策略携带、最长终局真实镜像四条固定规则选 replay；失败时前两槽固定替换为首失败及其镜像。完整聚合、所有失败复现键与 cell 摘要写入忽略目录 `outputs/v01-integrated-validation.json`，不提交 V01 结果。
+6. **回放与证据。** 通过时按最长终局、最窄队友通道、首个形成成功的非默认策略携带、最长终局真实镜像四条固定规则选 replay；失败时前两槽固定替换为首失败及其镜像。首次执行期间只把完整聚合、所有失败复现键与 cell 摘要写入忽略目录 `outputs/v01-integrated-validation.json`；后续只有经用户授权的 result/seal checkpoint 可以记录紧凑摘要与 digest，不提交 42KB raw artifact。
 
 ## V01 唯一执行结果
 
 1. **规模与分类。** 从 V00 lock commit 唯一执行 12 inputs × 6 matchups = 72 cells、144 个真实镜像 worlds、每 world 三次，共 432 simulations；72/72 cells 通过，候选通用缺陷 0、OOD 合同失败 0、失败复现键 0。144 worlds 全部形成，安全退出样本为 0。
 2. **终局与阈值。** 36 worlds 终止于 `tactical_pocket_caught`，108 worlds 终止于 `tactical_contained`；最小 O1/O5 身体净空 `0.06793875835737445m`，最大镜像误差 `1.221974324176267e-13`。确定性、镜像、连续阶段/球权、合法状态/动作、策略引用携带、planner 顺序、信息隔离、角色/路线/球权、hard veto、公开因果、战术完成/安全退出、队友通道/pocket、局部 screen 与零 adjustment 策略因果门全部通过。
 3. **代表 replay。** `V00-C04/OB-DB` right `tactical_pocket_caught@332`（最长终局）；`V00-C01/OB-DB` right `tactical_pocket_caught@256`（最窄通道）；`V00-C01/OB-DM` right `tactical_pocket_caught@256`（非默认防守策略携带）；`V00-C04/OB-DB` left `tactical_pocket_caught@332`（最长终局真实镜像）。
-4. **证据纪律。** 完整证据只写入忽略文件 `outputs/v01-integrated-validation.json`；runner 已拒绝覆盖，因此不得重跑。聚合结果由 result checkpoint 记录，raw artifact 仍按仓库约定保持 ignored，等待 V03 固定其摘要与复核边界。
+4. **证据纪律。** 完整证据只写入忽略文件 `outputs/v01-integrated-validation.json`；runner 已拒绝覆盖，因此不得重跑。结果采用 `locked-integrated-validation-evidence@1` / `locked-integrated-validation-audit@1`，共 42,185 bytes，SHA-256 为 `6948f7c6939e6b38a623e3901df842bab7ab8e74ac821a507c4cb380eb78656a`；聚合由 result checkpoint `569fa6fb421f340994fd317eaf17d512e408fdbd` 记录。
+
+## V02–V03 封存结果
+
+1. **V02 为 no-op。** 锁定验证没有失败或 OOD，没有修复目标；V02 机械记录为 `not required`，未改行为、manifest、seed、阈值、样本、策略或参数。
+2. **不可变边界复核通过。** V00 commit/parent 精确为 `f1eb7786…` / `28cf70e8…`，lock tree 为 `d3aab316e1994a134363a9476374f950a619745e`；manifest 与 evidence digest 分别保持 `1fef82a…`、`6948f7c…`。runner 在执行前检查直接 parent、tracked-clean、manifest 与 evidence 不存在，并以 exclusive-create `wx` 拒绝覆盖。
+3. **四条预选 replay QA 通过。** 只读复放确认 C04 OB-DB right/left 均在 tick 332 pocket caught，C01 OB-DB 与 OB-DM right 均在 tick 256 pocket caught；策略标签、阶段事件与终局展示完整，C04 左右事件顺序和 tick 一致且画面真实镜像。默认、880px 与 700px 宽度均无横向溢出或遮挡，console warning/error 为 0。临时 `app/v03-qa/page.tsx` 只用于本地诊断，检查后已删除且未进入任何提交；本地 QA 服务已停止。
+4. **raw 与复核边界。** 42KB raw evidence 按仓库约定保持 local ignored，不随 clone 分发；封存对象是版本、规模、聚合、代表 replay、bytes 与 SHA-256。新 clone 可从最终维护分支取得 V00 lock；只有另行批准 audit reproduction 后，才可在干净 checkout `f1eb7786…` 上执行一次 runner，并将产物与记录 digest 比较，不能覆盖或改变锁定合同。原始执行环境为 Node `24.16.0` / `win32-x64`。
+5. **最终门。** `npm run context:map`、`npm run check`（103/103 回归、9 类架构契约、context check、lint、build）及 `git diff --check` 全部通过；V03 没有源代码或产品行为改动。
 
 ## 不可扩大范围
 
@@ -86,8 +95,8 @@ S01–S08、G01–G08、P00–P03、Formation F00–F03、Autonomous Setup A00�
 - 不增加 ICE、blitz、hedge、switch-back、外弹、二次掩护、拖拽、手动控制或任意角色识别。
 - 不模拟投篮命中率、篮板、犯规、完整比赛、更多人数或 5v5。
 - 不重开 P04，不改写 G08/F03 manifest，不增加 ML/RL 或生产级 UI。
-- V01 通过只证明锁定 bounded Formation 域内、既有 `2 × 3` 策略的 integrated held-out；不得写成 P04、新策略 held-out、任意起手泛化或已经完成 V03 封存。
+- V00–V03 只证明锁定 bounded Formation 域内、既有 `2 × 3` 策略的 integrated held-out；不得写成 P04、新策略 held-out、任意起手泛化或新产品入口。
 
 ## 下一停止点
 
-V01 已按 V00 合同唯一执行并通过，无需进入 V02 修复。用户已授权完成 V03；当前只允许只读回放 QA、证据摘要、权威文档与 Git 封存，不得重跑 V01 或修改篮球行为。
+V00–V03 已完整关闭，当前没有自动下一阶段。唯一下一动作是等待用户另行决定一个新的、有界的产品或验证增量；不得自动扩展 P04、ICE/blitz、投篮、3v3/5v5、物理或在线 AI。

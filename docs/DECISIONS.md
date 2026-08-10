@@ -30,7 +30,8 @@
 | D015 | 生效 | A 使用 explicit/auto 输入边界并联合比较 side × anchor | 保持旧行为零变化，防止隐藏输入泄漏和先锁死无合法 anchor 的一侧 |
 | D019 | 生效 | I00 先锁集成契约，I01 只在同一世界的公开 next-boundary 串联 A 与 T | 防止重建回合、隐藏结果或通用 watchdog 伪装成阶段集成 |
 | D020 | 生效 | I02 复用封存 P 策略贯穿同一回合，I03 只审计锁定 I 输入 | 防止重建策略、强造差异或把既有输入组合冒充 V held-out |
-| D021 | 生效 | V00 先锁全新集成 held-out，V01 只完整揭示并分类 | 防止看结果改 seed、阈值、样本、OOD 或代表回放 |
+| D021 | 被后续决定细化 | V00 先锁全新集成 held-out，V01 只完整揭示并分类 | 防止看结果改 seed、阈值、样本、OOD 或代表回放 |
+| D022 | 完成 | V02 无失败则 no-op，V03 只封存摘要、digest 与预选回放 QA | 关闭 V 而不把 raw evidence 或验收 harness 变成产品功能 |
 
 ## D001：三层架构与信息所有权
 
@@ -246,9 +247,19 @@
 
 **原因：** I02–I03 只证明既有 13 个 A01 输入上的连续策略贯穿，不能当作全新 integrated held-out。若先运行再选择 seed、阈值、样本或代表回放，或者把 formation abort/timeout 事后改判域外，就无法区分真实泛化失败与结果导向筛选。复用 I 的逐 tick 审计并在 V00 补齐角色、球权和无远程 screen 门，可以扩展证据而不复制 planner/kernel 权威。
 
-**后果：** V00 使用 `mulberry32-v1` seed `20260811` 从冻结 `F01-v1` 域依序接受 12 个未出现在既有 F01/F02/F03/A01/I00 canonical 集合或其镜像中的 right-canonical 输入，simulation seeds 为 `20261001..20261012`；S/G/P/T preset 因起手语义不同不进入重复键。六个 matchup、真实镜像与三执行形成 72 cells、144 worlds、432 simulations。每个 cell 的 right/left × primary/duplicate/defense-first 六个 simulation 按固定 flattened 顺序构造并逐 tick lockstep 推进；某项提前终止时记录首 mismatch，其余项仍继续到终局或锁定 watchdog。锁入输入一律为 in-domain；锁后域检查失败使 V01 失败且不得替换。合法 formation abort/timeout 仍是安全退出。所有 cell 必须通过确定性、镜像、连续阶段/球权、合法动作、策略携带、planner 顺序、信息边界、角色/路线/球权、hard veto、公开因果、战术完成/安全退出、队友通道/pocket 与局部 screen 因果；V01 结果不提交、不 push，完成后停在 V02 或 V03 入口等待用户决定。
+**后果：** V00 使用 `mulberry32-v1` seed `20260811` 从冻结 `F01-v1` 域依序接受 12 个未出现在既有 F01/F02/F03/A01/I00 canonical 集合或其镜像中的 right-canonical 输入，simulation seeds 为 `20261001..20261012`；S/G/P/T preset 因起手语义不同不进入重复键。六个 matchup、真实镜像与三执行形成 72 cells、144 worlds、432 simulations。每个 cell 的 right/left × primary/duplicate/defense-first 六个 simulation 按固定 flattened 顺序构造并逐 tick lockstep 推进；某项提前终止时记录首 mismatch，其余项仍继续到终局或锁定 watchdog。锁入输入一律为 in-domain；锁后域检查失败使 V01 失败且不得替换。合法 formation abort/timeout 仍是安全退出。所有 cell 必须通过确定性、镜像、连续阶段/球权、合法动作、策略携带、planner 顺序、信息边界、角色/路线/球权、hard veto、公开因果、战术完成/安全退出、队友通道/pocket 与局部 screen 因果；在 V01 当时授权边界下，raw evidence 不提交、不 push，完成后停在 V02 或 V03 入口等待用户决定。
 
 **证据：** `lib/pnr-v00-validation-manifest.ts` 及其 canonical SHA-256、`lib/pnr-v01-validation-audit.ts`、`tests/pnr-validation.test.mjs`、`scripts/run-v01-validation.mjs` 与 `docs/CURRENT.md`。完整 V01 聚合证据写入被忽略的 `outputs/v01-integrated-validation.json`，避免把全量运行日志或 DOM snapshot 写进任务消息。
+
+## D022：V02 无失败则 no-op，V03 只封存摘要与只读 QA
+
+**决定：** V01 在锁定合同下 72/72 cells 通过且 0 OOD，因此 V02 机械记录为 `not required`，不产生修复、重构、调参或行为提交。V03 固定 V00 commit/parent/tree、manifest hash、V01 result checkpoint、evidence version/audit version、bytes/SHA-256、聚合与四条预选代表 replay 的只读浏览器观察；42KB raw evidence 继续 local ignored，临时 QA harness 在检查后删除且不得进入提交或成为产品入口。
+
+**原因：** 没有失败就没有可授权的 V02 修复对象。把聚合结果、内容摘要和预选回放观察绑定到不可变 Git 拓扑，足以让后续审计检测改题或证据漂移；提交 raw 日志或长期保留诊断页面反而会复制权威合同、扩大产品范围，并把验收工具误当成功能。
+
+**后果：** V00 lock `f1eb7786b24677ba3264f7b2433fd069401fa4a4` 保持为 rollback `28cf70e8c95710665f7ee2322a2dca8ff57e1951` 的直接子提交，V01 聚合由 result checkpoint `569fa6fb421f340994fd317eaf17d512e408fdbd` 固定；manifest/evidence SHA-256 分别为 `1fef82a37a1d610dcd8e5b91b00a123fd46312c8bb71c46566093cd4c57dd27a` 与 `6948f7c6939e6b38a623e3901df842bab7ab8e74ac821a507c4cb380eb78656a`。raw 不随 clone 分发；只有另行批准的 audit reproduction 才可在干净 V00 checkout 上一次性重建并比较 digest。V00–V03 至此关闭，但不自动重开 P04，也不批准 ICE/blitz、投篮、3v3/5v5、物理、在线 AI 或其他新范围。
+
+**证据：** `docs/CURRENT.md` 与阶段进度账本记录 72/72 cells、0 failure、0 OOD、四条 replay、浏览器布局/镜像/console 观察及最终门禁；Git 历史保持 `28cf70e → f1eb778 → 569fa6f → V03 seal`，没有行为代码或长期 QA 页面变化。
 
 ## 何时追加新决策
 
