@@ -5,7 +5,7 @@
 > 工作分支：`prototype/pnr-formation-loop`
 > 最近行为提交：`6f7af55`（I02 既有 `2 × 3` P 策略贯穿与 I03 集成审计/代表回放）
 > 已封存检查点：Policy `c4ada7d`；Formation F00/F00-R2 `fb9bea5`、F01/F02 `9063135`、F03 manifest `ba39ef0`、最终审计 `f8163c2`；Autonomous Setup A00–A01 `7ecedea`；T00–T01 `e735f47`；I00–I01 `676176c`、I02–I03 `6f7af55`
-> 当前状态：I00–I03 已由用户验收并封存；V00 已锁定，V01 尚未执行
+> 当前状态：I00–I03 已由用户验收并封存；V00 已锁定，V01 已按合同通过并形成 result checkpoint，V03 收口中
 > 本文记录总体目标、阶段路线和当下判断；运行方式及代码事实仍以根目录 `README.md` 与自动检查为准。
 > 战术覆盖、场景证人、泛化、组合与策略之间的长期关系，见[《2v2 挡拆战术覆盖与泛化模型》](./2026-08-07-tactical-coverage-and-generalization-model.md)。
 
@@ -23,7 +23,7 @@
 
 Policy 检查点已经完成第一层理想演示：选择一个处于批准输入域内的 2v2 起手和双方策略，点击运行后配置锁定，两支队伍按照各自策略与公开世界自动对局。Formation 阶段开始补第二层能力：从尚未站成掩护的合理起手出发，由双方队级计划先形成站位，再无缝接入同一个挡拆内核。相同输入与策略仍必须完全复现，不能因为增加形成阶段而改写已经批准的 S/G/P 行为。
 
-用户已经批准后续按 `F → A → T → I → V` 逐层收敛；Formation F00–F03、Autonomous Setup A00–A01、T00–T01 与 I00–I03 均已封存并由用户验收。A 仍只在 F01/F02/F03 已证明的合法形成域工作；独立 T 也只证明显式冻结 preset 输入，I02 只把封存 P03 策略接入锁定 A01 集成域，不等于完全无结构的半场任意摆放。V00 只锁定全新的 bounded integrated held-out 契约，V01 尚未揭示结果；拖拽编辑、手动控制、ML/RL、5v5、完整比赛、投篮结果、犯规、转换进攻、旧项目迁移和生产级 UI 仍不在当前路线内。
+用户已经批准后续按 `F → A → T → I → V` 逐层收敛；Formation F00–F03、Autonomous Setup A00–A01、T00–T01 与 I00–I03 均已封存并由用户验收。A 仍只在 F01/F02/F03 已证明的合法形成域工作；独立 T 也只证明显式冻结 preset 输入，I02 只把封存 P03 策略接入锁定 A01 集成域，不等于完全无结构的半场任意摆放。V00 锁定的 bounded integrated held-out 已由 V01 完整执行并通过，聚合结果进入后续 result checkpoint，用户已授权完成 V03 收口；拖拽编辑、手动控制、ML/RL、5v5、完整比赛、投篮结果、犯规、转换进攻、旧项目迁移和生产级 UI 仍不在当前路线内。
 
 ## 2. 不可破坏的架构与篮球边界
 
@@ -336,6 +336,10 @@ I03 在未改写 I00 manifest/hash 的前提下，对 13 inputs × 6 matchups = 
 
 V00 在任何 V01 simulation 运行前锁定 `locked-integrated-validation-contract@1` / `locked-integrated-validation-inputs@1`。manifest 使用生成 seed `20260811`，从冻结 F01 域接受 12 个未进入既有 F/A/I canonical 集合或其镜像的 input-only 起手，simulation seeds 为 `20261001..20261012`；复用封存 P03/I02 的 `2 × 3` 策略顺序，并锁定 right/真实 left mirror、primary/duplicate/defense-first、六 simulation 逐 tick lockstep、许可终局、阈值、OOD、失败复现、四条代表 replay、证据 schema、完整门禁及 rollback `28cf70e8c95710665f7ee2322a2dca8ff57e1951`。canonical manifest 为 `sha256:1fef82a37a1d610dcd8e5b91b00a123fd46312c8bb71c46566093cd4c57dd27a`；V01 仅能一次性完整消费 72 cells、144 worlds、432 simulations，证据文件不得覆盖。此处只形成 V00 本地锁，不代表 V01 已通过，也不进入 V02/V03。
 
+#### V01 执行证据
+
+V00 本地 lock commit 为 `f1eb7786b24677ba3264f7b2433fd069401fa4a4`，其 parent 精确为 rollback `28cf70e8c95710665f7ee2322a2dca8ff57e1951`。V01 只执行一次：12 inputs、六个封存 matchup、72 cells、144 worlds、432 simulations 全部完成；72/72 cells 通过，候选通用缺陷 0、OOD 合同失败 0、失败复现键 0。144 worlds 全部真实形成，其中 `tactical_pocket_caught` 36、`tactical_contained` 108；最小队友身体净空 `0.06793875835737445m`，最大镜像误差 `1.221974324176267e-13`。锁定的确定性、镜像、阶段/球权连续性、合法状态/动作、策略携带、planner 顺序、信息隔离、角色/路线/球权、hard veto、公开因果、战术完成/安全退出、队友通道/pocket、局部 screen 与策略因果门全部通过。四条代表回放依次为 `V00-C04/OB-DB right@332`、`V00-C01/OB-DB right@256`、`V00-C01/OB-DM right@256`、`V00-C04/OB-DB left@332`，终局均为 `tactical_pocket_caught`。完整证据保留在忽略文件 `outputs/v01-integrated-validation.json`；result checkpoint 只记录聚合，V03 再固定 evidence digest、V02 no-op 与只读 QA。
+
 ### F 之后的批准主线：A → T → I → V
 
 这里的 `A/T/I/V` 是后续增量系列标识，不是前文历史阶段 A–D 的重命名。路线目标是：
@@ -443,10 +447,11 @@ F00 在此基础上增加一个新的完成条件：掩护尚未就位时，四�
 - A00–A01 已按公开几何自动选边、选择有限合法 anchor，并在全-veto 时真实安全退出；用户验收后以 `7ecedea` 封存。
 - T00–T01 的显式冻结输入已用真实退守、追过、coverage commit、snake 与 pocket 飞行/接球产生四类合法终局；首轮人工发现的队友绕行、贴身挤道和一 tick pocket 假阳性已经用队级时空通道修复，并通过加严自动门、本地可视复验与用户重新验收，以 `e735f47` 封存。
 - I00 已在结果揭示前锁定全部 13 个 A01 输入、A/T 上游版本与 hash、许可终局和回退点；I01 已在同一 world/tick/球权中完成 next-boundary 交接并以 `676176c` 提交推送。I02–I03 让封存 P03 的六种策略组合从 tick 0 贯穿锁定 I 输入，通过 78 cells / 156 worlds / 468 simulations 的自动审计，并在用户验收代表回放后以 `6f7af55` 封存。
+- V00 在揭示前锁定全新 bounded integrated held-out；V01 的 72 cells / 144 worlds / 432 simulations 全部通过，0 候选通用缺陷、0 OOD，并按预先规则产出四条代表 replay。聚合已进入 result checkpoint，尚待 V03 封存。
 
 当前仍未证明：
 
-- 完整 `2 × 3` 交叉组合已经通过全新的策略或 integrated held-out 起手；I02–I03 只证明锁定 I 输入上的既有策略贯穿。
+- P04 或全新策略 held-out 已执行；V01 只验证封存 `2 × 3` 策略在全新 bounded integrated 起手上的贯穿。
 - 当前锁定 I 域能产生策略驱动的真实行为差异；审计事实是差异 input 为 0，不能外推到新输入。
 - 完全任意站位后能够自行组织挡拆。
 - ICE、blitz、hedge、switch-back 或夹击已经实现。
@@ -454,4 +459,4 @@ F00 在此基础上增加一个新的完成条件：掩护尚未就位时，四�
 
 P04 仍未执行并保持跳过；I02 只复用封存 P03，不借机重新开启策略校准或 held-out，也不改变 Policy 已完成的结论。
 
-A00–A01、T00–T01 与 I00–I03 均已完成、由用户验收并封存；I 行为检查点为 `676176c`、`6f7af55`。V00 已在 I checkpoint 的直接子提交中锁定 manifest/执行/判定/证据合同，V01 尚未执行；当前停止点是按锁定合同执行一次 V01，不进入 V02/V03。
+A00–A01、T00–T01 与 I00–I03 均已完成、由用户验收并封存；I 行为检查点为 `676176c`、`6f7af55`。V00 lock commit 为 `f1eb7786b24677ba3264f7b2433fd069401fa4a4`，V01 已按锁定合同唯一执行并通过。用户已授权完成剩余 V：V02 为 no-op，当前只进行 V03 只读 QA、证据摘要与 Git 收口。

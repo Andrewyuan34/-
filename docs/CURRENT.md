@@ -6,7 +6,7 @@
 > T00–T01 行为检查点：`e735f4768696bb423937c94ec3dea17a13a5ea94`；修复后已由用户重新验收
 > I00–I01 连续交接基线：`676176c`；已提交并推送
 > I02–I03 行为检查点：`6f7af556823f372b012053b7eaa8ea194be7b5df`；已由用户验收
-> V00 input-only manifest：`sha256:1fef82a37a1d610dcd8e5b91b00a123fd46312c8bb71c46566093cd4c57dd27a`；本地 lock commit，不 push
+> V00 input-only manifest：`sha256:1fef82a37a1d610dcd8e5b91b00a123fd46312c8bb71c46566093cd4c57dd27a`；本地 lock commit `f1eb7786b24677ba3264f7b2433fd069401fa4a4`，未 push
 > 仓库上下文工具：自动模块/符号地图与 9 类机械架构门已由 `7eb4bd2` 提交并推送
 > P2/P4 基线：`dd6287b97dc3b33b8070a45ccfcb7280a24a1951`
 > F01/F02 冻结核心：`90631359ba5a52eacfdbfc1434d657f8743df45e`
@@ -22,7 +22,7 @@
 
 ## 一句话状态
 
-S01–S08、G01–G08、P00–P03、Formation F00–F03、Autonomous Setup A00–A01、T00–T01 与 I00–I03 均已封存并由用户验收。V00 已在揭示前锁定 12 个全新有界输入、六个封存策略组合、执行顺序、阈值、OOD/回放/证据规则与回退点；本地 lock commit 之后才允许执行 V01，且不得进入 V02/V03。
+S01–S08、G01–G08、P00–P03、Formation F00–F03、Autonomous Setup A00–A01、T00–T01 与 I00–I03 均已封存并由用户验收。V00 已在揭示前锁定；V01 唯一执行的 12 inputs / 72 cells / 144 worlds / 432 simulations 全部通过，0 失败、0 OOD，聚合结果由后续 result checkpoint 记录，当前正在完成 V03 封存。
 
 ## F 阶段封存事实
 
@@ -73,14 +73,21 @@ S01–S08、G01–G08、P00–P03、Formation F00–F03、Autonomous Setup A00�
 5. **OOD 与失败纪律。** 只在生成阶段排除参数越界、非法几何、重复或旧输入；一旦锁入 manifest 即视为 in-domain。V01 若发现锁后域失败，记录为 OOD 合同失败并整体失败，不替换；`formation_aborted` / `formation_timeout` 是合法安全退出。其他失败只记候选通用缺陷，禁止在 V01 修代码、调参、改题或挑选重跑。
 6. **回放与证据。** 通过时按最长终局、最窄队友通道、首个形成成功的非默认策略携带、最长终局真实镜像四条固定规则选 replay；失败时前两槽固定替换为首失败及其镜像。完整聚合、所有失败复现键与 cell 摘要写入忽略目录 `outputs/v01-integrated-validation.json`，不提交 V01 结果。
 
+## V01 唯一执行结果
+
+1. **规模与分类。** 从 V00 lock commit 唯一执行 12 inputs × 6 matchups = 72 cells、144 个真实镜像 worlds、每 world 三次，共 432 simulations；72/72 cells 通过，候选通用缺陷 0、OOD 合同失败 0、失败复现键 0。144 worlds 全部形成，安全退出样本为 0。
+2. **终局与阈值。** 36 worlds 终止于 `tactical_pocket_caught`，108 worlds 终止于 `tactical_contained`；最小 O1/O5 身体净空 `0.06793875835737445m`，最大镜像误差 `1.221974324176267e-13`。确定性、镜像、连续阶段/球权、合法状态/动作、策略引用携带、planner 顺序、信息隔离、角色/路线/球权、hard veto、公开因果、战术完成/安全退出、队友通道/pocket、局部 screen 与零 adjustment 策略因果门全部通过。
+3. **代表 replay。** `V00-C04/OB-DB` right `tactical_pocket_caught@332`（最长终局）；`V00-C01/OB-DB` right `tactical_pocket_caught@256`（最窄通道）；`V00-C01/OB-DM` right `tactical_pocket_caught@256`（非默认防守策略携带）；`V00-C04/OB-DB` left `tactical_pocket_caught@332`（最长终局真实镜像）。
+4. **证据纪律。** 完整证据只写入忽略文件 `outputs/v01-integrated-validation.json`；runner 已拒绝覆盖，因此不得重跑。聚合结果由 result checkpoint 记录，raw artifact 仍按仓库约定保持 ignored，等待 V03 固定其摘要与复核边界。
+
 ## 不可扩大范围
 
 - I00–I03 只证明 13 个锁定 A01 输入 × 封存 P03 的六种策略组合及其真实镜像在精确版本元组下的 A→T 连续回合；不等于任意半场站位、通用 A/F/T 集成或全新 held-out 验证。
 - 不增加 ICE、blitz、hedge、switch-back、外弹、二次掩护、拖拽、手动控制或任意角色识别。
 - 不模拟投篮命中率、篮板、犯规、完整比赛、更多人数或 5v5。
 - 不重开 P04，不改写 G08/F03 manifest，不增加 ML/RL 或生产级 UI。
-- V00 只锁定集成 held-out 题目，不是 V01 通过证据；不得把它写成 P04、新策略阶段或已完成的 integrated held-out。
+- V01 通过只证明锁定 bounded Formation 域内、既有 `2 × 3` 策略的 integrated held-out；不得写成 P04、新策略 held-out、任意起手泛化或已经完成 V03 封存。
 
 ## 下一停止点
 
-V00 在任何 V01 world 揭示前完成本地锁定。下一步只允许从该 lock commit 执行一次锁定 V01、记录通过或失败分类并停下；不得进入 V02 修复或 V03 封存。
+V01 已按 V00 合同唯一执行并通过，无需进入 V02 修复。用户已授权完成 V03；当前只允许只读回放 QA、证据摘要、权威文档与 Git 封存，不得重跑 V01 或修改篮球行为。

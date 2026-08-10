@@ -2,7 +2,7 @@
 
 这是一个独立、确定性、可观看且可解释的 2v2 挡拆算法实验台。它不是预录轨迹：两支球队分别产生队级计划，中立世界以固定时间步解析运动、身体几何、球权、传球和事件。
 
-当前稳定检查点已经覆盖 S01–S08 战术证人、G01–G08 受限域泛化、P00–P03 的两套进攻策略 × 三套防守策略、Formation F00–F03、Autonomous Setup A00–A01、T00–T01，以及已由用户验收的 Integrated Possession I00–I03。I00–I01 连续交接基线为 `676176c`，I02–I03 行为提交为 `6f7af55`；V00 的集成 held-out 合同只在本地锁定，V01 结果不属于稳定检查点。实时状态见 [`docs/CURRENT.md`](./docs/CURRENT.md)。
+当前稳定检查点已经覆盖 S01–S08 战术证人、G01–G08 受限域泛化、P00–P03 的两套进攻策略 × 三套防守策略、Formation F00–F03、Autonomous Setup A00–A01、T00–T01，以及已由用户验收的 Integrated Possession I00–I03。I00–I01 连续交接基线为 `676176c`，I02–I03 行为提交为 `6f7af55`；V00 已由本地 lock commit 锁定，V01 已按合同通过并形成 result checkpoint，V03 尚未封存或 push，因此仍不属于稳定检查点。实时状态见 [`docs/CURRENT.md`](./docs/CURRENT.md)。
 
 ## 新 agent 从哪里开始
 
@@ -129,7 +129,7 @@ rg -n "<symbol-or-file>" docs/generated/SYMBOLS.md
 
 - 半场任意位置都能自动组织挡拆。
 - A00–A01 只证明已批准 Formation 域、固定 O1/O5 与 D1/D5 职责；不能外推到任意半场位置或任意角色识别。
-- 既有 `2 × 3` 策略已通过全新 integrated held-out；I00–I03 只使用锁定 I 输入，V00 仅锁题且 V01 尚未执行/通过。
+- V01 通过即可视为 V03 已封存、P04 已完成或全新策略 held-out 已验证；当前只证明既有 `2 × 3` 策略在锁定 bounded integrated held-out 上通过。
 - ICE、blitz、hedge、switch-back、外弹、二次掩护等战术原语已经实现。
 - 完整 `2 × 3` 策略矩阵通过了全新策略 held-out 起手；P04 被明确跳过。
 - 已处理投篮、犯规、篮板、完整比赛、第三名协防人或 5v5。
