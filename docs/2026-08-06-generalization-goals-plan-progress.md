@@ -3,9 +3,9 @@
 > 新 agent 不应从这里开始全文阅读。先读 [`CURRENT.md`](./CURRENT.md)，再通过 [`README.md`](./README.md) 只定位当前相关章节；本文是完整阶段账本与历史证据层。
 > 状态日期：2026-08-10
 > 工作分支：`prototype/pnr-formation-loop`
-> 最近行为提交：`676176c`（I00 先验集成契约与 I01 Formation → minimum-t 同世界连续交接）
-> 已封存检查点：Policy `c4ada7d`；Formation F00/F00-R2 `fb9bea5`、F01/F02 `9063135`、F03 manifest `ba39ef0`、最终审计 `f8163c2`；Autonomous Setup A00–A01 `7ecedea`；T00–T01 `e735f47`
-> 当前未提交增量：I02 既有 `2 × 3` P 策略贯穿与 I03 集成审计/代表回放；实现与自动门完成，等待用户人眼验收，整个 I 阶段未封存，不进入 V
+> 最近行为提交：`6f7af55`（I02 既有 `2 × 3` P 策略贯穿与 I03 集成审计/代表回放）
+> 已封存检查点：Policy `c4ada7d`；Formation F00/F00-R2 `fb9bea5`、F01/F02 `9063135`、F03 manifest `ba39ef0`、最终审计 `f8163c2`；Autonomous Setup A00–A01 `7ecedea`；T00–T01 `e735f47`；I00–I01 `676176c`、I02–I03 `6f7af55`
+> 当前状态：I00–I03 已由用户验收并封存；V 未开始
 > 本文记录总体目标、阶段路线和当下判断；运行方式及代码事实仍以根目录 `README.md` 与自动检查为准。
 > 战术覆盖、场景证人、泛化、组合与策略之间的长期关系，见[《2v2 挡拆战术覆盖与泛化模型》](./2026-08-07-tactical-coverage-and-generalization-model.md)。
 
@@ -23,7 +23,7 @@
 
 Policy 检查点已经完成第一层理想演示：选择一个处于批准输入域内的 2v2 起手和双方策略，点击运行后配置锁定，两支队伍按照各自策略与公开世界自动对局。Formation 阶段开始补第二层能力：从尚未站成掩护的合理起手出发，由双方队级计划先形成站位，再无缝接入同一个挡拆内核。相同输入与策略仍必须完全复现，不能因为增加形成阶段而改写已经批准的 S/G/P 行为。
 
-用户已经批准后续按 `F → A → T → I → V` 逐层收敛；Formation F00–F03、Autonomous Setup A00–A01 与 T00–T01 已封存，I00–I01 基线已由 `676176c` 提交推送，I02–I03 当前等待人眼验收。A 仍只在 F01/F02/F03 已证明的合法形成域工作；独立 T 也只证明显式冻结 preset 输入，I02 只把封存 P03 策略接入锁定 A01 集成域，不等于完全无结构的半场任意摆放或新的 held-out 集成验证已经完成。拖拽编辑、手动控制、ML/RL、5v5、完整比赛、投篮结果、犯规、转换进攻、旧项目迁移和生产级 UI 仍不在当前路线内。
+用户已经批准后续按 `F → A → T → I → V` 逐层收敛；Formation F00–F03、Autonomous Setup A00–A01、T00–T01 与 I00–I03 均已封存并由用户验收。A 仍只在 F01/F02/F03 已证明的合法形成域工作；独立 T 也只证明显式冻结 preset 输入，I02 只把封存 P03 策略接入锁定 A01 集成域，不等于完全无结构的半场任意摆放或新的 held-out 集成验证已经完成。V 尚未开始；拖拽编辑、手动控制、ML/RL、5v5、完整比赛、投篮结果、犯规、转换进攻、旧项目迁移和生产级 UI 仍不在当前路线内。
 
 ## 2. 不可破坏的架构与篮球边界
 
@@ -318,7 +318,7 @@ T 以显式 `preset_pnr + explicit + minimum-t@1` 独立 opt-in，不接入 Form
 
 队级通道修复后，四个代表终局为 pullup tick 181、contained tick 230、snake tick 260、pocket caught tick 231，左右镜像同 tick。四案队友最小身体净空 0.0681–0.0690m，低于 5cm 的连续 tick 为 0，近距双人同动挤道为 0；T00-C02 实际 RESET 相对绕转 5.36° 且 O5 路线无 roll/tangent；T01-C02 在 1.448m 中心距离释放，tick 226→231 真实飞行 5 ticks。加严后的确定性、评估顺序、镜像、路线、公开因果、信息边界、队友通道和零策略调整门通过；T 聚焦 12/12、完整 88/88、lint、build 与 `git diff --check` 通过。本地浏览器重新跑通四条回放，逐步确认 right pocket 在 tick 226/228 仍为飞行、tick 231 才接球，left 同 tick 镜像接球，控制台无 warning/error。用户复看 pocket 出球画面后确认该停止点在 T 当前范围内可接受，并重新验收通过；行为检查点为 `e735f47`，T00–T01 正式封存。
 
-#### I00–I03 当前待验收实现证据
+#### I00–I03 封存证据
 
 I00 在运行任何集成结果前锁定 `formation-minimum-t-contract@1` / `formation-minimum-t-inputs@1`：全量继承 13 个 A01 输入但只保留匿名 ID、公开初始位置与 seed，同时锁定 F01/A01/T 上游版本及 hash、`1/60s` 与默认 runtime、P00 默认双方策略、adjustment `0`、许可终局、自动门和回退点 `7eb4bd2`。完整合同 hash 为 `sha256:e4b0bec29c54b51157ae0b82681eb7f7ad01c5222f2e6802eab7ee0cd27d7554`；每个输入都禁止 side、anchor、plan、event、result、expected outcome 等结果字段。
 
@@ -328,7 +328,7 @@ I00–I01 基线的 13 个输入及其真实镜像共 26 个世界，每个世�
 
 I02 只复用封存 P03 的两套进攻 × 三套防守，不新增策略值、权重、P04 或 held-out。每个集成回合从 tick 0 到终局始终复用同一个已注册、复制并冻结的 `TeamStrategySelection`；Formation、coverage 与二级读取的 planning record 均携带正确的自队引用，运行后配置锁定。硬可行性、路线、球权和信息边界先于 adjustment；策略不能恢复 veto 候选、指定 coverage/terminal 或读取对方 profile。
 
-I03 在未改写 I00 manifest/hash 的前提下，对 13 inputs × 6 matchups = 78 cells、156 个真实镜像世界各运行 primary、duplicate、defense-first，共 468 次 simulation。同 simulation、单调 tick、next-boundary、交接前无 T、位置/速度/球权连续、确定性、顺序、镜像、双方信息隔离、策略引用/冻结/运行锁、phase ownership、hard veto、队友通道、条件 pocket 飞行/第一触球、安全退出与许可终局全部通过。当前 I 域中策略相对默认产生真实行为差异的 input 数为 0，观察到的 adjustment 也全部为 0；这是合法结果，未为制造可视差异修改基础篮球评分。T 已封存的 pocket 与队友通道非空证据继续作为回归基线。I03 只从审计事实选择连续终局、策略携带、镜像与安全退出代表回放；当前整个 I 阶段等待用户人眼验收，I02–I03 未提交，V 未开始。
+I03 在未改写 I00 manifest/hash 的前提下，对 13 inputs × 6 matchups = 78 cells、156 个真实镜像世界各运行 primary、duplicate、defense-first，共 468 次 simulation。同 simulation、单调 tick、next-boundary、交接前无 T、位置/速度/球权连续、确定性、顺序、镜像、双方信息隔离、策略引用/冻结/运行锁、phase ownership、hard veto、队友通道、条件 pocket 飞行/第一触球、安全退出与许可终局全部通过。当前 I 域中策略相对默认产生真实行为差异的 input 数为 0，观察到的 adjustment 也全部为 0；这是合法结果，未为制造可视差异修改基础篮球评分。T 已封存的 pocket 与队友通道非空证据继续作为回归基线。用户已验收连续终局、策略携带、镜像与安全退出代表回放；I02–I03 行为提交为 `6f7af55`，整个 I 阶段正式封存，V 未开始。
 
 为避免“终局摘要相同”掩盖中途副作用，I03 另以逐 tick state/plan 与新增 planning/event 事实比较策略行为；零 adjustment 却改变轨迹会直接失败。默认 I01 的 26 个世界全轨迹摘要锁定为 `sha256:01803c9f2a1a09a83543c6edd6ae124444fda822975e66605548f1f36a5ef868`，对应 `676176c`。最终 I 聚焦 12/12、仓库总门 98/98、9 类架构契约、context check、lint、build 与 `git diff --check` 通过；本地浏览器跑通默认 right/left 同 tick 镜像终局、OM-DE 从 Formation 到 coverage/read 的策略携带及 `formation_aborted@1` 安全退出，控制台 warning/error 为 0。
 
@@ -369,7 +369,7 @@ G06 有限参数组合（已完成）
 → A00 自动选边 → A01 合法 anchor 与安全退出（已验收，`7ecedea`）
 → T00–T01 最小防守覆盖与进攻反制词汇（首轮人工失败已修复、复验并由用户重新验收，`e735f47`）
 → I00 先验集成合同 → I01 默认策略同世界连续回合（`676176c` 已提交推送）
-→ I02 既有 `2 × 3` 策略贯穿 → I03 集成审计与代表回放（实现与自动门完成，当前待人眼验收）
+→ I02 既有 `2 × 3` 策略贯穿 → I03 集成审计与代表回放（已验收并封存，`6f7af55`）
 → V 冻结的集成 held-out（未开始）
 → 有界自动 2v2 检查点
 ```
@@ -438,7 +438,7 @@ F00 在此基础上增加一个新的完成条件：掩护尚未就位时，四�
 - F03 manifest 在揭示前以 `ba39ef0` 锁定；16 个 manifest 世界与 16 个对应镜像中 28 个形成、4 个安全退出，各双运行、镜像与核心不变量通过。四条代表回放已由用户验收，最终审计提交为 `f8163c2`。
 - A00–A01 已按公开几何自动选边、选择有限合法 anchor，并在全-veto 时真实安全退出；用户验收后以 `7ecedea` 封存。
 - T00–T01 的显式冻结输入已用真实退守、追过、coverage commit、snake 与 pocket 飞行/接球产生四类合法终局；首轮人工发现的队友绕行、贴身挤道和一 tick pocket 假阳性已经用队级时空通道修复，并通过加严自动门、本地可视复验与用户重新验收，以 `e735f47` 封存。
-- I00 已在结果揭示前锁定全部 13 个 A01 输入、A/T 上游版本与 hash、许可终局和回退点；I01 已在同一 world/tick/球权中完成 next-boundary 交接并以 `676176c` 提交推送。I02–I03 已让封存 P03 的六种策略组合从 tick 0 贯穿锁定 I 输入，并通过 78 cells / 156 worlds / 468 simulations 的自动审计；整个 I 阶段仍等待用户人眼验收，尚未封存。
+- I00 已在结果揭示前锁定全部 13 个 A01 输入、A/T 上游版本与 hash、许可终局和回退点；I01 已在同一 world/tick/球权中完成 next-boundary 交接并以 `676176c` 提交推送。I02–I03 让封存 P03 的六种策略组合从 tick 0 贯穿锁定 I 输入，通过 78 cells / 156 worlds / 468 simulations 的自动审计，并在用户验收代表回放后以 `6f7af55` 封存。
 
 当前仍未证明：
 
@@ -450,4 +450,4 @@ F00 在此基础上增加一个新的完成条件：掩护尚未就位时，四�
 
 P04 仍未执行并保持跳过；I02 只复用封存 P03，不借机重新开启策略校准或 held-out，也不改变 Policy 已完成的结论。
 
-A00–A01 与 T00–T01 已完成并由用户验收，I00–I01 基线已由 `676176c` 提交推送。I02–I03 已完成既有策略同回合贯穿、完整自动门与只读代表回放实现；下一停止点是用户人眼验收。验收前不提交/推送 I02–I03，不封存 I，也不得进入 V。
+A00–A01、T00–T01 与 I00–I03 均已完成、由用户验收并封存；I 行为检查点为 `676176c`、`6f7af55`。当前停止在 I 检查点，V 尚未开始。

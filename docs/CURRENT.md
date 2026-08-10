@@ -5,6 +5,7 @@
 > A00–A01 行为检查点：`7ecedea1319ecf714549c1da3946d5fa3c8ed430`
 > T00–T01 行为检查点：`e735f4768696bb423937c94ec3dea17a13a5ea94`；修复后已由用户重新验收
 > I00–I01 连续交接基线：`676176c`；已提交并推送
+> I02–I03 行为检查点：`6f7af556823f372b012053b7eaa8ea194be7b5df`；已由用户验收
 > 仓库上下文工具：自动模块/符号地图与 9 类机械架构门已由 `7eb4bd2` 提交并推送
 > P2/P4 基线：`dd6287b97dc3b33b8070a45ccfcb7280a24a1951`
 > F01/F02 冻结核心：`90631359ba5a52eacfdbfc1434d657f8743df45e`
@@ -20,7 +21,7 @@
 
 ## 一句话状态
 
-S01–S08、G01–G08、P00–P03、Formation F00–F03、Autonomous Setup A00–A01 与 T00–T01 已封存并由用户验收，I00–I01 基线已由 `676176c` 提交推送。I02–I03 已完成既有 `2 × 3` P 策略的同回合整合与自动门，当前等待用户人眼验收；整个 I 阶段尚未封存，I02–I03 不提交、不推送，且不进入 V。
+S01–S08、G01–G08、P00–P03、Formation F00–F03、Autonomous Setup A00–A01、T00–T01 与 I00–I03 均已封存并由用户验收。I00–I01 基线为 `676176c`，I02–I03 行为检查点为 `6f7af55`；当前停在 I 检查点，V 尚未开始。
 
 ## F 阶段封存事实
 
@@ -53,14 +54,14 @@ S01–S08、G01–G08、P00–P03、Formation F00–F03、Autonomous Setup A00�
 
 首轮 T 聚焦 10/10、完整 86/86 与当时的本地可视检查，只证明旧门没有捕捉“各自合法但队级通道冲突”；用户随后在 T00-C02、T01-C01、T01-C02 人眼验收中确认该轮失败，旧 tick 与可视结论不能作为 T 验收证据。修复后 T 聚焦 12/12、`npm test` 88/88、lint、build 与 `git diff --check` 通过；本地浏览器重新跑通四个代表终局，并逐步确认 T01-C02 right 的 tick 226/228 仍为真实飞行、tick 231 才接球，left 同 tick 镜像接球，控制台无 warning/error。用户复看 pocket 出球画面后确认该停止点在 T 当前范围内可接受，并正式通过 T 人工验收。T 面板仍是显式只读回放入口；行为检查点为 `e735f47`。
 
-## I00–I03 当前待验收事实
+## I00–I03 封存事实
 
 1. **I00 先验契约保持不变。** `formation-minimum-t-contract@1` 与 `formation-minimum-t-inputs@1` 在运行任何集成结果前锁定 13 个 A01 输入、seed、A/T 版本、P00 默认零 adjustment 策略、许可终局、自动门与回退点 `7eb4bd2`；input-only hash 仍为 `sha256:e4b0bec29c54b51157ae0b82681eb7f7ad01c5222f2e6802eab7ee0cd27d7554`，不含 expected outcome、case 定向或隐藏 side/anchor/plan/result。I02 没有改写该 manifest 或 hash。
 2. **I01 连续交接基线。** `formation_ready` 在 tick N 成为公开事实后，同一个 `PnrSimulation`、world、固定时钟、球权、位置与速度在 tick N+1 的规划边界同时交给防守 drop/chase 与进攻二级读取；交接前没有 T 版本、coverage 或 T 读取，不重建 simulation，不重置 tick，不瞬移。该基线已由 `676176c` 提交推送。
 3. **I02 复用既有策略。** 每个集成回合从 tick 0 到合法终局始终复用同一个已注册、复制并冻结的 `TeamStrategySelection`；覆盖封存 P03 的两套进攻 × 三套防守，不新增策略值、权重、P04 或 held-out。Formation、coverage 与二级读取的 planning record 均携带正确的自队 strategy 引用；运行开始后配置锁定，硬可行性、路线、球权和信息边界始终先于 adjustment，策略不能恢复 veto 候选或指定 coverage/terminal。
 4. **I03 有界组合审计。** 13 个锁定输入 × 6 个既有 matchup 形成 78 个 cells、156 个真实镜像世界；每个世界运行 primary、duplicate 与 defense-first，共 468 次 simulation。同 simulation、单调 tick、next-boundary 交接、交接前无 T 读取、位置/速度/球权连续、确定性、规划顺序、镜像、双方信息隔离、策略引用/冻结/运行锁、phase ownership、hard veto、队友通道、条件 pocket 飞行/第一触球、安全退出与许可终局全部通过。逐 tick 行为 trace 同时要求零 adjustment 不得产生隐式策略效果；I01 默认 26 世界全轨迹以 `sha256:01803c9f2a1a09a83543c6edd6ae124444fda822975e66605548f1f36a5ef868` 锁定到 `676176c`。
 5. **如实保留零差异。** 当前锁定 I 域中，六种策略组合相对默认策略产生真实行为差异的 input 数为 0，实际观察到的 strategy adjustment 也全部为 0；这是已有策略在这些合法候选边界上的真实结果，不是失败。实现没有为制造视觉差异修改基础篮球评分，独立 T 已封存的队友通道与 pocket 多 tick 飞行非空证据继续作为回归基线。
-6. **只读验收入口。** I 面板只从完成后的审计事实选择连续终局、策略携带、真实镜像与安全退出代表回放，并展示合同、策略引用与锁定状态；UI 不回流规划输入。本地浏览器已跑通 I00-C01 right 的 `formation_ready@147 → handoff@148 → tactical_contained@294`、同案 left 镜像同 tick 终止、I00-C03 OM-DE 的 `formation_ready@71 → handoff@72 → tactical_contained@221` 且 Formation/coverage/read 全程保持自队策略引用，以及 I00-C13 OM-DE 的 `formation_aborted@1` 且未进入 T；控制台 warning/error 为 0。当前停止等待用户人眼验收。
+6. **只读验收入口。** I 面板只从完成后的审计事实选择连续终局、策略携带、真实镜像与安全退出代表回放，并展示合同、策略引用与锁定状态；UI 不回流规划输入。本地浏览器已跑通 I00-C01 right 的 `formation_ready@147 → handoff@148 → tactical_contained@294`、同案 left 镜像同 tick 终止、I00-C03 OM-DE 的 `formation_ready@71 → handoff@72 → tactical_contained@221` 且 Formation/coverage/read 全程保持自队策略引用，以及 I00-C13 OM-DE 的 `formation_aborted@1` 且未进入 T；控制台 warning/error 为 0。用户已完成上述代表回放的人眼验收，I00–I03 以行为提交 `6f7af55` 正式封存。
 
 ## 不可扩大范围
 
@@ -68,8 +69,8 @@ S01–S08、G01–G08、P00–P03、Formation F00–F03、Autonomous Setup A00�
 - 不增加 ICE、blitz、hedge、switch-back、外弹、二次掩护、拖拽、手动控制或任意角色识别。
 - 不模拟投篮命中率、篮板、犯规、完整比赛、更多人数或 5v5。
 - 不重开 P04，不改写 G08/F03 manifest，不增加 ML/RL 或生产级 UI。
-- 不进入 V held-out；不得把当前 I00–I03 待验收实现写成已封存检查点，也不得把 I02 写成 P04 或新的策略阶段。
+- V held-out 尚未开始；不得把 I02 写成 P04、新策略阶段或 integrated held-out 证据。
 
 ## 下一停止点
 
-请用户在只读 I00–I03 面板人眼检查：连续播放确实跨过 `formation_ready` 下一边界；双方 strategy 引用从 Formation 到 coverage/read 始终正确且运行后锁定；同一策略回放保持真实镜像；abort/timeout 不提前进入 T。用户确认前保持当前工作树，不提交、不推送 I02–I03；不得进入 V，也不得改写 A/T/I00 冻结契约。
+I00–I03 已封存并由用户验收。当前停止在 I 检查点；本任务不进入 V，不改写 A/T/I00 冻结契约。

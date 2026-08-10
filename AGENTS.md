@@ -29,6 +29,7 @@
 - Formation F00–F03 已完成并由用户验收；F01/F02 冻结核心为 `9063135`，F03 manifest 为 `ba39ef0`，最终审计与回放提交为 `f8163c2`。
 - Autonomous Setup A00–A01 已完成并由用户验收；自动选边、固定 canonical anchor、安全退出、只读回放与自动门行为提交为 `7ecedea`。
 - Minimum Tactical Vocabulary T00–T01 已完成并由用户验收；队级时空通道修复、加严审计与只读回放行为提交为 `e735f47`。
+- Integrated Possession I00–I03 已完成并由用户验收；I00–I01 连续交接基线为 `676176c`，I02–I03 策略贯穿、集成审计与代表回放行为提交为 `6f7af55`。
 - G08 manifest 与冻结输入不得改写；失败时报告最早失败轨迹，不能按 case ID 调参。
 - P00 默认策略 adjustment 必须保持 0；策略只能重排硬可行候选，不能恢复 veto 候选。
 - 既有 170 个批准输入、G08/F03 manifest、真实左右镜像和核心不变量是 Autonomous Setup 改动的回归基线。
@@ -38,13 +39,13 @@
 
 ## 当前范围与停止点
 
-- A00–A01 与 T00–T01 已封存并由用户验收；仓库上下文工具已由 `7eb4bd2` 独立提交推送。I00–I01 基线已由 `676176c` 提交推送；I02–I03 当前工作树实现与自动门已完成，仍待用户人眼验收，整个 I 阶段尚未封存，I02–I03 尚未提交。
+- A00–A01、T00–T01 与 I00–I03 均已封存并由用户验收；仓库上下文工具已由 `7eb4bd2` 独立提交推送。I00–I01 基线为 `676176c`，I02–I03 行为提交为 `6f7af55`。
 - `explicit | auto`、缺省 `explicit`、进攻私有 side/anchor/waypoint、公开 commit 后防守响应以及中立世界不评分选点，都是已封存契约。
 - 独立 T 只在显式 `preset_pnr + explicit + minimum-t@1` 下启用；唯一 Formation 例外是精确 `formation-minimum-t@1 + auto + form_pnr + F01-v1 + tactical_resolution` 的 I opt-in。持球通道优先、RESET 无继续 roll、pocket 健康释放与真实多 tick 飞行均为硬门。
 - I00 已先验锁定 13 个 A01 输入、A/T 版本与 hash、P00 默认零调整策略、许可终局、自动门和回退点 `7eb4bd2`；I01 只允许同一 simulation/world 在公开 `formation_ready` 下一边界激活 T；I02 从 tick 0 到终局复用同一个已注册 TeamStrategySelection，只覆盖封存 P03 的两套进攻 × 三套防守，不新增策略值或改写 I00 manifest。
 - I03 只在锁定 I 输入及真实镜像上审计上述六种既有策略组合；策略必须服从硬可行性、球队信息所有权、路线和球权，不能恢复 veto 候选、指定 coverage/terminal 或读取对方 profile。当前 I 域没有产生真实策略差异或非零 adjustment 是合法审计事实，不得为制造差异改基础篮球评分。
 - A/T/I 仍只证明 F01/F02/F03 合法 Formation 域、冻结 preset T 输入及锁定 A01 集成输入；不得外推到任意位置、角色识别、拖拽、手动控制、ICE/blitz/hedge/switch-back、投篮结果、更多人数、5v5、ML/RL 或生产化。
-- 当前停止在 I00–I03 用户人眼验收；不得进入 V held-out，不得提交/推送 I02–I03，直到用户明确批准。
+- 当前停止在已封存的 I00–I03 检查点；V held-out 尚未开始，本任务不得进入 V。
 
 实时细节和工作树状态以 [`docs/CURRENT.md`](./docs/CURRENT.md) 为准。
 

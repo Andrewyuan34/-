@@ -32,7 +32,7 @@
 
 ## 按任务选择上下文
 
-### 继续或验收 I00–I03 Formation → T → Strategy 连续集成
+### 回归或审计 I00–I03 Formation → T → Strategy 连续集成
 
 读取：
 
@@ -44,7 +44,7 @@
 - `tests/pnr-integration.test.mjs`；只有冻结 A/T/P 回归失败时，再分别读取对应旧测试
 - `DECISIONS.md` 的 D019–D020
 
-I00 必须保持先于任何结果锁定的 input-only/hash 合同；I01 只允许精确 `formation-minimum-t@1` 从同一 simulation/world 的公开 next-boundary 串联，不得重建回合、重置 tick/位置/速度/球权或读取隐藏 side/anchor/plan/result。I02 只复用封存 P03 的两套进攻 × 三套防守，从 tick 0 到终局保持同一策略选择并服从硬 veto；I03 只在锁定 I 输入及镜像上审计并选择少量只读回放。策略没有产生差异同样是合法结果，不得为展示调基础评分。完成自动门和代表回放后停在用户人眼验收；不得进入 V。
+I00 必须保持先于任何结果锁定的 input-only/hash 合同；I01 只允许精确 `formation-minimum-t@1` 从同一 simulation/world 的公开 next-boundary 串联，不得重建回合、重置 tick/位置/速度/球权或读取隐藏 side/anchor/plan/result。I02 只复用封存 P03 的两套进攻 × 三套防守，从 tick 0 到终局保持同一策略选择并服从硬 veto；I03 只在锁定 I 输入及镜像上审计并选择少量只读回放。策略没有产生差异同样是合法结果，不得为展示调基础评分。I00–I03 已由用户验收并以 `676176c`、`6f7af55` 封存；V 尚未开始。
 
 ### 继续或验收 T00–T01 Minimum Tactical Vocabulary
 

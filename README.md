@@ -2,7 +2,7 @@
 
 这是一个独立、确定性、可观看且可解释的 2v2 挡拆算法实验台。它不是预录轨迹：两支球队分别产生队级计划，中立世界以固定时间步解析运动、身体几何、球权、传球和事件。
 
-当前稳定检查点已经覆盖 S01–S08 战术证人、G01–G08 受限域泛化、P00–P03 的两套进攻策略 × 三套防守策略、Formation F00–F03、Autonomous Setup A00–A01，以及已由用户验收的 T00–T01。T 行为检查点为 `e735f47`，I00–I01 连续交接基线为 `676176c`；I02–I03 已在当前工作树完成既有 P 策略整合与自动审计，仍待用户人眼验收，整个 I 阶段尚未封存。实时状态见 [`docs/CURRENT.md`](./docs/CURRENT.md)。
+当前稳定检查点已经覆盖 S01–S08 战术证人、G01–G08 受限域泛化、P00–P03 的两套进攻策略 × 三套防守策略、Formation F00–F03、Autonomous Setup A00–A01、T00–T01，以及已由用户验收的 Integrated Possession I00–I03。I00–I01 连续交接基线为 `676176c`，I02–I03 行为提交为 `6f7af55`。实时状态见 [`docs/CURRENT.md`](./docs/CURRENT.md)。
 
 ## 新 agent 从哪里开始
 
@@ -117,14 +117,14 @@ rg -n "<symbol-or-file>" docs/generated/SYMBOLS.md
 - Formation 的少量结构化起手与冻结有界随机域共用同一套形成原语，能够真实形成或明确安全退出；用户已验收四条 F01–F03 代表回放。
 - Autonomous Setup 能在同一域内按公开几何确定性选择 side × anchor，并通过真实运动形成或在全-veto 时保球安全退出；用户已验收四条 A00–A01 代表回放。
 - 显式 `minimum-t@1` 回放能从真实退守、追过和公开 coverage 事实产生急停、contain、snake 或 pocket 接球；队友通道与 pocket 真实飞行已经进入硬门，用户已验收四条代表回放及 pocket 复看片段。
-- 当前待验收的 I00–I03 工作树只在锁定 A01 域与精确 `formation-minimum-t@1` 下，把 Formation 的公开联合就绪连续交给 drop/chase 与进攻二级读取，并让封存 P03 的既有 `2 × 3` 策略配置从 tick 0 贯穿到终局；形成失败仍真实 timeout/abort。
+- 已封存的 I00–I03 只在锁定 A01 域与精确 `formation-minimum-t@1` 下，把 Formation 的公开联合就绪连续交给 drop/chase 与进攻二级读取，并让封存 P03 的既有 `2 × 3` 策略配置从 tick 0 贯穿到终局；形成失败仍真实 timeout/abort。
 - 用户可以从真实回放、计划、角色、候选、否决与事件中判断篮球语义。
 
 ## 仍不能声称什么
 
 - 半场任意位置都能自动组织挡拆。
 - A00–A01 只证明已批准 Formation 域、固定 O1/O5 与 D1/D5 职责；不能外推到任意半场位置或任意角色识别。
-- I 已经成为稳定封存检查点，或既有 `2 × 3` 策略已通过全新 integrated held-out；当前 I02–I03 只使用锁定 I 输入，仍待人眼验收，V 尚未开始。
+- 既有 `2 × 3` 策略已通过全新 integrated held-out；I00–I03 只使用锁定 I 输入，V 尚未开始。
 - ICE、blitz、hedge、switch-back、外弹、二次掩护等战术原语已经实现。
 - 完整 `2 × 3` 策略矩阵通过了全新策略 held-out 起手；P04 被明确跳过。
 - 已处理投篮、犯规、篮板、完整比赛、第三名协防人或 5v5。
