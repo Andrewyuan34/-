@@ -85,9 +85,14 @@ import {
   scanA01AutonomousSetups,
   type A01RepresentativeReplay,
 } from "@/lib/pnr-a01-autonomous-setup-audit";
+import {
+  createTacticalReplay,
+  scanTacticalVocabulary,
+} from "@/lib/pnr-tactical-audit";
 import { drawCourt } from "./pnr-lab/court";
 import { planShort, sideText } from "./pnr-lab/format";
 import { AutonomousSetupPanel } from "./pnr-lab/AutonomousSetupPanel";
+import { TacticalVocabularyPanel } from "./pnr-lab/TacticalVocabularyPanel";
 import {
   FormationGeneralizationPanel,
   F00FormationPanel,
@@ -135,6 +140,7 @@ const P03_AUDIT = scanP03PolicyMatrix();
 const FORMATION_GENERALIZATION_AUDIT = scanFormationGeneralization();
 const A00_AUTONOMOUS_SIDE_AUDIT = scanA00AutonomousSides();
 const A01_AUTONOMOUS_SETUP_AUDIT = scanA01AutonomousSetups();
+const TACTICAL_VOCABULARY_AUDIT = scanTacticalVocabulary();
 
 function cloneAutonomousSetup(
   setup: NonNullable<TeamPlan["autonomousSetup"]>,
@@ -260,6 +266,20 @@ function takeSnapshot(simulation: PnrSimulation): UiSnapshot {
             }
           : {}),
       },
+      ...(simulation.world.tacticalCoverage
+        ? {
+            tacticalCoverage: {
+              ...simulation.world.tacticalCoverage,
+              ...(simulation.world.tacticalCoverage.o1PositionAtScreenClear
+                ? {
+                    o1PositionAtScreenClear: {
+                      ...simulation.world.tacticalCoverage.o1PositionAtScreenClear,
+                    },
+                  }
+                : {}),
+            },
+          }
+        : {}),
       reject: { ...simulation.world.reject },
       landmarks: {
         screenAnchor: { ...simulation.world.landmarks.screenAnchor },
@@ -350,6 +370,8 @@ export default function PnrLab() {
     useState<FormationGeneralizationReplayId>("longest-f01-arrival");
   const [autonomousReplayId, setAutonomousReplayId] =
     useState<A01RepresentativeReplay["id"]>("longest-formed");
+  const [tacticalInputId, setTacticalInputId] = useState("T00-C01");
+  const [tacticalSide, setTacticalSide] = useState<ScreenSide>("right");
   const [initialSimulation] = useState(
     () => new PnrSimulation(makeScenarioConfig(DEFAULT_SCENARIO_ID)),
   );
@@ -504,8 +526,18 @@ export default function PnrLab() {
     );
   }, [installSimulation]);
 
+  const replaceTacticalSimulation = useCallback((
+    nextInputId: string,
+    nextSide: ScreenSide,
+    shouldPlay: boolean,
+  ): void => {
+    installSimulation(createTacticalReplay(nextInputId, nextSide), shouldPlay);
+  }, [installSimulation]);
+
   const replaceCurrentSimulation = useCallback((shouldPlay: boolean): void => {
-    if (labMode === "autonomous") {
+    if (labMode === "tactical") {
+      replaceTacticalSimulation(tacticalInputId, tacticalSide, shouldPlay);
+    } else if (labMode === "autonomous") {
       replaceAutonomousSimulation(autonomousReplayId, shouldPlay);
     } else if (labMode === "formation") {
       replaceFormationSimulation(formationReplayId, shouldPlay);
@@ -551,6 +583,8 @@ export default function PnrLab() {
     p01ReplayId,
     p01OffenseStrategyId,
     p03MatchupId,
+    tacticalInputId,
+    tacticalSide,
     labMode,
     replaceG01Simulation,
     replaceG02Simulation,
@@ -562,6 +596,7 @@ export default function PnrLab() {
     replaceF00Simulation,
     replaceFormationSimulation,
     replaceAutonomousSimulation,
+    replaceTacticalSimulation,
     replaceP00Simulation,
     replaceP01Simulation,
     replaceP03Simulation,
@@ -694,6 +729,9 @@ export default function PnrLab() {
     A01_AUTONOMOUS_SETUP_AUDIT.replays.find(
       (replay) => replay.id === autonomousReplayId,
     ) ?? A01_AUTONOMOUS_SETUP_AUDIT.replays[0];
+  const currentTacticalRow =
+    TACTICAL_VOCABULARY_AUDIT.rows.find((row) => row.id === tacticalInputId) ??
+    TACTICAL_VOCABULARY_AUDIT.rows[0];
   const observerSide = snapshot.world.screenSide ??
     snapshot.offensePlan.autonomousSetup?.side ??
     (labMode === "autonomous" ? currentAutonomousReplay?.side : null);
@@ -735,6 +773,11 @@ export default function PnrLab() {
           {labMode === "autonomous" && currentAutonomousReplay && (
             <span>
               A00–A01 · {currentAutonomousReplay.inputId} · {currentAutonomousReplay.side?.toUpperCase() ?? "NO SIDE"} · {currentAutonomousReplay.anchorId ?? "NO ANCHOR"} · {playing || snapshot.world.tick > 0 ? "LOCKED" : "READY"}
+            </span>
+          )}
+          {labMode === "tactical" && currentTacticalRow && (
+            <span>
+              T00–T01 · {currentTacticalRow.id} · {tacticalSide.toUpperCase()} · {playing || snapshot.world.tick > 0 ? "LOCKED" : "READY"}
             </span>
           )}
           <span>HASH {snapshot.world.stateHash}</span>
@@ -896,6 +939,17 @@ export default function PnrLab() {
         >
           A00–A01 · 自动组织挡拆
         </button>
+        <button
+          aria-pressed={labMode === "tactical"}
+          className={labMode === "tactical" ? "is-active" : ""}
+          onClick={() => {
+            setLabMode("tactical");
+            replaceTacticalSimulation(tacticalInputId, tacticalSide, false);
+          }}
+          type="button"
+        >
+          T00–T01 · Drop / Chase
+        </button>
       </nav>
 
       {labMode === "scenarios" ? (
@@ -1024,6 +1078,22 @@ export default function PnrLab() {
             replaceP01Simulation(p01ReplayId, nextStrategyId, false);
           }}
           strategyLocked={strategyLocked}
+        />
+      ) : labMode === "tactical" ? (
+        <TacticalVocabularyPanel
+          activeInputId={tacticalInputId}
+          audit={TACTICAL_VOCABULARY_AUDIT}
+          locked={playing || snapshot.world.tick > 0}
+          onInputSelect={(nextInputId) => {
+            setTacticalInputId(nextInputId);
+            replaceTacticalSimulation(nextInputId, tacticalSide, false);
+          }}
+          onSideChange={(nextSide) => {
+            setTacticalSide(nextSide);
+            replaceTacticalSimulation(tacticalInputId, nextSide, false);
+          }}
+          side={tacticalSide}
+          snapshot={snapshot}
         />
       ) : labMode === "autonomous" ? (
         <AutonomousSetupPanel
@@ -1353,14 +1423,24 @@ export default function PnrLab() {
             }
           >
             <span>
-              {ball.kind === "kick_out"
+              {ball.kind === "pocket_pass"
+                ? "POCKET PASS"
+                : ball.kind === "kick_out"
                 ? "KICKOUT PASS"
                 : ball.kind === "slip_pass"
                   ? "REJECT SLIP PASS"
                   : "SEAL / LOB ENTRY"}
             </span>
             <strong>
-              {ball.kind === "slip_pass" && ball.outcome === "caught"
+              {ball.kind === "pocket_pass" && ball.outcome === "caught"
+                ? "O5 合法接到 pocket pass"
+                : ball.kind === "pocket_pass" && ball.outcome === "deflected"
+                  ? "防守先触球 · pocket pass 被破坏"
+                  : ball.kind === "pocket_pass" && ball.outcome === "missed"
+                    ? "pocket pass 未进入 O5 接球半径"
+                  : ball.kind === "pocket_pass" && ball.inFlight
+                    ? "O1 已分球 · pocket pass 飞行中"
+              : ball.kind === "slip_pass" && ball.outcome === "caught"
                 ? "O5 合法接到拒绝后分球"
                 : ball.kind === "slip_pass" && ball.outcome === "deflected"
                   ? "防守先触球 · 顺下分球被破坏"
@@ -1393,7 +1473,9 @@ export default function PnrLab() {
                               : "等待换防完成"}
             </strong>
             <p>
-              {ball.kind === "kick_out"
+              {ball.kind === "pocket_pass"
+                ? `真实短顺下窗口 · 球权 ${ball.inFlight ? "为空" : snapshot.world.ballOwner ?? "none"} · 结果 ${ball.outcome}`
+                : ball.kind === "kick_out"
                 ? `回传净空 ${postCatch.kickoutLaneClearance.toFixed(2)}m · D5–O5 ${postCatch.d5O5Distance.toFixed(2)}m · 飞行时球权为空`
                 : ball.kind === "slip_pass"
                   ? `顺下净空 ${reject.passLaneClearance.toFixed(2)}m · D5–O1 ${reject.d5O1Distance.toFixed(2)}m · 飞行时球权为空`

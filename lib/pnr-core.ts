@@ -42,6 +42,19 @@ export const UNDER_PULLUP_TARGET_ARC_INSET = 0.32;
 export const UNDER_PULLUP_MIN_RIMWARD_PROGRESS = 0.25;
 export const UNDER_PULLUP_CLEAN_STOP_MIN_BODY_GAP = 0.08;
 export const UNDER_PULLUP_MIN_APPROACH_SPEED = 0.55;
+export const MINIMUM_TACTICAL_VOCABULARY_VERSION = "minimum-t@1" as const;
+export const TACTICAL_DROP_MIN_RETREAT_PROGRESS = 0.12;
+export const TACTICAL_DROP_MIN_SCREEN_DEPTH = 0.46;
+export const TACTICAL_CHASE_MIN_ROUTE_CLEARANCE = 0.035;
+export const TACTICAL_READ_MIN_COMMIT_SECONDS = 0.16;
+export const TACTICAL_TEAMMATE_CHANNEL_CLEARANCE = 0.06;
+export const TACTICAL_SNAKE_MIN_BODY_CLEARANCE = 0.09;
+export const TACTICAL_POCKET_MIN_RELEASE_DISTANCE = 1.08;
+export const TACTICAL_POCKET_HANDLER_DEVELOPMENT_DISTANCE =
+  TACTICAL_POCKET_MIN_RELEASE_DISTANCE + 0.12;
+export const TACTICAL_POCKET_DEVELOPMENT_RELEASE_DISTANCE =
+  TACTICAL_POCKET_MIN_RELEASE_DISTANCE + 0.34;
+export const TACTICAL_POCKET_MIN_FLIGHT_TICKS = 3;
 
 export const COURT = {
   width: 10,
@@ -94,6 +107,7 @@ export type AutonomousAnchorId =
 export type SetupMode = "explicit" | "auto";
 export type PnrStartMode = "preset_pnr" | "form_pnr";
 export type SimulationPhase = "formation" | "pnr";
+export type TacticalVocabularyVersion = typeof MINIMUM_TACTICAL_VOCABULARY_VERSION;
 export type SimulationHorizon =
   | "pnr_resolution"
   | "formation_resolution"
@@ -102,7 +116,8 @@ export type SimulationHorizon =
   | "post_catch_resolution"
   | "mismatch_attack"
   | "under_pullup"
-  | "reject_slip";
+  | "reject_slip"
+  | "tactical_resolution";
 export type OffensePlanId =
   | "FORM_SCREEN"
   | "ABORT_FORMATION"
@@ -111,6 +126,12 @@ export type OffensePlanId =
   | "ATTACK_UNDER_GAP"
   | "TAKE_UNDER_PULLUP"
   | "RESET_UNDER"
+  | "ATTACK_DROP_GAP"
+  | "TAKE_DROP_PULLUP"
+  | "RESET_DROP"
+  | "SNAKE_CHASE"
+  | "POCKET_PASS"
+  | "RESET_CHASE"
   | "ATTACK_BIG"
   | "FEED_SEAL"
   | "RESET_MISMATCH"
@@ -128,6 +149,8 @@ export type DefensePlanId =
   | "STAY_HOME_POST"
   | "DIG_POST"
   | "PRESSURE_MISMATCH"
+  | "DROP_CONTAIN"
+  | "CHASE_OVER"
   | "UNDER"
   | "TAG_REJECT";
 export type PlanId = OffensePlanId | DefensePlanId;
@@ -230,6 +253,15 @@ export type EventType =
   | "under_drive_advantage"
   | "under_contained"
   | "pullup_window"
+  | "drop_committed"
+  | "chase_over_committed"
+  | "tactical_drive_advantage"
+  | "tactical_pullup_window"
+  | "tactical_snake_advantage"
+  | "tactical_contained"
+  | "pocket_window_open"
+  | "pocket_pass_launched"
+  | "pocket_pass_caught"
   | "reject_lane_gained"
   | "reject_help_committed"
   | "reject_pass_window_open"
@@ -275,6 +307,15 @@ export const EVENT_ORDER: Record<EventType, number> = {
   under_recovery_blocked: 77,
   under_drive_advantage: 80,
   under_contained: 80,
+  drop_committed: 76,
+  chase_over_committed: 77,
+  tactical_drive_advantage: 80,
+  tactical_pullup_window: 80,
+  tactical_snake_advantage: 80,
+  tactical_contained: 80,
+  pocket_window_open: 80,
+  pocket_pass_launched: 82,
+  pocket_pass_caught: 84,
   reject_lane_gained: 77,
   mismatch_attack: 77,
   seal_established: 78,
@@ -322,6 +363,11 @@ export interface TerminalState {
     | "under_drive_advantage"
     | "under_pullup_window"
     | "under_contained"
+    | "tactical_drive_advantage"
+    | "tactical_pullup_window"
+    | "tactical_snake_advantage"
+    | "tactical_pocket_caught"
+    | "tactical_contained"
     | "reject_slip_caught"
     | "pass_denied"
     | "switch_contained"
@@ -347,7 +393,11 @@ export interface WorldState {
   seal: SealFacts;
   postCatch: PostCatchFacts;
   under: UnderFacts;
+  /** Present only for the explicit T-stage vocabulary opt-in. */
+  tacticalCoverage?: TacticalCoverageFacts;
   reject: RejectFacts;
+  /** Public stage vocabulary version; absent from every sealed legacy world. */
+  tacticalVocabularyVersion?: TacticalVocabularyVersion;
   terminal: TerminalState | null;
   pendingPlannerEvents: WorldEvent[];
   stateHash: string;
@@ -397,7 +447,13 @@ export interface TeamRouteTrack {
 
 export interface TeamPlanRoute {
   routeVersion: number;
-  boundary: "formation_setup" | "under_read" | "screen_cleared" | "under_blocked";
+  boundary:
+    | "formation_setup"
+    | "under_read"
+    | "screen_cleared"
+    | "under_blocked"
+    | "tactical_coverage"
+    | "tactical_read";
   kind:
     | "formation_arrival"
     | "under_preclear_use"
@@ -405,7 +461,16 @@ export interface TeamPlanRoute {
     | "under_postclear_pullup"
     | "under_postclear_reset"
     | "under_postclear_recovery"
-    | "under_safe_hold";
+    | "under_safe_hold"
+    | "drop_read_attack"
+    | "drop_read_pullup"
+    | "drop_read_reset"
+    | "drop_contain_route"
+    | "chase_over_route"
+    | "chase_read_snake"
+    | "chase_develop_pocket"
+    | "chase_read_pocket"
+    | "chase_read_reset";
   committedAtTick: number;
   minimumCommitUntilTick: number;
   tracks: Partial<Record<PlayerId, TeamRouteTrack>>;
@@ -489,6 +554,7 @@ export interface SimulationConfig {
   d1PostCatchRecoveryDelay?: number;
   o1MaxSpeed?: number;
   horizon?: SimulationHorizon;
+  tacticalVocabularyVersion?: TacticalVocabularyVersion;
   strategies?: TeamStrategySelection;
   /** Audit-only execution order; plans must be identical for either value. */
   plannerEvaluationOrder?: "offense-first" | "defense-first";
@@ -514,7 +580,7 @@ export interface PublicObservation {
     pos: Vec2;
     vel: Vec2;
     inFlight: boolean;
-    kind: "lob_entry" | "kick_out" | "slip_pass" | null;
+    kind: "lob_entry" | "kick_out" | "slip_pass" | "pocket_pass" | null;
   };
   branch: Branch;
   facts: ScreenFacts;
@@ -522,11 +588,13 @@ export interface PublicObservation {
   seal: SealFacts;
   postCatch: PostCatchFacts;
   under: UnderFacts;
+  tacticalCoverage?: TacticalCoverageFacts;
   reject: RejectFacts;
   court: typeof COURT;
   triggerEvents: WorldEvent[];
   setupMode?: SetupMode;
   formationDomainVersion?: typeof AUTONOMOUS_FORMATION_DOMAIN_VERSION;
+  tacticalVocabularyVersion?: TacticalVocabularyVersion;
 }
 
 interface MotionIntent {
@@ -663,6 +731,47 @@ export interface UnderFacts {
   cleanDeceleration?: boolean;
 }
 
+export interface TacticalCoverageFacts {
+  active: boolean;
+  startedAt: number | null;
+  elapsed: number;
+  dropCommitted: boolean;
+  dropCommittedAtTick: number | null;
+  chaseOverCommitted: boolean;
+  chaseOverCommittedAtTick: number | null;
+  d5RetreatProgress: number;
+  d5ScreenDepth: number;
+  d5O1Distance: number;
+  d5O5Distance: number;
+  d5GoalSide: boolean;
+  d5ContainLineDistance: number;
+  d5ContainsBall: boolean;
+  d5DeepDrop: boolean;
+  d1O1Distance: number;
+  d1Trail: boolean;
+  d1Recovered: boolean;
+  d1OverShoulder: boolean;
+  o5Rolling: boolean;
+  pocketLaneClearance: number;
+  pocketWindow: boolean;
+  pocketWindowOpenedAtTick: number | null;
+  pocketPassReady: boolean;
+  pocketPassReadySinceTick: number | null;
+  pocketReleaseDistance: number;
+  driveCommitted: boolean;
+  pullupCommitted: boolean;
+  snakeCommitted: boolean;
+  driveAdvantage: boolean;
+  pullupWindow: boolean;
+  snakeAdvantage: boolean;
+  contained: boolean;
+  screenClearedAtTick: number | null;
+  o1PositionAtScreenClear?: Vec2;
+  o1RimDistanceAtClear?: number;
+  priorO1Speed: number;
+  cleanDeceleration: boolean;
+}
+
 export interface RejectFacts {
   active: boolean;
   helpEligible: boolean;
@@ -685,14 +794,15 @@ export interface BallState {
   intendedReceiver: PlayerId | null;
   target: Vec2 | null;
   launchedAt: number | null;
-    kind: "lob_entry" | "kick_out" | "slip_pass" | null;
+  kind: "lob_entry" | "kick_out" | "slip_pass" | "pocket_pass" | null;
   outcome: "live" | "caught" | "deflected" | "missed";
 }
 
 type PassIntent =
   | { from: "O1"; to: "O5"; kind: "lob_entry" }
   | { from: "O5"; to: "O1"; kind: "kick_out" }
-  | { from: "O1"; to: "O5"; kind: "slip_pass" };
+  | { from: "O1"; to: "O5"; kind: "slip_pass" }
+  | { from: "O1"; to: "O5"; kind: "pocket_pass" };
 
 const OFFENSE_IDS: PlayerId[] = ["O1", "O5"];
 const DEFENSE_IDS: PlayerId[] = ["D1", "D5"];
@@ -763,6 +873,44 @@ const EMPTY_UNDER: UnderFacts = {
   d1O1Distance: 0,
   d5O5Distance: 0,
   pullupWindow: false,
+};
+const EMPTY_TACTICAL_COVERAGE: TacticalCoverageFacts = {
+  active: false,
+  startedAt: null,
+  elapsed: 0,
+  dropCommitted: false,
+  dropCommittedAtTick: null,
+  chaseOverCommitted: false,
+  chaseOverCommittedAtTick: null,
+  d5RetreatProgress: 0,
+  d5ScreenDepth: 0,
+  d5O1Distance: 0,
+  d5O5Distance: 0,
+  d5GoalSide: false,
+  d5ContainLineDistance: 0,
+  d5ContainsBall: false,
+  d5DeepDrop: false,
+  d1O1Distance: 0,
+  d1Trail: false,
+  d1Recovered: false,
+  d1OverShoulder: false,
+  o5Rolling: false,
+  pocketLaneClearance: 0,
+  pocketWindow: false,
+  pocketWindowOpenedAtTick: null,
+  pocketPassReady: false,
+  pocketPassReadySinceTick: null,
+  pocketReleaseDistance: 0,
+  driveCommitted: false,
+  pullupCommitted: false,
+  snakeCommitted: false,
+  driveAdvantage: false,
+  pullupWindow: false,
+  snakeAdvantage: false,
+  contained: false,
+  screenClearedAtTick: null,
+  priorO1Speed: 0,
+  cleanDeceleration: false,
 };
 const EMPTY_REJECT: RejectFacts = {
   active: false,
@@ -958,6 +1106,20 @@ function toTacticalWorld(world: WorldState): WorldState {
           }
         : {}),
     },
+    ...(world.tacticalCoverage
+      ? {
+          tacticalCoverage: {
+            ...world.tacticalCoverage,
+            ...(world.tacticalCoverage.o1PositionAtScreenClear
+              ? {
+                  o1PositionAtScreenClear: mirrorPointAcrossCenterline(
+                    world.tacticalCoverage.o1PositionAtScreenClear,
+                  ),
+                }
+              : {}),
+          },
+        }
+      : {}),
   };
 }
 
@@ -1761,6 +1923,564 @@ export function evaluateUnderReadGeometry(
   };
 }
 
+export interface TacticalCoverageCandidateGeometry {
+  dropTarget: Vec2;
+  dropRoute: StagedBodyRouteProof | null;
+  chaseTarget: Vec2;
+  chaseRoute: StagedBodyRouteProof | null;
+  d1Topside: boolean;
+  d1UnderAligned: boolean;
+}
+
+export interface TacticalReadGeometry {
+  drop: UnderReadGeometry;
+  snakeTarget: Vec2;
+  snakeRoute: StagedBodyRouteProof | null;
+  snakeTimingMargin: number;
+  shortRollTarget: Vec2;
+  shortRollRoute: StagedBodyRouteProof | null;
+  shortRollCorridorClearance: number;
+  pocketDevelopmentHandlerTarget: Vec2;
+  pocketDevelopmentHandlerRoute: StagedBodyRouteProof | null;
+  pocketDevelopmentRollTarget: Vec2;
+  pocketDevelopmentRollRoute: StagedBodyRouteProof | null;
+  pocketDevelopmentCorridorClearance: number;
+  pocketDevelopmentContainMargin: number;
+  pocketTarget: Vec2;
+  pocketLaneClearance: number;
+  pocketPassEta: number;
+  d5PocketRecoveryEta: number;
+  pocketReleaseDistance: number;
+}
+
+export function tacticalDropContainPoint(o1: Vec2, o5: Vec2): Vec2 {
+  const rollerDrop = movePointToward(o5, COURT.hoop, 1.42);
+  const ballDrop = movePointToward(o1, COURT.hoop, 2.28);
+  const target = add(scale(rollerDrop, 0.58), scale(ballDrop, 0.42));
+  return {
+    x: clamp(target.x, 3.65, 6.9),
+    y: clamp(target.y, 2.55, 4.7),
+  };
+}
+
+function tacticalChaseTarget(observation: PublicObservation): Vec2 {
+  const publicUseTarget = defensePublicReadTargets(observation).use;
+  const towardHoop = normalize(sub(COURT.hoop, publicUseTarget));
+  return add(publicUseTarget, scale(towardHoop, 0.42));
+}
+
+export function evaluateTacticalCoverageCandidateGeometry(
+  observation: PublicObservation,
+): TacticalCoverageCandidateGeometry {
+  if (observation.team !== "defense") {
+    throw new Error("T coverage candidate geometry belongs to the defense planner view");
+  }
+  const { O1: o1, O5: o5, D1: d1, D5: d5 } = observation.players;
+  const dropTarget = tacticalDropContainPoint(o1.pos, o5.pos);
+  const dropBlockers: RouteProofBlocker[] = [
+    { id: "O1", pos: o1.pos, radius: o1.radius },
+    { id: "O5", pos: o5.pos, radius: o5.radius },
+    { id: "D1", pos: d1.pos, radius: d1.radius },
+  ];
+  const retreatWaypoint = movePointToward(d5.pos, COURT.hoop, 0.9);
+  const coordinatedDropRoute = proveStagedBodyRoute(
+    d5.pos,
+    [retreatWaypoint, dropTarget],
+    d5.radius,
+    dropBlockers,
+    observation.tick,
+    TACTICAL_CHASE_MIN_ROUTE_CLEARANCE,
+  );
+  const dropRoute = coordinatedDropRoute.legal
+    ? coordinatedDropRoute
+    : proveUnderCompositeBodyRoute(
+        d5.pos,
+        dropTarget,
+        d5.radius,
+        dropBlockers,
+        observation.tick,
+        TACTICAL_CHASE_MIN_ROUTE_CLEARANCE,
+      );
+  const chaseTarget = tacticalChaseTarget(observation);
+  const awayFromHoop = normalize(sub(o5.pos, COURT.hoop));
+  const overGate = add(
+    o5.pos,
+    scale(
+      awayFromHoop,
+      d1.radius + o5.radius + TACTICAL_CHASE_MIN_ROUTE_CLEARANCE + 0.2,
+    ),
+  );
+  overGate.x = clamp(overGate.x, d1.radius, COURT.width - d1.radius);
+  overGate.y = clamp(overGate.y, d1.radius, COURT.height - d1.radius);
+  const chaseEntryProof = proveStagedBodyRoute(
+    d1.pos,
+    [overGate],
+    d1.radius,
+    [{ id: "O5", pos: o5.pos, radius: o5.radius }],
+    observation.tick,
+    TACTICAL_CHASE_MIN_ROUTE_CLEARANCE,
+  );
+  const chaseRoute = chaseEntryProof.legal
+    ? buildTangentRouteProof(
+        overGate,
+        chaseTarget,
+        d1.radius,
+        { id: "O5", pos: o5.pos, radius: o5.radius },
+        observation.tick,
+        TACTICAL_CHASE_MIN_ROUTE_CLEARANCE,
+      )
+        .map((exit) =>
+          proveStagedBodyRoute(
+            d1.pos,
+            [overGate, ...exit.waypoints],
+            d1.radius,
+            [{ id: "O5", pos: o5.pos, radius: o5.radius }],
+            observation.tick,
+            TACTICAL_CHASE_MIN_ROUTE_CLEARANCE,
+          )
+        )
+        .filter((proof) => proof.legal)
+        .sort(
+          (first, second) =>
+            first.length - second.length ||
+            second.minimumBodyClearance - first.minimumBodyClearance,
+        )[0] ?? null
+    : null;
+  const d1UnderAligned =
+    d1.pos.y <= o5.pos.y - 0.14 &&
+    distance(d1.pos, underScreenPoint(o5.pos)) <= 2.25;
+  const d1Topside =
+    !d1UnderAligned &&
+    d1.pos.y >= o5.pos.y - 0.18 &&
+    distance(d1.pos, o1.pos) <= 1.75;
+  return {
+    dropTarget,
+    dropRoute,
+    chaseTarget,
+    chaseRoute,
+    d1Topside,
+    d1UnderAligned,
+  };
+}
+
+function coverageObservationForUnderGeometry(
+  observation: PublicObservation,
+): PublicObservation {
+  const coverage = observation.tacticalCoverage;
+  return {
+    ...observation,
+    under: {
+      ...observation.under,
+      ...(coverage?.o1PositionAtScreenClear
+        ? { o1PositionAtScreenClear: { ...coverage.o1PositionAtScreenClear } }
+        : {}),
+    },
+  };
+}
+
+function stagedRoutePolyline(
+  start: Vec2,
+  proof: StagedBodyRouteProof,
+): Vec2[] {
+  return [{ ...start }, ...proof.waypoints.map((point) => ({ ...point }))];
+}
+
+function polylineMinimumDistance(
+  first: readonly Vec2[],
+  second: readonly Vec2[],
+): number {
+  if (first.length < 2 || second.length < 2) {
+    return distance(first[0] ?? v(), second[0] ?? v());
+  }
+  let minimum = Number.POSITIVE_INFINITY;
+  for (let firstIndex = 1; firstIndex < first.length; firstIndex += 1) {
+    for (let secondIndex = 1; secondIndex < second.length; secondIndex += 1) {
+      minimum = Math.min(
+        minimum,
+        segmentSegmentDistance(
+          first[firstIndex - 1],
+          first[firstIndex],
+          second[secondIndex - 1],
+          second[secondIndex],
+        ),
+      );
+    }
+  }
+  return minimum;
+}
+
+interface TacticalShortRollGeometry {
+  target: Vec2;
+  route: StagedBodyRouteProof | null;
+  corridorClearance: number;
+}
+
+function evaluateTacticalShortRollGeometry(
+  observation: PublicObservation,
+  snakeRoute: StagedBodyRouteProof | null,
+  snakeTarget: Vec2,
+): TacticalShortRollGeometry {
+  const { O1: o1, O5: o5, D1: d1, D5: d5 } = observation.players;
+  const rollY = clamp(
+    Math.max(
+      o5.pos.y - 1.28,
+      d5.pos.y + d5.radius + o5.radius + 0.18,
+    ),
+    3.35,
+    4.45,
+  );
+  const defenseBlockers: RouteProofBlocker[] = [
+    { id: "D1", pos: d1.pos, radius: d1.radius },
+    { id: "D5", pos: d5.pos, radius: d5.radius },
+    { id: "O1", pos: snakeTarget, radius: o1.radius },
+  ];
+  const handlerPolyline = snakeRoute
+    ? stagedRoutePolyline(o1.pos, snakeRoute)
+    : [{ ...o1.pos }, { ...snakeTarget }];
+  const centerwardSign = o5.pos.x >= COURT.centerlineX ? -1 : 1;
+  const lateralOffsets = [0.78, 0.62, 0.46, 0.3, 0.16, 0, -0.16, -0.3]
+    .map((offset) => offset * centerwardSign);
+  const candidates = lateralOffsets.flatMap((lateralOffset, directionIndex) => {
+    const target = {
+      x: clamp(o5.pos.x + lateralOffset, o5.radius, COURT.width - o5.radius),
+      y: rollY,
+    };
+    const laneEntry = { x: target.x, y: o5.pos.y };
+    const waypoints = Math.abs(lateralOffset) > 1e-9
+      ? [laneEntry, target]
+      : [target];
+    const route = proveStagedBodyRoute(
+      o5.pos,
+      waypoints,
+      o5.radius,
+      defenseBlockers,
+      observation.tick,
+      TACTICAL_CHASE_MIN_ROUTE_CLEARANCE,
+    );
+    if (!route.legal) return [];
+    const rollPolyline = stagedRoutePolyline(o5.pos, route);
+    const endpointReleaseDistance = distance(snakeTarget, target);
+    const endpointClearance = endpointReleaseDistance - o1.radius - o5.radius;
+    if (
+      endpointReleaseDistance <
+        TACTICAL_POCKET_DEVELOPMENT_RELEASE_DISTANCE - 1e-9
+    ) return [];
+    return [{
+      target,
+      route,
+      corridorClearance:
+        polylineMinimumDistance(handlerPolyline, rollPolyline) - o1.radius - o5.radius,
+      endpointClearance,
+      directionIndex,
+    }];
+  });
+  const selected = candidates.sort(
+    (first, second) =>
+      first.route.length - second.route.length ||
+      second.corridorClearance - first.corridorClearance ||
+      first.endpointClearance - second.endpointClearance ||
+      first.directionIndex - second.directionIndex ||
+      first.target.x - second.target.x,
+  )[0];
+  return selected
+    ? {
+        target: selected.target,
+        route: selected.route,
+        corridorClearance: selected.corridorClearance,
+      }
+    : {
+        target: { ...o5.pos },
+        route: null,
+        corridorClearance: distance(o1.pos, o5.pos) - o1.radius - o5.radius,
+      };
+}
+
+function proveTacticalSnakeRoute(
+  o1: PublicObservation["players"]["O1"],
+  o5: PublicObservation["players"]["O5"],
+  d1: PublicObservation["players"]["D1"],
+  d5: PublicObservation["players"]["D5"],
+  target: Vec2,
+  tick: number,
+): StagedBodyRouteProof | null {
+  // Once the handler has already turned the corner below the screener, asking
+  // him to reverse back around O5 is no longer a snake read.  That public
+  // geometry belongs to the short-roll / reset branch instead.
+  if (o1.pos.y < o5.pos.y - 0.18 - 1e-9) return null;
+  const blockers: RouteProofBlocker[] = [
+    { id: "O5", pos: o5.pos, radius: o5.radius },
+    { id: "D1", pos: d1.pos, radius: d1.radius },
+    { id: "D5", pos: d5.pos, radius: d5.radius },
+  ];
+  const handlerSide = o1.pos.x >= o5.pos.x ? 1 : -1;
+  const routeRadius =
+    o1.radius + o5.radius + TACTICAL_SNAKE_MIN_BODY_CLEARANCE + 0.18;
+  const releaseDirection = normalize(sub(o1.pos, o5.pos));
+  if (length(releaseDirection) < 1e-9) return null;
+  const releasePoint = {
+    x: clamp(
+      o5.pos.x + releaseDirection.x * routeRadius,
+      o1.radius,
+      COURT.width - o1.radius,
+    ),
+    y: clamp(
+      o5.pos.y + releaseDirection.y * routeRadius,
+      o1.radius,
+      COURT.height - o1.radius,
+    ),
+  };
+  const diagonal = Math.SQRT1_2 * routeRadius;
+  const outsideLaneGate = {
+    x: o5.pos.x + handlerSide * diagonal,
+    y: o5.pos.y - diagonal,
+  };
+  const rimwardLaneGate = {
+    x: o5.pos.x,
+    y: o5.pos.y - routeRadius,
+  };
+  const insideLaneGate = {
+    x: o5.pos.x - handlerSide * diagonal,
+    y: o5.pos.y - diagonal,
+  };
+  const proof = proveStagedBodyRoute(
+    o1.pos,
+    [releasePoint, outsideLaneGate, rimwardLaneGate, insideLaneGate, target],
+    o1.radius,
+    blockers,
+    tick,
+    TACTICAL_SNAKE_MIN_BODY_CLEARANCE,
+  );
+  return proof.legal ? proof : null;
+}
+
+export function evaluateTacticalReadGeometry(
+  observation: PublicObservation,
+): TacticalReadGeometry {
+  if (observation.team !== "offense") {
+    throw new Error("T coverage read geometry belongs to the offense planner view");
+  }
+  const { O1: o1, O5: o5, D1: d1, D5: d5 } = observation.players;
+  const drop = evaluateUnderReadGeometry(coverageObservationForUnderGeometry(observation));
+  const inwardDirection = normalize(sub(COURT.hoop, o5.pos));
+  const centerwardDirection = o5.pos.x >= COURT.centerlineX ? v(-1, 0) : v(1, 0);
+  const snakeTargetRaw = add(
+    add(o5.pos, scale(inwardDirection, 0.68)),
+    scale(centerwardDirection, 0.78),
+  );
+  const snakeTarget = {
+    x: clamp(snakeTargetRaw.x, 4.05, 6.95),
+    y: clamp(snakeTargetRaw.y, 3.65, 5.35),
+  };
+  const snakeRoute = proveTacticalSnakeRoute(
+    o1,
+    o5,
+    d1,
+    d5,
+    snakeTarget,
+    observation.tick,
+  );
+  const accelerationLimitedTravelEta = (
+    routeLength: number,
+    velocityAlongRoute: number,
+    maxSpeed: number,
+  ): number => {
+    const acceleration = 12.8;
+    let remaining = Math.max(0, routeLength);
+    let elapsed = 0;
+    let entrySpeed = clamp(velocityAlongRoute, -maxSpeed, maxSpeed);
+    if (entrySpeed < 0) {
+      const stopSeconds = -entrySpeed / acceleration;
+      remaining += entrySpeed ** 2 / (2 * acceleration);
+      elapsed += stopSeconds;
+      entrySpeed = 0;
+    }
+    const accelerateSeconds = Math.max(0, (maxSpeed - entrySpeed) / acceleration);
+    const accelerateDistance =
+      entrySpeed * accelerateSeconds + 0.5 * acceleration * accelerateSeconds ** 2;
+    if (remaining <= accelerateDistance + 1e-9) {
+      return elapsed +
+        (-entrySpeed + Math.sqrt(entrySpeed ** 2 + 2 * acceleration * remaining)) /
+          acceleration;
+    }
+    return elapsed + accelerateSeconds + (remaining - accelerateDistance) / maxSpeed;
+  };
+  const snakeAttackDirection = normalize(
+    sub(snakeRoute?.waypoints[0] ?? snakeTarget, o1.pos),
+  );
+  const snakeAttackEta = accelerationLimitedTravelEta(
+    snakeRoute?.length ?? distance(o1.pos, snakeTarget),
+    dot(o1.vel, snakeAttackDirection),
+    Math.max(1.1, o1.maxSpeed * 0.92),
+  );
+  const defenderSnakeEta = (
+    defender: PublicObservation["players"]["D1"],
+    otherDefenders: readonly { id: PlayerId; pos: Vec2; radius: number }[],
+    speedFactor: number,
+    bodyMargin: number,
+  ): number => {
+    const proof = proveUnderCompositeBodyRoute(
+      defender.pos,
+      snakeTarget,
+      defender.radius,
+      [
+        { id: "O5", pos: o5.pos, radius: o5.radius },
+        { id: "O1", pos: o1.pos, radius: o1.radius },
+        ...otherDefenders,
+      ],
+      observation.tick,
+      TACTICAL_CHASE_MIN_ROUTE_CLEARANCE,
+    );
+    const routeLength = proof?.length ?? distance(defender.pos, snakeTarget);
+    const targetDirection = normalize(
+      sub(proof?.waypoints[0] ?? snakeTarget, defender.pos),
+    );
+    return accelerationLimitedTravelEta(
+      Math.max(0, routeLength - defender.radius - o1.radius - bodyMargin),
+      dot(defender.vel, targetDirection),
+      Math.max(1.1, defender.maxSpeed * speedFactor),
+    );
+  };
+  const d1RecoveryEta = defenderSnakeEta(
+    d1,
+    [{ id: "D5", pos: d5.pos, radius: d5.radius }],
+    0.94,
+    0.12,
+  );
+  const d5ContainEta = defenderSnakeEta(
+    d5,
+    [{ id: "D1", pos: d1.pos, radius: d1.radius }],
+    0.88,
+    0.16,
+  );
+  const snakeTimingMargin = Math.min(d1RecoveryEta, d5ContainEta) + 0.12 - snakeAttackEta;
+  const shortRoll = evaluateTacticalShortRollGeometry(
+    observation,
+    snakeRoute,
+    snakeTarget,
+  );
+  const handlerAway = normalize(sub(o1.pos, o5.pos));
+  const pocketDevelopmentDistance = Math.max(
+    0,
+    TACTICAL_POCKET_HANDLER_DEVELOPMENT_DISTANCE -
+      distance(o1.pos, o5.pos),
+  );
+  const pocketDevelopmentHandlerTargetRaw = add(
+    o1.pos,
+    scale(
+      length(handlerAway) > 1e-9
+        ? handlerAway
+        : o1.pos.x >= COURT.centerlineX ? v(1, 0) : v(-1, 0),
+      pocketDevelopmentDistance,
+    ),
+  );
+  const pocketDevelopmentHandlerTarget = {
+    x: clamp(
+      pocketDevelopmentHandlerTargetRaw.x,
+      o1.radius,
+      COURT.width - o1.radius,
+    ),
+    y: clamp(
+      pocketDevelopmentHandlerTargetRaw.y,
+      o1.radius,
+      COURT.height - o1.radius,
+    ),
+  };
+  const pocketDevelopmentHandlerProof = proveStagedBodyRoute(
+    o1.pos,
+    [pocketDevelopmentHandlerTarget],
+    o1.radius,
+    [
+      {
+        id: "O5",
+        pos: o5.pos,
+        radius:
+          o5.radius +
+          TACTICAL_TEAMMATE_CHANNEL_CLEARANCE -
+          TACTICAL_CHASE_MIN_ROUTE_CLEARANCE,
+      },
+      { id: "D1", pos: d1.pos, radius: d1.radius },
+      { id: "D5", pos: d5.pos, radius: d5.radius },
+    ],
+    observation.tick,
+    TACTICAL_CHASE_MIN_ROUTE_CLEARANCE,
+  );
+  const pocketDevelopmentHandlerRoute = pocketDevelopmentHandlerProof.legal
+    ? pocketDevelopmentHandlerProof
+    : null;
+  const pocketDevelopmentRoll = evaluateTacticalShortRollGeometry(
+    observation,
+    pocketDevelopmentHandlerRoute,
+    pocketDevelopmentHandlerTarget,
+  );
+  const pocketHandlerDirection = normalize(
+    sub(pocketDevelopmentHandlerTarget, o1.pos),
+  );
+  const pocketDevelopmentHandlerEta = accelerationLimitedTravelEta(
+    pocketDevelopmentHandlerRoute?.length ??
+      distance(o1.pos, pocketDevelopmentHandlerTarget),
+    dot(o1.vel, pocketHandlerDirection),
+    Math.max(1.1, o1.maxSpeed * 0.92),
+  );
+  const d5DevelopmentDirection = normalize(
+    sub(pocketDevelopmentHandlerTarget, d5.pos),
+  );
+  const d5DevelopmentContainEta = accelerationLimitedTravelEta(
+    Math.max(
+      0,
+      distance(d5.pos, pocketDevelopmentHandlerTarget) - 1.48,
+    ),
+    dot(d5.vel, d5DevelopmentDirection),
+    Math.max(1.1, d5.maxSpeed * 0.88),
+  );
+  const pocketDevelopmentContainMargin =
+    pocketDevelopmentHandlerEta + TACTICAL_READ_MIN_COMMIT_SECONDS + 0.24 -
+    d5DevelopmentContainEta;
+  const pocketReleaseDistance = distance(o1.pos, o5.pos);
+  const pocketPassEta = clamp(pocketReleaseDistance / 11.8, 0.12, 0.36);
+  const pocketTargetRaw = add(o5.pos, scale(o5.vel, pocketPassEta));
+  const pocketTarget = {
+    x: clamp(pocketTargetRaw.x, o5.radius, COURT.width - o5.radius),
+    y: clamp(pocketTargetRaw.y, o5.radius, COURT.height - o5.radius),
+  };
+  const laneClearances = ([d1, d5] as const).map((defender) => {
+    const lane = pointSegmentDistance(defender.pos, o1.pos, pocketTarget);
+    return lane.t > 0.055 && lane.t < 0.95
+      ? lane.distance - defender.radius - 0.12
+      : 1.35;
+  });
+  const pocketLaneClearance = Math.min(...laneClearances);
+  const d5PocketRecoveryDirection = normalize(sub(pocketTarget, d5.pos));
+  const d5PocketRecoveryEta = accelerationLimitedTravelEta(
+    Math.max(
+      0,
+      distance(d5.pos, pocketTarget) - d5.radius - o5.radius - 0.08,
+    ),
+    dot(d5.vel, d5PocketRecoveryDirection),
+    Math.max(1.1, d5.maxSpeed * 0.92),
+  );
+
+  return {
+    drop,
+    snakeTarget,
+    snakeRoute,
+    snakeTimingMargin,
+    shortRollTarget: shortRoll.target,
+    shortRollRoute: shortRoll.route,
+    shortRollCorridorClearance: shortRoll.corridorClearance,
+    pocketDevelopmentHandlerTarget,
+    pocketDevelopmentHandlerRoute,
+    pocketDevelopmentRollTarget: pocketDevelopmentRoll.target,
+    pocketDevelopmentRollRoute: pocketDevelopmentRoll.route,
+    pocketDevelopmentCorridorClearance: pocketDevelopmentRoll.corridorClearance,
+    pocketDevelopmentContainMargin,
+    pocketTarget,
+    pocketLaneClearance,
+    pocketPassEta,
+    d5PocketRecoveryEta,
+    pocketReleaseDistance,
+  };
+}
+
 export function screenGeometry(input: GeometryInput): {
   contact: boolean;
   routeExposure: boolean;
@@ -2220,6 +2940,7 @@ interface WorldInitializationInput {
   o1MaxSpeed: number;
   d1FrontReactionDelay: number;
   d1PostCatchRecoveryDelay: number;
+  tacticalVocabularyVersion?: TacticalVocabularyVersion;
 }
 
 function initialWorld(input: WorldInitializationInput): WorldState {
@@ -2279,6 +3000,12 @@ function initialWorld(input: WorldInitializationInput): WorldState {
       d1RecoveryReadyIn: input.d1PostCatchRecoveryDelay,
     },
     under: { ...EMPTY_UNDER },
+    ...(input.tacticalVocabularyVersion
+      ? {
+          tacticalCoverage: { ...EMPTY_TACTICAL_COVERAGE },
+          tacticalVocabularyVersion: input.tacticalVocabularyVersion,
+        }
+      : {}),
     reject: { ...EMPTY_REJECT },
     terminal: null,
     pendingPlannerEvents: [],
@@ -2332,6 +3059,20 @@ export function createPlannerObservation(
     seal: { ...world.seal },
     postCatch: { ...world.postCatch },
     under: { ...world.under },
+    ...(world.tacticalCoverage
+      ? {
+          tacticalCoverage: {
+            ...world.tacticalCoverage,
+            ...(world.tacticalCoverage.o1PositionAtScreenClear
+              ? {
+                  o1PositionAtScreenClear: {
+                    ...world.tacticalCoverage.o1PositionAtScreenClear,
+                  },
+                }
+              : {}),
+          },
+        }
+      : {}),
     reject: { ...world.reject },
     court: COURT,
     triggerEvents: triggerEvents.map((event) => ({ ...event })),
@@ -2340,6 +3081,9 @@ export function createPlannerObservation(
           setupMode: "auto" as const,
           formationDomainVersion: AUTONOMOUS_FORMATION_DOMAIN_VERSION,
         }
+      : {}),
+    ...(world.tacticalVocabularyVersion
+      ? { tacticalVocabularyVersion: world.tacticalVocabularyVersion }
       : {}),
   };
 
@@ -2950,6 +3694,32 @@ function offenseDecisionPhase(
     return "offense_post_catch";
   }
   if (observation.facts.matchupExchange) return "offense_mismatch";
+  const currentDropRead =
+    currentPlan?.id === "ATTACK_DROP_GAP" ||
+    currentPlan?.id === "TAKE_DROP_PULLUP" ||
+    currentPlan?.id === "RESET_DROP";
+  const currentChaseRead =
+    currentPlan?.id === "SNAKE_CHASE" ||
+    currentPlan?.id === "POCKET_PASS" ||
+    currentPlan?.id === "RESET_CHASE";
+  const deliveredDropCommit = observation.triggerEvents.some(
+    (event) => event.type === "drop_committed",
+  );
+  const deliveredChaseCommit = observation.triggerEvents.some(
+    (event) => event.type === "chase_over_committed",
+  );
+  if (
+    observation.tacticalCoverage?.chaseOverCommitted &&
+    (currentChaseRead || deliveredChaseCommit)
+  ) {
+    return "offense_chase_read";
+  }
+  if (
+    observation.tacticalCoverage?.dropCommitted &&
+    (currentDropRead || deliveredDropCommit)
+  ) {
+    return "offense_drop_read";
+  }
   const currentUnderRead =
     currentPlan?.id === "ATTACK_UNDER_GAP" ||
     currentPlan?.id === "TAKE_UNDER_PULLUP" ||
@@ -3038,6 +3808,202 @@ function evaluateOffenseCandidates(
         "形成阶段不读取防守隐藏计划，也不提前选择 use/reject",
       ],
     }];
+  }
+
+  if (
+    decisionPhase === "offense_drop_read" ||
+    decisionPhase === "offense_chase_read"
+  ) {
+    const coverage = observation.tacticalCoverage ?? EMPTY_TACTICAL_COVERAGE;
+    const geometry = evaluateTacticalReadGeometry(observation);
+    const ids: OffensePlanId[] = decisionPhase === "offense_drop_read"
+      ? ["ATTACK_DROP_GAP", "TAKE_DROP_PULLUP", "RESET_DROP"]
+      : ["SNAKE_CHASE", "POCKET_PASS", "RESET_CHASE"];
+    return ids.map((id) => {
+      const vetoes: string[] = [];
+      const continuingPreClearRead =
+        !observation.facts.ballHandlerClearedScreen && currentPlan?.id === id;
+      const tacticalPullupFeasible =
+        geometry.drop.pullupFeasible ||
+        (geometry.drop.d5DeepRetreat &&
+          geometry.drop.canStopForPullup &&
+          geometry.drop.pullupBodyGap >= 0.42 &&
+          !geometry.drop.pullupContest &&
+          geometry.drop.d1PullupRecoveryEta >= geometry.drop.stoppingTime + 0.08 &&
+          geometry.drop.d5O5ClosingSpeed <= -0.12);
+      if (observation.tacticalVocabularyVersion !== MINIMUM_TACTICAL_VOCABULARY_VERSION) {
+        vetoes.push("T 战术词汇版本未启用");
+      }
+      if (observation.branch !== "use") {
+        vetoes.push("DROP / CHASE 二级读取只属于已公开使用掩护分支");
+      }
+      if (observation.ballOwner !== "O1" || observation.ball.inFlight) {
+        vetoes.push("O1 必须保持合法持球才能读取覆盖");
+      }
+
+      if (decisionPhase === "offense_drop_read" && !coverage.dropCommitted) {
+        vetoes.push("D5 尚未以真实运动建立 drop/contain");
+      }
+      if (decisionPhase === "offense_chase_read" && !coverage.chaseOverCommitted) {
+        vetoes.push("D1 尚未以真实路线完成 chase/over 承诺");
+      }
+
+      if (id === "ATTACK_DROP_GAP") {
+        if (continuingPreClearRead) {
+          // The team owns this route until the screen-clear decision boundary.
+        } else if (!geometry.drop.bestHip) {
+          vetoes.push("D5 两侧髋部都没有合法身体路线");
+        } else if (!geometry.drop.attackFeasible) {
+          vetoes.push(
+            `攻击 ETA 未领先 D1 恢复与 D5 contain；时序余量 ${round(geometry.drop.bestHip.timingMargin, 3)}s`,
+          );
+        }
+      }
+      if (id === "TAKE_DROP_PULLUP") {
+        if (continuingPreClearRead) {
+          // Re-evaluate the actual stop window only after O1 clears the screen.
+        } else if (!geometry.drop.d5DeepRetreat) {
+          vetoes.push("D5 尚未建立真实深 drop 净空");
+        }
+        if (!continuingPreClearRead && !tacticalPullupFeasible) {
+          vetoes.push("O1 无法在 D1 恢复 / D5 contest 前合法减速形成处理窗");
+        }
+      }
+      if (id === "SNAKE_CHASE") {
+        if (!coverage.d1Trail) vetoes.push("D1 尚未公开落在持球人身后");
+        if (!geometry.snakeRoute?.legal) vetoes.push("O1 没有绕过 D5 内侧髋部的合法 snake 路线");
+        if (
+          geometry.snakeTimingMargin < -TACTICAL_READ_MIN_COMMIT_SECONDS
+        ) {
+          vetoes.push(`snake ETA 落后恢复 / contain ${round(-geometry.snakeTimingMargin, 3)}s`);
+        }
+      }
+      if (id === "POCKET_PASS") {
+        if (coverage.pocketPassReady) {
+          if (!coverage.d5ContainsBall) vetoes.push("D5 尚未真实离开 O5 责任线去 contain O1");
+          if (
+            geometry.pocketReleaseDistance <
+              TACTICAL_POCKET_MIN_RELEASE_DISTANCE - 1e-9
+          ) {
+            vetoes.push(
+              `O1/O5 释放距离仅 ${round(geometry.pocketReleaseDistance, 3)}m`,
+            );
+          }
+          if (geometry.pocketLaneClearance < 0.035) {
+            vetoes.push(`预计 pocket 走廊净空 ${round(geometry.pocketLaneClearance, 3)}m`);
+          }
+          if (geometry.pocketPassEta >= geometry.d5PocketRecoveryEta) {
+            vetoes.push("D5 可在 pocket pass 到达前恢复 O5");
+          }
+        } else {
+          if (!coverage.d1Trail) vetoes.push("D1 尚未形成公开追尾，不能预占 pocket 发展路线");
+          if (currentPlan?.id === "RESET_CHASE") {
+            vetoes.push("安全重置已经承诺，未出现新的实时 pocket 窗");
+          }
+          if (!geometry.pocketDevelopmentHandlerRoute?.legal) {
+            vetoes.push("O1 没有合法的持球拉开路线来占住 D5");
+          }
+          if (!geometry.pocketDevelopmentRollRoute?.legal) {
+            vetoes.push("O5 没有与持球通道分离的合法短顺下路线");
+          }
+          if (geometry.pocketDevelopmentContainMargin < -FIXED_DT - 1e-9) {
+            vetoes.push(
+              `D5 无法在发展窗口内真实 contain O1；时序差 ${round(-geometry.pocketDevelopmentContainMargin, 3)}s`,
+            );
+          }
+        }
+      }
+
+      const base =
+        id === "ATTACK_DROP_GAP"
+          ? 3.72 + (geometry.drop.bestHip?.timingMargin ?? -1) * 1.18
+          : id === "TAKE_DROP_PULLUP"
+            ? 3.96 + (geometry.drop.d5DeepRetreat ? 0.78 : 0)
+            : id === "RESET_DROP"
+              ? 1.16 + (coverage.d5ContainsBall ? 0.22 : 0)
+              : id === "SNAKE_CHASE"
+                ? 3.84 + geometry.snakeTimingMargin * 1.2
+                : id === "POCKET_PASS"
+                  ? coverage.pocketPassReady
+                    ? 4.12 +
+                      clamp(geometry.pocketLaneClearance, -0.4, 1.2) * 0.7 +
+                      clamp(
+                        geometry.d5PocketRecoveryEta - geometry.pocketPassEta,
+                        -0.4,
+                        1,
+                      ) * 0.8
+                    : 3.46 +
+                      clamp(geometry.pocketDevelopmentContainMargin, -0.2, 0.4) * 0.8 +
+                      clamp(geometry.pocketDevelopmentCorridorClearance, 0, 0.8) * 0.3
+                  : 1.18 + (coverage.d1Recovered ? 0.28 : 0);
+      const hysteresis = currentPlan?.id === id ? 0.28 : currentPlan ? -0.14 : 0;
+      const baseScore = vetoes.length === 0 ? round(base + hysteresis) : null;
+      const strategyScore = scoreCandidateWithStrategy(strategy, decisionPhase, {
+        planId: id,
+        feasible: vetoes.length === 0,
+        baseScore,
+      });
+      const label =
+        id === "ATTACK_DROP_GAP"
+          ? "攻击 DROP 髋部"
+          : id === "TAKE_DROP_PULLUP"
+            ? "读取深 DROP 急停窗"
+            : id === "RESET_DROP"
+              ? "安全收住 DROP 回合"
+              : id === "SNAKE_CHASE"
+                ? "反切追过防守的内侧髋部"
+                : id === "POCKET_PASS"
+                  ? "分给短顺下 O5"
+                  : "安全收住 CHASE 回合";
+      const evidence =
+        id === "POCKET_PASS"
+          ? coverage.pocketPassReady
+            ? [
+                `预计 pocket 净空 ${round(geometry.pocketLaneClearance, 3)}m`,
+                `实时 O1/O5 释放距离 ${round(geometry.pocketReleaseDistance, 3)}m`,
+                `传球 ETA ${round(geometry.pocketPassEta, 3)}s / D5 回位 ${round(geometry.d5PocketRecoveryEta, 3)}s`,
+                "只读取 D5 已公开 contain 与两名防守人的当前身体走廊",
+              ]
+            : [
+                `发展通道净空 ${round(geometry.pocketDevelopmentCorridorClearance, 3)}m`,
+                `D5 contain 发展时序余量 ${round(geometry.pocketDevelopmentContainMargin, 3)}s`,
+                "O1 先拉开占住 D5，O5 再进入独立纵向短顺下通道",
+              ]
+          : id === "SNAKE_CHASE"
+            ? [
+                `snake 路线净空 ${round(geometry.snakeRoute?.minimumBodyClearance ?? -1, 3)}m`,
+                `相对 D1 恢复 / D5 contain 时序余量 ${round(geometry.snakeTimingMargin, 3)}s`,
+                coverage.d1Trail ? "D1 已公开落在 O1 身后" : "D1 尚未形成公开追尾",
+              ]
+            : id === "ATTACK_DROP_GAP"
+              ? [
+                  `最佳髋部路线净空 ${round(geometry.drop.bestHip?.routeClearance ?? -1, 3)}m`,
+                  `攻击时序余量 ${round(geometry.drop.bestHip?.timingMargin ?? -1, 3)}s`,
+                  `D5 screen depth ${round(coverage.d5ScreenDepth, 3)}m`,
+                ]
+              : id === "TAKE_DROP_PULLUP"
+                ? [
+                    `D5 深 drop ${geometry.drop.d5DeepRetreat ? "成立" : "不成立"}`,
+                    `预计身体净空 ${round(geometry.drop.pullupBodyGap, 3)}m`,
+                    `预计停步时间 ${round(geometry.drop.stoppingTime, 3)}s`,
+                  ]
+                : [
+                    "优势读取证据不足，保留球权并等待中立世界确认遏制",
+                    `D1 恢复 ${coverage.d1Recovered ? "成立" : "未成立"} / D5 contain ${coverage.d5ContainsBall ? "成立" : "未成立"}`,
+                  ];
+      return {
+        id,
+        label,
+        feasible: vetoes.length === 0,
+        score: strategyScore.effectiveScore,
+        ...strategyScore,
+        vetoes,
+        evidence: [
+          ...evidence,
+          currentPlan?.id === id ? "保持当前 T 读取：滞回 +0.28" : "候选切换成本已计入",
+        ],
+      };
+    });
   }
 
   if (decisionPhase === "offense_under_read") {
@@ -3248,6 +4214,68 @@ function defenseRollout(
 ): { score: number; evidence: string[] } {
   const step = 1 / 30;
   const horizonSteps = 18;
+  if (candidate === "DROP_CONTAIN" || candidate === "CHASE_OVER") {
+    const geometry = evaluateTacticalCoverageCandidateGeometry(observation);
+    let ball = { ...observation.players.O1.pos };
+    let roller = { ...observation.players.O5.pos };
+    let d1 = { ...observation.players.D1.pos };
+    let d5 = { ...observation.players.D5.pos };
+    const useTarget = defensePublicReadTargets(observation).use;
+    const rollTarget = movePointToward(roller, COURT.hoop, 1.68);
+    const initialD5RimDistance = distance(d5, COURT.hoop);
+    for (let index = 0; index < horizonSteps; index += 1) {
+      ball = movePointToward(ball, useTarget, observation.players.O1.maxSpeed * 0.88 * step);
+      roller = movePointToward(roller, rollTarget, observation.players.O5.maxSpeed * 0.9 * step);
+      const d1Target = candidate === "CHASE_OVER" ? geometry.chaseTarget : ball;
+      d1 = movePointToward(
+        d1,
+        d1Target,
+        observation.players.D1.maxSpeed * (candidate === "CHASE_OVER" ? 0.94 : 0.78) * step,
+      );
+      d5 = movePointToward(
+        d5,
+        tacticalDropContainPoint(ball, roller),
+        observation.players.D5.maxSpeed * 0.88 * step,
+      );
+    }
+    const d5RetreatProgress = initialD5RimDistance - distance(d5, COURT.hoop);
+    const contain = underContestGeometry(ball, observation.players.O1.radius, {
+      ...observation.players.D5,
+      pos: d5,
+    });
+    const d1BallDistance = distance(d1, ball);
+    const rollerDistance = distance(d5, roller);
+    const assignmentFit =
+      clamp(1.5 - d1BallDistance, -0.5, 1.25) * 0.72 +
+      clamp(1.65 - rollerDistance, -0.5, 1.2) * 0.44;
+    const tacticFit = candidate === "CHASE_OVER"
+      ? geometry.d1Topside
+        ? 3.48
+        : -1.6
+      : geometry.d1UnderAligned
+        ? 3.26
+        : 1.62;
+    const score =
+      tacticFit +
+      assignmentFit +
+      clamp(d5RetreatProgress, -0.4, 1.1) * 1.14 +
+      (contain.containsBall ? 0.72 : 0) +
+      (candidate === "CHASE_OVER" && geometry.chaseRoute?.legal ? 0.52 : 0);
+    return {
+      score: round(score),
+      evidence: [
+        "18 步 / 0.6 秒 T 覆盖短推演",
+        `预计 D5 向筐沉退 ${round(d5RetreatProgress, 2)}m`,
+        `预计 D1–O1 ${round(d1BallDistance, 2)}m / D5–O5 ${round(rollerDistance, 2)}m`,
+        contain.containsBall ? "D5 预计进入 O1–篮筐 contain 线" : "D5 尚未进入持球 contain 线",
+        candidate === "CHASE_OVER"
+          ? geometry.d1Topside
+            ? "D1 公开起手允许沿 O5 上方合法追过"
+            : "D1 起手深度不支持绕上追过"
+          : "D5 优先建立 drop，D1 继续保持 O1 原责任",
+      ],
+    };
+  }
   if (candidate === "STAY_HOME_POST" || candidate === "DIG_POST") {
     let o5 = { ...observation.players.O5.pos };
     let o1 = { ...observation.players.O1.pos };
@@ -3510,7 +4538,15 @@ function evaluateDefenseCandidates(
     }];
   }
 
+  const tacticalVocabularyEnabled =
+    observation.tacticalVocabularyVersion === MINIMUM_TACTICAL_VOCABULARY_VERSION;
+  const tacticalGeometry = tacticalVocabularyEnabled
+    ? evaluateTacticalCoverageCandidateGeometry(observation)
+    : null;
   const ids: DefensePlanId[] = [
+    ...(tacticalVocabularyEnabled
+      ? (["DROP_CONTAIN", "CHASE_OVER"] as const)
+      : []),
     "SWITCH_READY",
     "SWITCH",
     "STAY_HOME",
@@ -3530,6 +4566,11 @@ function evaluateDefenseCandidates(
       (observation.players.D1.pos.y <= observation.players.O5.pos.y - 0.14 &&
         distance(observation.players.D1.pos, underScreenPoint(observation.players.O5.pos)) <= 2.25);
     const postCatchCandidate = id === "STAY_HOME_POST" || id === "DIG_POST";
+    const tacticalCoverageCandidate = id === "DROP_CONTAIN" || id === "CHASE_OVER";
+    const currentTacticalCoveragePlan =
+      currentPlan?.id === "DROP_CONTAIN" || currentPlan?.id === "CHASE_OVER"
+        ? currentPlan.id
+        : null;
     const o5OwnsBall = observation.ballOwner === "O5";
     const postSwitchCandidate =
       id === "CONTAIN_MISMATCH" ||
@@ -3566,6 +4607,77 @@ function evaluateDefenseCandidates(
     }
     if (id === "SWITCH" && observation.under.active) {
       vetoes.push("D1 已公开走掩护下方且 D5 留守 O5，禁止凭空改成换防");
+    }
+    if (
+      (id === "SWITCH_READY" || id === "SWITCH") &&
+      observation.tacticalCoverage?.dropCommitted
+    ) {
+      vetoes.push("D5 已公开建立 T 阶段 drop/contain，当前覆盖保持原对位而非换防");
+    }
+    if (tacticalCoverageCandidate) {
+      if (!tacticalVocabularyEnabled || !tacticalGeometry) {
+        vetoes.push("T 战术词汇版本未启用");
+      }
+      if (observation.branch === "reject") {
+        vetoes.push("O1 已拒绝掩护，不存在 drop/chase 覆盖责任");
+      }
+      if (observation.ballOwner !== "O1" || observation.ball.inFlight) {
+        vetoes.push("drop/chase 覆盖只属于 O1 合法持球的挡拆阶段");
+      }
+      if (
+        currentTacticalCoveragePlan &&
+        id !== currentTacticalCoveragePlan &&
+        observation.branch !== "reject" &&
+        !observation.facts.matchupExchange &&
+        !(
+          currentTacticalCoveragePlan === "DROP_CONTAIN" &&
+          id === "CHASE_OVER" &&
+          observation.tacticalCoverage?.chaseOverCommitted
+        )
+      ) {
+        vetoes.push("当前 drop/chase 覆盖已进入最短承诺；本回合不凭 watchdog 改写覆盖家族");
+      }
+      if (
+        id === "DROP_CONTAIN" &&
+        !tacticalGeometry?.dropRoute?.legal &&
+        !observation.tacticalCoverage?.dropCommitted
+      ) {
+        vetoes.push("D5 到 drop/contain 点没有连续合法身体路线");
+      }
+      if (id === "CHASE_OVER") {
+        if (
+          !tacticalGeometry?.d1Topside &&
+          !observation.tacticalCoverage?.chaseOverCommitted &&
+          currentPlan?.id !== "CHASE_OVER"
+        ) {
+          vetoes.push("D1 不在可从掩护上方追过的公开起手深度");
+        }
+        if (
+          !tacticalGeometry?.chaseRoute?.legal &&
+          !observation.tacticalCoverage?.chaseOverCommitted &&
+          currentPlan?.id !== "CHASE_OVER"
+        ) {
+          vetoes.push("D1 绕 O5 上方的 chase 路线不可行");
+        } else if (
+          tacticalGeometry?.chaseRoute &&
+          tacticalGeometry.chaseRoute.minimumBodyClearance <
+            TACTICAL_CHASE_MIN_ROUTE_CLEARANCE - 1e-9 &&
+          currentPlan?.id !== "CHASE_OVER"
+        ) {
+          vetoes.push(
+            `chase 路线身体净空 ${round(tacticalGeometry.chaseRoute.minimumBodyClearance, 3)}m`,
+          );
+        }
+      }
+    }
+    if (
+      currentTacticalCoveragePlan &&
+      !tacticalCoverageCandidate &&
+      observation.branch !== "reject" &&
+      !observation.facts.matchupExchange &&
+      observation.ballOwner === "O1"
+    ) {
+      vetoes.push("T 覆盖家族已承诺；没有 reject、换防或球权事件时不得回落为旧覆盖");
     }
     if (id === "UNDER" && observation.branch === "reject") {
       vetoes.push("O1 已拒绝掩护，不再存在走掩护下方的路线");
@@ -3616,7 +4728,11 @@ function evaluateDefenseCandidates(
     return {
       id,
       label:
-        id === "UNDER"
+        id === "DROP_CONTAIN"
+          ? "D5 沉退遏制，D1 保持追防"
+          : id === "CHASE_OVER"
+            ? "D1 绕上追过，D5 延续沉退"
+        : id === "UNDER"
           ? "D1 走下方，D5 短收"
           : id === "TAG_REJECT"
             ? "D5 协防拒绝，D1 追球"
@@ -3643,6 +4759,17 @@ function evaluateDefenseCandidates(
       vetoes,
       evidence: [
         ...rollout.evidence,
+        ...(id === "DROP_CONTAIN" && tacticalGeometry
+          ? [
+              `D5 drop 路线净空 ${round(tacticalGeometry.dropRoute?.minimumBodyClearance ?? -1, 3)}m`,
+              `目标 ${round(tacticalGeometry.dropTarget.x, 2)}, ${round(tacticalGeometry.dropTarget.y, 2)}`,
+            ]
+          : id === "CHASE_OVER" && tacticalGeometry
+            ? [
+                `D1 chase 路线 ${round(tacticalGeometry.chaseRoute?.length ?? -1, 3)}m`,
+                `路线净空 ${round(tacticalGeometry.chaseRoute?.minimumBodyClearance ?? -1, 3)}m`,
+              ]
+            : []),
         currentPlan?.id === id ? "保持队内承诺：滞回 +0.28" : "切换成本已计入",
       ],
     };
@@ -3741,6 +4868,159 @@ function holdRouteTrack(
     segmentIndex: 0,
     reachedAtTick: [null],
   };
+}
+
+function coordinateHandlerPriorityRollTrack(
+  world: WorldState,
+  handlerProof: StagedBodyRouteProof,
+  rollProof: StagedBodyRouteProof,
+): TeamRouteTrack {
+  const o1 = world.players.O1;
+  const o5 = world.players.O5;
+  const track = routeTrackFromProof(
+    "O5",
+    o5.pos,
+    rollProof,
+    rollProof.waypoints.map((_, index) =>
+      index === rollProof.waypoints.length - 1
+        ? "short_roll_receive"
+        : "short_roll_lane_entry"
+    ),
+    rollProof.waypoints.map(() => 2.72),
+    rollProof.waypoints.map((_, index) =>
+      index === rollProof.waypoints.length - 1 ? 0.1 : 0.055
+    ),
+  );
+  const handlerPoints = stagedRoutePolyline(o1.pos, handlerProof);
+  const rollPoints = stagedRoutePolyline(o5.pos, rollProof);
+  const requiredCenterDistance =
+    o1.radius + o5.radius + TACTICAL_TEAMMATE_CHANNEL_CLEARANCE;
+  let lastConflictingHandlerSegment = -1;
+  for (let handlerIndex = 1; handlerIndex < handlerPoints.length; handlerIndex += 1) {
+    let segmentClearance = Number.POSITIVE_INFINITY;
+    for (let rollIndex = 1; rollIndex < rollPoints.length; rollIndex += 1) {
+      segmentClearance = Math.min(
+        segmentClearance,
+        segmentSegmentDistance(
+          handlerPoints[handlerIndex - 1],
+          handlerPoints[handlerIndex],
+          rollPoints[rollIndex - 1],
+          rollPoints[rollIndex],
+        ),
+      );
+    }
+    if (segmentClearance < requiredCenterDistance - 1e-9) {
+      lastConflictingHandlerSegment = handlerIndex;
+    }
+  }
+  if (lastConflictingHandlerSegment < 0 || track.segments.length === 0) return track;
+
+  // A temporary gap at an early handler waypoint is not a safe release: the
+  // handler may still cut back through the roller's future lane.  O1 owns the
+  // dribble corridor, so O5 waits until O1 has crossed the final conflicting
+  // segment of the complete committed polyline.
+  const releaseIndex = Math.min(lastConflictingHandlerSegment, handlerPoints.length - 1);
+  const releaseFrom = handlerPoints[Math.max(0, releaseIndex - 1)];
+  const releasePoint = handlerPoints[releaseIndex];
+  const releaseDirection = normalize(sub(releasePoint, releaseFrom));
+  const currentGap = distance(o1.pos, o5.pos) - o1.radius - o5.radius;
+  track.segments.unshift({
+    phase: "hold_for_handler_corridor",
+    target: { ...o5.pos },
+    maxSpeed: 0,
+    arriveRadius: 0.04,
+    advanceSubject: "O1",
+    passageHalfPlane: {
+      normal: releaseDirection,
+      offset: dot(releasePoint, releaseDirection),
+      epsilon: 0.09,
+    },
+    proof: {
+      snapshotTick: world.tick,
+      legal: true,
+      courtLegal: true,
+      minimumBodyClearance: round(currentGap, 6),
+      blockerIds: ["O1"],
+      ...(currentGap < TACTICAL_CHASE_MIN_ROUTE_CLEARANCE
+        ? { releasesExistingContactByBlocker: ["O1" as PlayerId] }
+        : {}),
+    },
+  });
+  track.reachedAtTick.unshift(null);
+  return track;
+}
+
+function buildTacticalResetSpacingTrack(world: WorldState): TeamRouteTrack {
+  const o1 = world.players.O1;
+  const o5 = world.players.O5;
+  const d1 = world.players.D1;
+  const currentGap = distance(o1.pos, o5.pos) - o1.radius - o5.radius;
+  const recoveryCorridor = pointSegmentDistance(o5.pos, d1.pos, o1.pos);
+  const recoveryCenterClearance =
+    d1.radius + o5.radius + TACTICAL_CHASE_MIN_ROUTE_CLEARANCE;
+  const blocksRecoveryCorridor =
+    recoveryCorridor.t > 0.035 &&
+    recoveryCorridor.t < 0.965 &&
+    recoveryCorridor.distance < recoveryCenterClearance + 0.05 - 1e-9;
+  if (
+    currentGap >= TACTICAL_TEAMMATE_CHANNEL_CLEARANCE - 1e-9 &&
+    !blocksRecoveryCorridor
+  ) {
+    return holdRouteTrack("O5", o5.pos, world.tick, "hold_tactical_spacing");
+  }
+  const teammateAway = normalize(sub(o5.pos, o1.pos));
+  const fallbackDirection = o5.pos.x >= COURT.centerlineX ? v(1, 0) : v(-1, 0);
+  const recoverySegment = sub(o1.pos, d1.pos);
+  const recoveryClosest = add(d1.pos, scale(recoverySegment, recoveryCorridor.t));
+  const corridorAway = normalize(sub(o5.pos, recoveryClosest));
+  const teammateClearDistance = Math.max(
+    0,
+    TACTICAL_TEAMMATE_CHANNEL_CLEARANCE - currentGap + 0.1,
+  );
+  const corridorClearDistance = blocksRecoveryCorridor
+    ? recoveryCenterClearance + 0.08 - recoveryCorridor.distance
+    : 0;
+  const clearVector = add(
+    scale(
+      length(teammateAway) > 1e-9 ? teammateAway : fallbackDirection,
+      teammateClearDistance,
+    ),
+    scale(
+      length(corridorAway) > 1e-9 ? corridorAway : fallbackDirection,
+      corridorClearDistance,
+    ),
+  );
+  const clearDirection = length(clearVector) > 1e-9
+    ? normalize(clearVector)
+    : fallbackDirection;
+  const clearDistance = Math.max(0.14, length(clearVector));
+  const rawTarget = add(o5.pos, scale(clearDirection, clearDistance));
+  const target = {
+    x: clamp(rawTarget.x, o5.radius, COURT.width - o5.radius),
+    y: clamp(rawTarget.y, o5.radius, COURT.height - o5.radius),
+  };
+  const proof = proveStagedBodyRoute(
+    o5.pos,
+    [target],
+    o5.radius,
+    [
+      { id: "O1", pos: o1.pos, radius: o1.radius },
+      { id: "D1", pos: d1.pos, radius: d1.radius },
+      { id: "D5", pos: world.players.D5.pos, radius: world.players.D5.radius },
+    ],
+    world.tick,
+    TACTICAL_CHASE_MIN_ROUTE_CLEARANCE,
+  );
+  return proof.legal
+    ? routeTrackFromProof(
+        "O5",
+        o5.pos,
+        proof,
+        ["reset_spacing_clear"],
+        [1.72],
+        [0.08],
+      )
+    : holdRouteTrack("O5", o5.pos, world.tick, "hold_tactical_spacing");
 }
 
 function makeUnderRoutePayload(
@@ -4330,6 +5610,297 @@ function buildUnderDefenseRoute(
   );
 }
 
+function makeTacticalRoutePayload(
+  version: number,
+  world: WorldState,
+  commitSeconds: number,
+  kind: TeamPlanRoute["kind"],
+  tracks: TeamPlanRoute["tracks"],
+  boundary: TeamPlanRoute["boundary"] = "tactical_read",
+): TeamPlanRoute {
+  return {
+    routeVersion: version,
+    boundary,
+    kind,
+    committedAtTick: world.tick,
+    minimumCommitUntilTick: world.tick + Math.ceil(commitSeconds / FIXED_DT),
+    tracks,
+    fallback: "hold_until_replan",
+  };
+}
+
+function buildTacticalOffenseRoute(
+  chosenId: OffensePlanId,
+  world: WorldState,
+  version: number,
+  commitSeconds: number,
+): TeamPlanRoute {
+  if (!world.facts.ballHandlerClearedScreen) {
+    const observation = createPlannerObservation(world, "offense");
+    const useRoute = underPreClearUseRouteProof(observation);
+    if (!useRoute) {
+      return makeTacticalRoutePayload(
+        version,
+        world,
+        commitSeconds,
+        chosenId === "POCKET_PASS" ? "chase_read_pocket" : "drop_read_reset",
+        {
+          O1: holdRouteTrack("O1", world.players.O1.pos, world.tick, "safe_hold"),
+          O5: holdRouteTrack("O5", world.players.O5.pos, world.tick, "hold_screen"),
+        },
+      );
+    }
+    return makeTacticalRoutePayload(
+      version,
+      world,
+      commitSeconds,
+      chosenId === "POCKET_PASS"
+        ? "chase_read_pocket"
+        : chosenId === "SNAKE_CHASE"
+          ? "chase_read_snake"
+          : chosenId === "TAKE_DROP_PULLUP"
+            ? "drop_read_pullup"
+            : chosenId === "ATTACK_DROP_GAP"
+              ? "drop_read_attack"
+              : chosenId === "RESET_CHASE"
+                ? "chase_read_reset"
+                : "drop_read_reset",
+      {
+        O1: routeTrackFromProof(
+          "O1",
+          world.players.O1.pos,
+          useRoute,
+          useRoute.waypoints.map((_, index) =>
+            index === useRoute.waypoints.length - 1 ? "clear_screen_exit" : "use_outer_tangent"
+          ),
+          useRoute.waypoints.map(() => 2.92),
+          useRoute.waypoints.map((_, index) =>
+            index === useRoute.waypoints.length - 1 ? 0.07 : 0.055
+          ),
+        ),
+        O5: holdRouteTrack("O5", world.landmarks.screenAnchor, world.tick, "hold_screen"),
+      },
+    );
+  }
+
+  if (chosenId === "RESET_DROP") {
+    return makeTacticalRoutePayload(
+      version,
+      world,
+      commitSeconds,
+      "drop_read_reset",
+      {
+        O1: holdRouteTrack("O1", world.players.O1.pos, world.tick, "controlled_reset"),
+        O5: buildTacticalResetSpacingTrack(world),
+      },
+    );
+  }
+
+  if (
+    chosenId === "ATTACK_DROP_GAP" ||
+    chosenId === "TAKE_DROP_PULLUP"
+  ) {
+    if (chosenId === "TAKE_DROP_PULLUP") {
+      const observation = createPlannerObservation(world, "offense");
+      const geometry = evaluateTacticalReadGeometry(observation);
+      const o1 = world.players.O1;
+      const o1Proof = proveUnderCompositeBodyRoute(
+        o1.pos,
+        geometry.drop.pullupPoint,
+        o1.radius,
+        [
+          { id: "O5", pos: world.players.O5.pos, radius: world.players.O5.radius },
+          { id: "D1", pos: world.players.D1.pos, radius: world.players.D1.radius },
+          { id: "D5", pos: world.players.D5.pos, radius: world.players.D5.radius },
+        ],
+        world.tick,
+        TACTICAL_CHASE_MIN_ROUTE_CLEARANCE,
+      );
+      if (o1Proof) {
+        return makeTacticalRoutePayload(
+          version,
+          world,
+          commitSeconds,
+          "drop_read_pullup",
+          {
+            O1: routeTrackFromProof(
+              "O1",
+              o1.pos,
+              o1Proof,
+              o1Proof.waypoints.map((_, index) =>
+                index === o1Proof.waypoints.length - 1
+                  ? "pullup_stop"
+                  : "pullup_tangent"
+              ),
+              o1Proof.waypoints.map(() => Math.min(2.82, o1.maxSpeed)),
+              o1Proof.waypoints.map((_, index) =>
+                index === o1Proof.waypoints.length - 1 ? 0.07 : 0.018
+              ),
+            ),
+            O5: buildTacticalResetSpacingTrack(world),
+          },
+        );
+      }
+    }
+    const mappedId: OffensePlanId = chosenId === "ATTACK_DROP_GAP"
+      ? "ATTACK_UNDER_GAP"
+      : "TAKE_UNDER_PULLUP";
+    const route = buildUnderPostClearOffenseRoute(
+      mappedId,
+      world,
+      version,
+      commitSeconds,
+    );
+    return {
+      ...route,
+      boundary: "tactical_read",
+      kind: chosenId === "ATTACK_DROP_GAP"
+        ? "drop_read_attack"
+        : chosenId === "TAKE_DROP_PULLUP"
+          ? "drop_read_pullup"
+          : "drop_read_reset",
+    };
+  }
+
+  const observation = createPlannerObservation(world, "offense");
+  const geometry = evaluateTacticalReadGeometry(observation);
+  const o1 = world.players.O1;
+  const o5 = world.players.O5;
+
+  if (chosenId === "SNAKE_CHASE" && geometry.snakeRoute) {
+    const shortRollTrack = geometry.shortRollRoute
+      ? coordinateHandlerPriorityRollTrack(
+          world,
+          geometry.snakeRoute,
+          geometry.shortRollRoute,
+        )
+      : holdRouteTrack("O5", o5.pos, world.tick, "hold_for_handler_corridor");
+    return makeTacticalRoutePayload(
+      version,
+      world,
+      commitSeconds,
+      "chase_read_snake",
+      {
+        O1: routeTrackFromProof(
+          "O1",
+          o1.pos,
+          geometry.snakeRoute,
+          geometry.snakeRoute.waypoints.map((_, index) =>
+            [
+              "snake_release_spacing",
+              "snake_outside_lane",
+              "snake_rimward_gate",
+              "snake_lane_cross",
+              "snake_inner_hip",
+            ][index] ?? "snake_inner_hip"
+          ),
+          geometry.snakeRoute.waypoints.map(() => o1.maxSpeed),
+          geometry.snakeRoute.waypoints.map((_, index) =>
+            index === geometry.snakeRoute!.waypoints.length - 1 ? 0.09 : 0.018
+          ),
+        ),
+        O5: shortRollTrack,
+      },
+    );
+  }
+
+  if (chosenId === "POCKET_PASS") {
+    const coverage = world.tacticalCoverage ?? EMPTY_TACTICAL_COVERAGE;
+    if (
+      !coverage.pocketPassReady &&
+      geometry.pocketDevelopmentHandlerRoute &&
+      geometry.pocketDevelopmentRollRoute
+    ) {
+      return makeTacticalRoutePayload(
+        version,
+        world,
+        commitSeconds,
+        "chase_develop_pocket",
+        {
+          O1: routeTrackFromProof(
+            "O1",
+            o1.pos,
+            geometry.pocketDevelopmentHandlerRoute,
+            ["pocket_handler_release"],
+            [Math.min(o1.maxSpeed, 2.84)],
+            [0.08],
+          ),
+          O5: coordinateHandlerPriorityRollTrack(
+            world,
+            geometry.pocketDevelopmentHandlerRoute,
+            geometry.pocketDevelopmentRollRoute,
+          ),
+        },
+      );
+    }
+    return makeTacticalRoutePayload(
+      version,
+      world,
+      commitSeconds,
+      "chase_read_pocket",
+      {
+        O1: holdRouteTrack("O1", o1.pos, world.tick, "deliver_pocket_pass"),
+        O5: holdRouteTrack("O5", o5.pos, world.tick, "hold_pocket_receive"),
+      },
+    );
+  }
+
+  return makeTacticalRoutePayload(
+    version,
+    world,
+    commitSeconds,
+    "chase_read_reset",
+    {
+      O1: holdRouteTrack("O1", o1.pos, world.tick, "controlled_reset"),
+      O5: buildTacticalResetSpacingTrack(world),
+    },
+  );
+}
+
+function buildChaseOverDefenseRoute(
+  world: WorldState,
+  version: number,
+  commitSeconds: number,
+): TeamPlanRoute | undefined {
+  const observation = createPlannerObservation(world, "defense");
+  const geometry = evaluateTacticalCoverageCandidateGeometry(observation);
+  if (!geometry.chaseRoute?.legal) return undefined;
+  const d5Track = geometry.dropRoute?.legal
+    ? routeTrackFromProof(
+        "D5",
+        world.players.D5.pos,
+        geometry.dropRoute,
+        geometry.dropRoute.waypoints.map(() => "establish_drop_contain"),
+        geometry.dropRoute.waypoints.map(() => 3.02),
+        geometry.dropRoute.waypoints.map(() => 0.09),
+      )
+    : undefined;
+  return makeTacticalRoutePayload(
+    version,
+    world,
+    commitSeconds,
+    "chase_over_route",
+    {
+      D1: routeTrackFromProof(
+        "D1",
+        world.players.D1.pos,
+        geometry.chaseRoute,
+        geometry.chaseRoute.waypoints.map((_, index) =>
+          index === geometry.chaseRoute!.waypoints.length - 1
+            ? "recover_ball_from_rear"
+            : "chase_over_screen"
+        ),
+        geometry.chaseRoute.waypoints.map(() => 3.54),
+        geometry.chaseRoute.waypoints.map((_, index) =>
+          index === geometry.chaseRoute!.waypoints.length - 1 ? 0.34 : 0.018
+        ),
+      ),
+      ...(d5Track ? { D5: d5Track } : {}),
+    },
+    "tactical_coverage",
+  );
+}
+
 function makeOffensePlan(
   chosen: CandidateEvaluation,
   world: WorldState,
@@ -4491,6 +6062,133 @@ function makeOffensePlan(
   let route: TeamPlanRoute | undefined;
 
   if (
+    chosen.id === "ATTACK_DROP_GAP" ||
+    chosen.id === "TAKE_DROP_PULLUP" ||
+    chosen.id === "RESET_DROP" ||
+    chosen.id === "SNAKE_CHASE" ||
+    chosen.id === "POCKET_PASS" ||
+    chosen.id === "RESET_CHASE"
+  ) {
+    const geometry = evaluateTacticalReadGeometry(
+      createPlannerObservation(world, "offense"),
+    );
+    const coverage = world.tacticalCoverage ?? EMPTY_TACTICAL_COVERAGE;
+    const rollerTarget = geometry.shortRollTarget;
+    if (chosen.id === "ATTACK_DROP_GAP") {
+      primaryTarget = geometry.drop.bestHip?.target ?? { ...world.players.O1.pos };
+      secondaryTarget = rollerTarget;
+      roles = {
+        O1: {
+          playerId: "O1",
+          roleCode: "attack_drop_gap",
+          roleLabel: "攻击沉退髋部",
+          intent: "确认 D5 真实 drop → 选择合法髋部 → 在 D1 恢复前压向篮筐",
+          owner: "offense-planner",
+        },
+        O5: {
+          playerId: "O5",
+          roleCode: "roll_occupy_drop",
+          roleLabel: "顺下牵制沉退内线",
+          intent: "离开掩护点顺下 → 占住 D5 双重责任 → 避开 O1 髋部路线",
+          owner: "offense-planner",
+        },
+      };
+      rationale =
+        `D5 已公开沉退 ${coverage.d5RetreatProgress.toFixed(2)}m；` +
+        `${geometry.drop.bestHip?.side === "left" ? "左" : "右"}髋路线时序领先，因此 O1 继续攻击。`;
+    } else if (chosen.id === "TAKE_DROP_PULLUP") {
+      primaryTarget = geometry.drop.pullupPoint;
+      secondaryTarget = rollerTarget;
+      roles = {
+        O1: {
+          playerId: "O1",
+          roleCode: "take_drop_pullup",
+          roleLabel: "读取深沉退急停窗",
+          intent: "确认 D5 深 drop 与 D1 追防距离 → 合法推进 → 无碰撞减速停稳",
+          owner: "offense-planner",
+        },
+        O5: {
+          playerId: "O5",
+          roleCode: "roll_hold_drop_big",
+          roleLabel: "顺下占住 D5",
+          intent: "持续向筐顺下 → 迫使 D5 保持篮筐保护 → 不堵 O1 停步点",
+          owner: "offense-planner",
+        },
+      };
+      rationale =
+        `D5 已形成真实深 drop，预计 O1–D5 身体净空 ${geometry.drop.pullupBodyGap.toFixed(3)}m；` +
+        "处理窗仍须由中立世界观察真实减速与 contest 净空。";
+    } else if (chosen.id === "SNAKE_CHASE") {
+      primaryTarget = geometry.snakeTarget;
+      secondaryTarget = rollerTarget;
+      roles = {
+        O1: {
+          playerId: "O1",
+          roleCode: "snake_chase",
+          roleLabel: "反切追过防守",
+          intent: "看到 D1 从身后追过 → 穿回 D5 内侧髋部 → 保持球与身体净空",
+          owner: "offense-planner",
+        },
+        O5: {
+          playerId: "O5",
+          roleCode: "roll_space_snake",
+          roleLabel: "顺下拉开 snake 走廊",
+          intent: "从掩护点顺下 → 牵住 D5 → 不与 O1 内切路线重叠",
+          owner: "offense-planner",
+        },
+      };
+      rationale =
+        `D1 已公开追过并落后，O1 的 snake 路线时序余量 ${geometry.snakeTimingMargin.toFixed(3)}s；` +
+        "只提交路线，中立世界仍从真实运动确认优势。";
+    } else if (chosen.id === "POCKET_PASS") {
+      primaryTarget = movePointToward(world.players.O1.pos, COURT.hoop, 0.42);
+      secondaryTarget = rollerTarget;
+      passTarget = "O5";
+      roles = {
+        O1: {
+          playerId: "O1",
+          roleCode: "occupy_then_pocket",
+          roleLabel: "占住 D5 后 pocket 分球",
+          intent: "保持运球吸住 D5 → 等 O5 短顺下与走廊公开成立 → 再传球",
+          owner: "offense-planner",
+        },
+        O5: {
+          playerId: "O5",
+          roleCode: "short_roll_receive",
+          roleLabel: "短顺下接 pocket pass",
+          intent: "在实时短顺下空档停位 → 保持与 O1/D5 身体净空 → 准备接球",
+          owner: "offense-planner",
+        },
+      };
+      rationale =
+        `D1 已从身后追过且 D5 公开 contain O1；预计 pocket 走廊净空 ${geometry.pocketLaneClearance.toFixed(3)}m，` +
+        "进攻只在中立世界发布真实传球窗后出球。";
+    } else {
+      primaryTarget = { ...world.players.O1.pos };
+      secondaryTarget = rollerTarget;
+      const dropReset = chosen.id === "RESET_DROP";
+      roles = {
+        O1: {
+          playerId: "O1",
+          roleCode: dropReset ? "reset_drop_safe" : "reset_chase_safe",
+          roleLabel: dropReset ? "安全收住沉退回合" : "安全收住追过回合",
+          intent: "优势路线和传球窗均不成立 → 控制速度并保留球权 → 等世界确认遏制",
+          owner: "offense-planner",
+        },
+        O5: {
+          playerId: "O5",
+          roleCode: "hold_tactical_spacing",
+          roleLabel: "保持短顺下间距",
+          intent: "保留 D5 的 O5 责任 → 不与 O1 重叠 → 不伪造优势",
+          owner: "offense-planner",
+        },
+      };
+      rationale = "DROP / CHASE 的攻击、急停或 pocket 证据不足；进攻安全收住等待真实遏制。";
+    }
+    route = buildTacticalOffenseRoute(chosen.id, world, version, 0.78);
+    primaryTarget = route.tracks.O1?.segments[0]?.target ?? primaryTarget;
+    secondaryTarget = route.tracks.O5?.segments[0]?.target ?? secondaryTarget;
+  } else if (
     chosen.id === "ATTACK_UNDER_GAP" ||
     chosen.id === "TAKE_UNDER_PULLUP" ||
     chosen.id === "RESET_UNDER"
@@ -4734,7 +6432,15 @@ function makeOffensePlan(
       : "D1 已公开踩上掩护侧；左侧拒绝在短推演中保留更直的攻筐线，也不会借用远端 O5。";
   }
 
+  const tacticalRead =
+    chosen.id === "ATTACK_DROP_GAP" ||
+    chosen.id === "TAKE_DROP_PULLUP" ||
+    chosen.id === "RESET_DROP" ||
+    chosen.id === "SNAKE_CHASE" ||
+    chosen.id === "POCKET_PASS" ||
+    chosen.id === "RESET_CHASE";
   const postSwitch =
+    tacticalRead ||
     chosen.id === "ATTACK_UNDER_GAP" ||
     chosen.id === "TAKE_UNDER_PULLUP" ||
     chosen.id === "RESET_UNDER" ||
@@ -4744,7 +6450,7 @@ function makeOffensePlan(
     chosen.id === "POST_FINISH" ||
     chosen.id === "KICK_OUT" ||
     chosen.id === "REJECT_SLIP_PASS";
-  const commitSeconds = postSwitch ? 0.52 : 0.64;
+  const commitSeconds = tacticalRead ? 0.78 : postSwitch ? 0.52 : 0.64;
   if (
     chosen.id === "ATTACK_UNDER_GAP" ||
     chosen.id === "TAKE_UNDER_PULLUP" ||
@@ -4764,7 +6470,7 @@ function makeOffensePlan(
     startedAt: world.time,
     startedTick: world.tick,
     commitUntil: world.time + commitSeconds,
-    watchdogAt: world.time + (postSwitch ? 1 : 1.18),
+    watchdogAt: world.time + (tacticalRead ? 1.18 : postSwitch ? 1 : 1.18),
     chosenScore: chosen.score ?? 0,
     rationale,
     roles,
@@ -4818,7 +6524,61 @@ function makeDefensePlan(
   let primaryTarget: Vec2 | undefined;
   let route: TeamPlanRoute | undefined;
 
-  if (chosen.id === "UNDER") {
+  if (chosen.id === "DROP_CONTAIN" || chosen.id === "CHASE_OVER") {
+    const chase = chosen.id === "CHASE_OVER";
+    primaryTarget = tacticalDropContainPoint(
+      world.players.O1.pos,
+      world.players.O5.pos,
+    );
+    roles = {
+      D1: {
+        playerId: "D1",
+        roleCode: chase ? "chase_over_screen" : "trail_drop_ball",
+        roleLabel: chase ? "绕上方追过" : "保持 O1 原责任",
+        intent: chase
+          ? "沿已证明的 O5 上方路线追过 → 从身后恢复 O1 → 不交换到 O5"
+          : "继续守 O1 → 接受局部掩护延误 → 从身后恢复而不凭空换防",
+        owner: "defense-planner",
+      },
+      D5: {
+        playerId: "D5",
+        roleCode: "drop_contain_ball_roller",
+        roleLabel: "沉退兼顾持球与顺下",
+        intent: "向篮筐保护点真实沉退 → 短暂 contain O1 → 保留 O5 顺下主要责任",
+        owner: "defense-planner",
+      },
+    };
+    rationale = chase
+      ? "D1 的公开上方路线合法；D1 从 O5 外侧追过，D5 同时沉退 contain，二者保持原对位且不读取进攻隐藏计划。"
+      : "D5 从当前公开位置真实移动到球与顺下之间的 drop 深度；D1 继续负责 O1，世界只从实际运动发布 coverage。";
+    if (chase) {
+      route = buildChaseOverDefenseRoute(world, version, 0.68);
+    } else {
+      const geometry = evaluateTacticalCoverageCandidateGeometry(
+        createPlannerObservation(world, "defense"),
+      );
+      const d5Track = geometry.dropRoute?.legal
+        ? routeTrackFromProof(
+            "D5",
+            world.players.D5.pos,
+            geometry.dropRoute,
+            geometry.dropRoute.waypoints.map(() => "establish_drop_contain"),
+            geometry.dropRoute.waypoints.map(() => 3.02),
+            geometry.dropRoute.waypoints.map(() => 0.09),
+          )
+        : undefined;
+      route = makeTacticalRoutePayload(
+        version,
+        world,
+        0.68,
+        "drop_contain_route",
+        {
+          ...(d5Track ? { D5: d5Track } : {}),
+        },
+        "tactical_coverage",
+      );
+    }
+  } else if (chosen.id === "UNDER") {
     roles = {
       D1: {
         playerId: "D1",
@@ -5025,6 +6785,8 @@ function makeDefensePlan(
   }
 
   const postSwitch =
+    chosen.id === "DROP_CONTAIN" ||
+    chosen.id === "CHASE_OVER" ||
     chosen.id === "CONTAIN_MISMATCH" ||
     chosen.id === "FRONT_SEAL" ||
     chosen.id === "BACKSIDE_CONTEST" ||
@@ -5200,7 +6962,13 @@ function offensiveIntents(plan: TeamPlan, world: WorldState): Record<"O1" | "O5"
     plan.route &&
     (plan.id === "ATTACK_UNDER_GAP" ||
       plan.id === "TAKE_UNDER_PULLUP" ||
-      plan.id === "RESET_UNDER")
+      plan.id === "RESET_UNDER" ||
+      plan.id === "ATTACK_DROP_GAP" ||
+      plan.id === "TAKE_DROP_PULLUP" ||
+      plan.id === "RESET_DROP" ||
+      plan.id === "SNAKE_CHASE" ||
+      plan.id === "POCKET_PASS" ||
+      plan.id === "RESET_CHASE")
   ) {
     return {
       O1: committedRouteIntent(plan, world, "O1"),
@@ -5452,6 +7220,19 @@ function offensivePassIntent(plan: TeamPlan, world: WorldState): PassIntent | nu
   ) {
     return { from: "O1", to: "O5", kind: "slip_pass" };
   }
+  if (
+    plan.id === "POCKET_PASS" &&
+    plan.passTarget === "O5" &&
+    world.ballOwner === "O1" &&
+    !world.ball.inFlight &&
+    world.tacticalCoverage?.pocketPassReady &&
+    world.tacticalCoverage.pocketPassReadySinceTick !== null &&
+    world.tick >= world.tacticalCoverage.pocketPassReadySinceTick + 1 &&
+    distance(world.players.O1.pos, world.players.O5.pos) >=
+      TACTICAL_POCKET_MIN_RELEASE_DISTANCE - 1e-9
+  ) {
+    return { from: "O1", to: "O5", kind: "pocket_pass" };
+  }
   return null;
 }
 
@@ -5485,6 +7266,39 @@ function defensiveIntents(plan: TeamPlan, world: WorldState): Record<"D1" | "D5"
         arriveRadius: 0.1,
         screenNavigation: "none",
       },
+    };
+  }
+
+  if (plan.id === "DROP_CONTAIN" || plan.id === "CHASE_OVER") {
+    const committedD1Segment = activeRouteSegment(plan, "D1");
+    const chaseWaitingForScreen =
+      plan.id === "CHASE_OVER" && !world.facts.screenLegalPose;
+    const d1Intent = chaseWaitingForScreen
+      ? {
+          target: { ...world.players.D1.pos },
+          maxSpeed: 0,
+          arriveRadius: 0.02,
+          screenNavigation: "none" as const,
+        }
+      : committedD1Segment
+      ? committedRouteIntent(plan, world, "D1")
+      : {
+          target: leadO1,
+          maxSpeed: plan.id === "CHASE_OVER" ? 3.58 : 3.42,
+          arriveRadius: 0.34,
+          screenNavigation: "none" as const,
+        };
+    const committedD5Segment = activeRouteSegment(plan, "D5");
+    return {
+      D1: d1Intent,
+      D5: committedD5Segment
+        ? committedRouteIntent(plan, world, "D5")
+        : {
+            target: tacticalDropContainPoint(o1.pos, o5.pos),
+            maxSpeed: 3.02,
+            arriveRadius: 0.09,
+            screenNavigation: "none",
+          },
     };
   }
 
@@ -5842,6 +7656,23 @@ export class PnrSimulation {
         `startMode must be "preset_pnr" or "form_pnr"; received ${String(startMode)}`,
       );
     }
+    const tacticalVocabularyVersion = config.tacticalVocabularyVersion;
+    if (
+      tacticalVocabularyVersion !== undefined &&
+      tacticalVocabularyVersion !== MINIMUM_TACTICAL_VOCABULARY_VERSION
+    ) {
+      throw new Error(
+        `tacticalVocabularyVersion must be "${MINIMUM_TACTICAL_VOCABULARY_VERSION}"; received ${String(tacticalVocabularyVersion)}`,
+      );
+    }
+    if (
+      tacticalVocabularyVersion === MINIMUM_TACTICAL_VOCABULARY_VERSION &&
+      (setupMode !== "explicit" || startMode !== "preset_pnr")
+    ) {
+      throw new Error(
+        `tacticalVocabularyVersion="${MINIMUM_TACTICAL_VOCABULARY_VERSION}" requires explicit preset_pnr; Formation integration belongs to I`,
+      );
+    }
     if (setupMode === "auto") {
       assertAutonomousFormationInput(config, initialPositions);
     }
@@ -5898,6 +7729,7 @@ export class PnrSimulation {
       d1PostCatchRecoveryDelay: clamp(config.d1PostCatchRecoveryDelay ?? 0, 0, 0.6),
       o1MaxSpeed: clamp(config.o1MaxSpeed ?? 3.72, 3.4, 4.4),
       horizon: config.horizon ?? "pnr_resolution",
+      ...(tacticalVocabularyVersion ? { tacticalVocabularyVersion } : {}),
       strategies,
     };
     this.world = initialWorld({
@@ -5909,6 +7741,7 @@ export class PnrSimulation {
       o1MaxSpeed: this.config.o1MaxSpeed,
       d1FrontReactionDelay: this.config.d1FrontReactionDelay,
       d1PostCatchRecoveryDelay: this.config.d1PostCatchRecoveryDelay,
+      tacticalVocabularyVersion: this.config.tacticalVocabularyVersion,
     });
     this.offensePlan = this.replanOffense("初始边界", []);
     this.defensePlan = this.replanDefense("初始边界", []);
@@ -6085,8 +7918,8 @@ export class PnrSimulation {
     }
 
     const sharedScreenClearBoundary =
-      this.world.under.active &&
-      this.defensePlan.id === "UNDER" &&
+      ((this.world.under.active && this.defensePlan.id === "UNDER") ||
+        Boolean(this.world.tacticalCoverage?.active)) &&
       this.offenseQueue.some((event) => event.type === "screen_cleared") &&
       this.defenseQueue.some((event) => event.type === "screen_cleared");
     if (sharedScreenClearBoundary) {
@@ -6106,20 +7939,36 @@ export class PnrSimulation {
       (event) =>
         event.type === "switch_completed" ||
         event.type === "under_committed" ||
+        event.type === "drop_committed" ||
+        (event.type === "chase_over_committed" &&
+          this.offensePlan.id !== "ATTACK_DROP_GAP" &&
+          this.offensePlan.id !== "TAKE_DROP_PULLUP") ||
         (event.type === "screen_cleared" &&
-          this.world.under.active &&
-          this.defensePlan.id === "UNDER") ||
+          ((this.world.under.active && this.defensePlan.id === "UNDER") ||
+            Boolean(this.world.tacticalCoverage?.active))) ||
         event.type === "seal_fronted" ||
         event.type === "pass_caught" ||
+        event.type === "pocket_window_open" ||
+        event.type === "pocket_pass_caught" ||
         event.type === "help_committed" ||
         event.type === "kickout_window_open" ||
         event.type === "reject_lane_gained" ||
         event.type === "reject_help_committed" ||
         event.type === "reject_pass_window_open",
     );
+    const tacticalOffenseRouteInProgress =
+      (this.offensePlan.id === "ATTACK_DROP_GAP" ||
+        this.offensePlan.id === "TAKE_DROP_PULLUP" ||
+        this.offensePlan.id === "RESET_DROP" ||
+        this.offensePlan.id === "SNAKE_CHASE" ||
+        this.offensePlan.id === "POCKET_PASS" ||
+        this.offensePlan.id === "RESET_CHASE") &&
+      committedRouteInProgress(this.offensePlan);
     if (
       this.offenseQueue.length > 0 &&
-      (urgentOffenseBoundary || this.world.time + 1e-9 >= this.offensePlan.commitUntil)
+      (urgentOffenseBoundary ||
+        (this.world.time + 1e-9 >= this.offensePlan.commitUntil &&
+          !tacticalOffenseRouteInProgress))
     ) {
       const events = [...this.offenseQueue];
       this.offenseQueue = [];
@@ -6139,6 +7988,8 @@ export class PnrSimulation {
       (event) =>
         event.type === "formation_side_committed" ||
         event.type === "screen_cleared" ||
+        event.type === "chase_over_committed" ||
+        event.type === "pocket_window_open" ||
         event.type === "under_recovery_blocked" ||
         event.type === "branch_reject" ||
         event.type === "switch_completed" ||
@@ -6146,9 +7997,15 @@ export class PnrSimulation {
         event.type === "pass_caught" ||
         event.type === "reject_lane_gained",
     );
+    const tacticalDefenseRouteInProgress =
+      (this.defensePlan.id === "DROP_CONTAIN" ||
+        this.defensePlan.id === "CHASE_OVER") &&
+      committedRouteInProgress(this.defensePlan);
     if (
       this.defenseQueue.length > 0 &&
-      (urgentDefenseBoundary || this.world.time + 1e-9 >= this.defensePlan.commitUntil)
+      (urgentDefenseBoundary ||
+        (this.world.time + 1e-9 >= this.defensePlan.commitUntil &&
+          !tacticalDefenseRouteInProgress))
     ) {
       const events = [...this.defenseQueue];
       this.defenseQueue = [];
@@ -6351,7 +8208,8 @@ export class PnrSimulation {
     const d5ClosingO1 = dot(d5.vel, normalize(sub(o1.pos, d5.pos)));
     const matchupExchange =
       this.world.facts.matchupExchange ||
-      (!this.world.under.active &&
+      (!this.world.tacticalVocabularyVersion &&
+        !this.world.under.active &&
         ballHandlerClearedScreen &&
         distance(d1.pos, o5.pos) <= 1.05 &&
         distance(d5.pos, o1.pos) <= 1.08 &&
@@ -6519,13 +8377,29 @@ export class PnrSimulation {
           ? this.world.postCatch.kickoutWindow
           : intent?.kind === "slip_pass"
             ? this.world.reject.passWindow
+            : intent?.kind === "pocket_pass"
+              ? Boolean(
+                  this.world.tacticalCoverage?.pocketPassReady &&
+                  distance(this.world.players.O1.pos, this.world.players.O5.pos) >=
+                    TACTICAL_POCKET_MIN_RELEASE_DISTANCE - 1e-9
+                )
           : false;
     if (intent && this.world.ballOwner === intent.from && launchWindowOpen) {
       const passer = this.world.players[intent.from];
       const receiver = this.world.players[intent.to];
-      const passSpeed = intent.kind === "lob_entry" ? 9.2 : intent.kind === "kick_out" ? 13.6 : 11.4;
+      const passSpeed = intent.kind === "lob_entry"
+        ? 9.2
+        : intent.kind === "kick_out"
+          ? 13.6
+          : intent.kind === "pocket_pass"
+            ? 11.8
+            : 11.4;
       const minimumFlight = intent.kind === "lob_entry" ? 0.16 : 0.12;
-      const maximumFlight = intent.kind === "lob_entry" ? 0.42 : intent.kind === "kick_out" ? 0.4 : 0.36;
+      const maximumFlight = intent.kind === "lob_entry"
+        ? 0.42
+        : intent.kind === "kick_out"
+          ? 0.4
+          : 0.36;
       const flightTime = clamp(
         distance(passer.pos, receiver.pos) / passSpeed,
         minimumFlight,
@@ -6689,10 +8563,280 @@ export class PnrSimulation {
     };
   }
 
+  private resolveTacticalCoverage(
+    previous: TacticalCoverageFacts,
+    collisions: CollisionResolutionFacts,
+  ): TacticalCoverageFacts {
+    const tacticalWorld = toTacticalWorld(this.world);
+    const o1 = tacticalWorld.players.O1;
+    const o5 = tacticalWorld.players.O5;
+    const d1 = tacticalWorld.players.D1;
+    const d5 = tacticalWorld.players.D5;
+    const screenSide = requireWorldScreenSide(this.world, "T coverage fact frame");
+    const initialD1 = toTacticalPoint(this.config.initialPositions.D1, screenSide);
+    const initialD5 = toTacticalPoint(this.config.initialPositions.D5, screenSide);
+    const d1Travel = distance(d1.pos, initialD1);
+    const d5RetreatProgress =
+      distance(initialD5, COURT.hoop) - distance(d5.pos, COURT.hoop);
+    const d5ScreenDepth = distance(o5.pos, COURT.hoop) - distance(d5.pos, COURT.hoop);
+    const contest = underContestGeometry(o1.pos, o1.radius, d5);
+    const d5O5Distance = distance(d5.pos, o5.pos);
+    const d1O1Distance = distance(d1.pos, o1.pos);
+    const dropNow =
+      this.world.branch === "use" &&
+      this.world.facts.screenLegalPose &&
+      !this.world.facts.matchupExchange &&
+      d5RetreatProgress >= TACTICAL_DROP_MIN_RETREAT_PROGRESS - 1e-9 &&
+      d5ScreenDepth >= TACTICAL_DROP_MIN_SCREEN_DEPTH - 1e-9 &&
+      contest.goalSideMargin >= 0.04 &&
+      contest.containLineDistance <= 1.08;
+    const dropCommitted = previous.dropCommitted || dropNow;
+    const dropCommittedAtTick = dropCommitted
+      ? previous.dropCommittedAtTick ?? this.world.tick
+      : null;
+    const d1OverShoulderNow =
+      distance(d1.pos, o5.pos) <= 1.38 &&
+      d1.pos.y >= o5.pos.y - 0.16 &&
+      d1Travel >= 0.12;
+    const d1OverShoulder = previous.d1OverShoulder || d1OverShoulderNow;
+    const chaseOverCommitted =
+      previous.chaseOverCommitted ||
+      (dropCommitted &&
+        this.world.facts.ballHandlerClearedScreen &&
+        previous.screenClearedAtTick !== null &&
+        this.world.tick - previous.screenClearedAtTick >=
+          Math.ceil(TACTICAL_READ_MIN_COMMIT_SECONDS / FIXED_DT) &&
+        d1OverShoulder &&
+        !this.world.facts.matchupExchange);
+    const chaseOverCommittedAtTick = chaseOverCommitted
+      ? previous.chaseOverCommittedAtTick ?? this.world.tick
+      : null;
+    const active = previous.active || dropCommitted;
+    const startedAt = active ? previous.startedAt ?? this.world.time : null;
+    const elapsed = startedAt === null ? 0 : Math.max(0, this.world.time - startedAt);
+    const d1BehindBall =
+      distance(d1.pos, COURT.hoop) >= distance(o1.pos, COURT.hoop) + 0.08 - 1e-9;
+    const d1Trail =
+      this.world.facts.ballHandlerClearedScreen &&
+      d1BehindBall &&
+      d1O1Distance >= 0.62 - 1e-9;
+    const d1O1BodyGap = d1O1Distance - d1.radius - o1.radius;
+    const d1RecoveryCorridor = pointSegmentDistance(o5.pos, d1.pos, o1.pos);
+    const d1RecoveryClear = !(
+      d1RecoveryCorridor.t > 0.035 &&
+      d1RecoveryCorridor.t < 0.965 &&
+      d1RecoveryCorridor.distance <
+        d1.radius + o5.radius + TACTICAL_CHASE_MIN_ROUTE_CLEARANCE
+    );
+    const d1Recovered =
+      this.world.facts.ballHandlerClearedScreen &&
+      d1O1BodyGap <= 0.22 + 1e-9 &&
+      d1RecoveryClear &&
+      this.world.ballOwner === "O1";
+    const o5RimDirection = normalize(sub(COURT.hoop, o5.pos));
+    const o5RimwardSpeed = dot(o5.vel, o5RimDirection);
+    const o5RollingNow =
+      this.world.facts.ballHandlerClearedScreen &&
+      o5RimwardSpeed >= 0.42 - 1e-9 &&
+      distance(o5.pos, tacticalWorld.landmarks.screenAnchor) >= 0.32 - 1e-9;
+    const o5Rolling = previous.o5Rolling || o5RollingNow;
+    const pocketClearances = ([d1, d5] as const).map((defender) => {
+      const lane = pointSegmentDistance(defender.pos, o1.pos, o5.pos);
+      return lane.t > 0.055 && lane.t < 0.95
+        ? lane.distance - defender.radius - this.world.ball.radius
+        : 1.35;
+    });
+    const pocketLaneClearance = Math.min(...pocketClearances);
+    const pocketReleaseDistance = distance(o1.pos, o5.pos);
+    const screenAnchor = tacticalWorld.landmarks.screenAnchor;
+    const shortRollRimwardProgress =
+      distance(screenAnchor, COURT.hoop) - distance(o5.pos, COURT.hoop);
+    const pocketPassReady =
+      chaseOverCommitted &&
+      d1Trail &&
+      o5Rolling &&
+      shortRollRimwardProgress >= 0.34 - 1e-9 &&
+      contest.containsBall &&
+      d5O5Distance >= 0.94 - 1e-9 &&
+      pocketLaneClearance >= 0.035 - 1e-9 &&
+      pocketReleaseDistance >= TACTICAL_POCKET_MIN_RELEASE_DISTANCE - 1e-9 &&
+      this.world.ballOwner === "O1" &&
+      !this.world.ball.inFlight;
+    const pocketPassReadySinceTick = pocketPassReady
+      ? previous.pocketPassReady
+        ? previous.pocketPassReadySinceTick
+        : this.world.tick
+      : null;
+    const pocketWindow = previous.pocketWindow || pocketPassReady;
+    const pocketWindowOpenedAtTick = pocketWindow
+      ? previous.pocketWindowOpenedAtTick ?? this.world.tick
+      : null;
+    const screenClearedAtTick = previous.screenClearedAtTick ??
+      (this.world.facts.ballHandlerClearedScreen ? this.world.tick : null);
+    const o1PositionAtScreenClear = previous.o1PositionAtScreenClear ??
+      (this.world.facts.ballHandlerClearedScreen
+        ? toTacticalPoint(o1.pos, screenSide)
+        : undefined);
+    const o1RimDistanceAtClear = previous.o1RimDistanceAtClear ??
+      (this.world.facts.ballHandlerClearedScreen
+        ? distance(o1.pos, COURT.hoop)
+        : undefined);
+    const o1Speed = length(o1.vel);
+    const priorO1Speed = previous.priorO1Speed || o1Speed;
+    const rimDirection = normalize(sub(COURT.hoop, o1.pos));
+    const rimwardSpeed = dot(o1.vel, rimDirection);
+    const visibleDrive =
+      this.world.facts.ballHandlerClearedScreen &&
+      o1Speed >= 1.02 - 1e-9 &&
+      rimwardSpeed >= 0.42 - 1e-9;
+    const driveCommitted = previous.driveCommitted || visibleDrive;
+    const collisionSuppressed = collisions.pairs.some(({ pair, positionCorrection, velocityRemoved }) =>
+      pair.includes("O1") &&
+      (positionCorrection > 1e-8 || (velocityRemoved.O1 ?? 0) > 1e-8)
+    );
+    const minimumO1BodyGap = Math.min(
+      distance(o1.pos, o5.pos) - o1.radius - o5.radius,
+      distance(o1.pos, d1.pos) - o1.radius - d1.radius,
+      distance(o1.pos, d5.pos) - o1.radius - d5.radius,
+    );
+    const cleanDecelerationNow =
+      priorO1Speed >= UNDER_PULLUP_MIN_APPROACH_SPEED &&
+      priorO1Speed - o1Speed >= 0.015 &&
+      o1Speed <= UNDER_PULLUP_MAX_STOP_SPEED &&
+      !collisionSuppressed &&
+      minimumO1BodyGap >= UNDER_PULLUP_CLEAN_STOP_MIN_BODY_GAP;
+    const cleanDeceleration = previous.cleanDeceleration || cleanDecelerationNow;
+    const pullupCommitted = previous.pullupCommitted || cleanDeceleration;
+    const tacticalO1 = o1;
+    const centerwardSpeed = tacticalO1.pos.x >= COURT.centerlineX
+      ? -tacticalO1.vel.x
+      : tacticalO1.vel.x;
+    const handlerCenterwardLead =
+      Math.abs(o5.pos.x - COURT.centerlineX) -
+      Math.abs(o1.pos.x - COURT.centerlineX);
+    const snakeCommitted =
+      previous.snakeCommitted ||
+      (chaseOverCommitted &&
+        this.world.facts.ballHandlerClearedScreen &&
+        d1Trail &&
+        centerwardSpeed >= 0.32 - 1e-9 &&
+        Math.abs(tacticalO1.pos.x - COURT.centerlineX) <= 1.08 + 1e-9);
+    const rimwardProgress = o1RimDistanceAtClear === undefined
+      ? 0
+      : o1RimDistanceAtClear - distance(o1.pos, COURT.hoop);
+    const d5MissedDriveLine =
+      pointSegmentDistance(d5.pos, o1.pos, COURT.hoop).distance >
+      o1.radius + d5.radius + 0.2;
+    const d5DeepDrop =
+      d5ScreenDepth >= 1.02 &&
+      d5O5Distance >= 1.08 &&
+      !contest.contest;
+    const driveAdvantage =
+      previous.driveAdvantage ||
+      (dropCommitted &&
+        driveCommitted &&
+        !chaseOverCommitted &&
+        !d1Recovered &&
+        rimwardProgress >= 0.5 &&
+        (distance(o1.pos, COURT.hoop) + 0.1 < distance(d5.pos, COURT.hoop) ||
+          (d5MissedDriveLine && contest.bodyGap >= 0.1)) &&
+        this.world.ballOwner === "O1");
+    const pullupWindow =
+      previous.pullupWindow ||
+      (dropCommitted &&
+        pullupCommitted &&
+        !snakeCommitted &&
+        o1Speed <= UNDER_PULLUP_MAX_STOP_SPEED + 1e-9 &&
+        !d1Recovered &&
+        d5DeepDrop &&
+        isInsideUnderPullupRegion(o1.pos) &&
+        rimwardProgress >= UNDER_PULLUP_MIN_RIMWARD_PROGRESS &&
+        contest.bodyGap >= UNDER_PULLUP_MIN_BODY_CLEARANCE &&
+        !contest.contest &&
+        this.world.ballOwner === "O1");
+    const snakeAdvantage =
+      previous.snakeAdvantage ||
+      (snakeCommitted &&
+        driveCommitted &&
+        d1Trail &&
+        distance(o1.pos, o5.pos) - o1.radius - o5.radius >=
+          TACTICAL_TEAMMATE_CHANNEL_CLEARANCE - 1e-9 &&
+        rimwardProgress >= 0.48 - 1e-9 &&
+        (d5MissedDriveLine ||
+          distance(o1.pos, COURT.hoop) + 0.08 < distance(d5.pos, COURT.hoop) ||
+          (contest.containsBall &&
+            d5O5Distance >= 1.1 - 1e-9 &&
+            ((o5Rolling && pocketLaneClearance >= 0.035 - 1e-9) ||
+              handlerCenterwardLead >=
+                TACTICAL_TEAMMATE_CHANNEL_CLEARANCE - 1e-9))) &&
+        this.world.ballOwner === "O1");
+    const contained =
+      previous.contained ||
+      (active &&
+        elapsed >= 0.92 &&
+        d1Recovered &&
+        contest.containsBall &&
+        !o5RollingNow &&
+        o1Speed <= 0.45 &&
+        !driveAdvantage &&
+        !pullupWindow &&
+        !snakeAdvantage &&
+        !this.world.ball.inFlight &&
+        this.world.ballOwner === "O1");
+
+    return {
+      active,
+      startedAt,
+      elapsed: round(elapsed),
+      dropCommitted,
+      dropCommittedAtTick,
+      chaseOverCommitted,
+      chaseOverCommittedAtTick,
+      d5RetreatProgress: round(d5RetreatProgress),
+      d5ScreenDepth: round(d5ScreenDepth),
+      d5O1Distance: round(contest.distance),
+      d5O5Distance: round(d5O5Distance),
+      d5GoalSide: contest.goalSideMargin >= 0.04,
+      d5ContainLineDistance: round(contest.containLineDistance),
+      d5ContainsBall: contest.containsBall,
+      d5DeepDrop,
+      d1O1Distance: round(d1O1Distance),
+      d1Trail,
+      d1Recovered,
+      d1OverShoulder,
+      o5Rolling,
+      pocketLaneClearance: round(pocketLaneClearance),
+      pocketWindow,
+      pocketWindowOpenedAtTick,
+      pocketPassReady,
+      pocketPassReadySinceTick,
+      pocketReleaseDistance: round(pocketReleaseDistance),
+      driveCommitted,
+      pullupCommitted,
+      snakeCommitted,
+      driveAdvantage,
+      pullupWindow,
+      snakeAdvantage,
+      contained,
+      screenClearedAtTick,
+      ...(o1PositionAtScreenClear
+        ? { o1PositionAtScreenClear: { ...o1PositionAtScreenClear } }
+        : {}),
+      ...(o1RimDistanceAtClear !== undefined
+        ? { o1RimDistanceAtClear: round(o1RimDistanceAtClear) }
+        : {}),
+      priorO1Speed: round(o1Speed),
+      cleanDeceleration,
+    };
+  }
+
   private resolveUnder(
     previous: UnderFacts,
     collisions: CollisionResolutionFacts,
   ): UnderFacts {
+    if (this.world.tacticalVocabularyVersion) {
+      return { ...EMPTY_UNDER };
+    }
     const o1 = this.world.players.O1;
     const o5 = this.world.players.O5;
     const d1 = this.world.players.D1;
@@ -7027,6 +9171,7 @@ export class PnrSimulation {
     previousSeal: SealFacts,
     previousPostCatch: PostCatchFacts,
     previousUnder: UnderFacts,
+    previousTacticalCoverage: TacticalCoverageFacts | null,
     previousReject: RejectFacts,
     previousBall: BallState,
     previousBranch: Branch,
@@ -7195,6 +9340,119 @@ export class PnrSimulation {
         ),
       );
     }
+    const tacticalCoverage = this.world.tacticalCoverage;
+    if (
+      previousTacticalCoverage &&
+      tacticalCoverage &&
+      !previousTacticalCoverage.dropCommitted &&
+      tacticalCoverage.dropCommitted
+    ) {
+      events.push(
+        makeEvent(
+          "drop_committed",
+          tick,
+          at,
+          "D5 建立 drop / contain",
+          "D5 的公开运动已同时形成退守深度、篮筐侧位置与持球 contain 线；该事实由中立世界从几何推导，不读取防守计划名。",
+        ),
+      );
+    }
+    if (
+      previousTacticalCoverage &&
+      tacticalCoverage &&
+      !previousTacticalCoverage.chaseOverCommitted &&
+      tacticalCoverage.chaseOverCommitted
+    ) {
+      events.push(
+        makeEvent(
+          "chase_over_committed",
+          tick,
+          at,
+          "D1 从掩护上方追过",
+          "D1 的公开轨迹已越过 O5 外肩并继续追持球人；原对位保持，未发生换防。",
+        ),
+      );
+    }
+    if (
+      previousTacticalCoverage &&
+      tacticalCoverage &&
+      !previousTacticalCoverage.pocketPassReady &&
+      tacticalCoverage.pocketPassReady
+    ) {
+      events.push(
+        makeEvent(
+          "pocket_window_open",
+          tick,
+          at,
+          "短顺下 pocket 窗打开",
+          "D1 已落后、O5 已到实时短顺下空档，且 O1/O5 释放距离与局部传球走廊同时成立；这里只开放传球，不指定接球结果。",
+        ),
+      );
+    }
+    if (
+      previousTacticalCoverage &&
+      tacticalCoverage &&
+      !previousTacticalCoverage.driveAdvantage &&
+      tacticalCoverage.driveAdvantage
+    ) {
+      events.push(
+        makeEvent(
+          "tactical_drive_advantage",
+          tick,
+          at,
+          "O1 攻下 drop 空隙",
+          "O1 的真实推进越过 D5 的 contain 线，且 D1 尚未恢复；世界只确认突破优势，不模拟投篮结果。",
+        ),
+      );
+    }
+    if (
+      previousTacticalCoverage &&
+      tacticalCoverage &&
+      !previousTacticalCoverage.pullupWindow &&
+      tacticalCoverage.pullupWindow
+    ) {
+      events.push(
+        makeEvent(
+          "tactical_pullup_window",
+          tick,
+          at,
+          "O1 读出 drop 急停窗口",
+          "O1 在真实无碰撞减速后保持中距离净空，D1 尚未恢复且 D5 仍处于深 drop；不模拟投篮命中。",
+        ),
+      );
+    }
+    if (
+      previousTacticalCoverage &&
+      tacticalCoverage &&
+      !previousTacticalCoverage.snakeAdvantage &&
+      tacticalCoverage.snakeAdvantage
+    ) {
+      events.push(
+        makeEvent(
+          "tactical_snake_advantage",
+          tick,
+          at,
+          "O1 snake 回中制造优势",
+          "D1 仍在身后，O1 的公开轨迹已跨回中路并推进到 D5 无法同时守住持球与顺下的位置。",
+        ),
+      );
+    }
+    if (
+      previousTacticalCoverage &&
+      tacticalCoverage &&
+      !previousTacticalCoverage.contained &&
+      tacticalCoverage.contained
+    ) {
+      events.push(
+        makeEvent(
+          "tactical_contained",
+          tick,
+          at,
+          "防守完成 chase / drop 收口",
+          "D1 已真实恢复，D5 保持篮筐侧 contain，O1 在没有形成突破、急停或 snake 优势时减速收球。",
+        ),
+      );
+    }
     if (!previousReject.d1Beaten && this.world.reject.d1Beaten) {
       events.push(
         makeEvent(
@@ -7286,7 +9544,15 @@ export class PnrSimulation {
     }
     if (!previousBall.inFlight && this.world.ball.inFlight) {
       events.push(
-        this.world.ball.kind === "kick_out"
+        this.world.ball.kind === "pocket_pass"
+          ? makeEvent(
+              "pocket_pass_launched",
+              tick,
+              at,
+              "O1 送出 pocket pass",
+              "O1 在公开 pocket 窗内出球；飞行期球权为空，D1/D5 仍可按真实局部触球顺序破坏。",
+            )
+          : this.world.ball.kind === "kick_out"
           ? makeEvent(
               "kickout_launched",
               tick,
@@ -7313,7 +9579,15 @@ export class PnrSimulation {
     }
     if (previousBall.outcome !== "caught" && this.world.ball.outcome === "caught") {
       events.push(
-        this.world.ball.kind === "kick_out" && this.world.ballOwner === "O1"
+        this.world.ball.kind === "pocket_pass" && this.world.ballOwner === "O5"
+          ? makeEvent(
+              "pocket_pass_caught",
+              tick,
+              at,
+              "O5 接到 pocket pass",
+              "球先进入移动 O5 的合法接球半径，球权从空中转到 O5；本阶段在接球优势处停止。",
+            )
+          : this.world.ball.kind === "kick_out" && this.world.ballOwner === "O1"
           ? makeEvent(
               "kickout_caught",
               tick,
@@ -7481,6 +9755,63 @@ export class PnrSimulation {
         at: this.world.time,
       };
     } else if (
+      this.config.horizon === "tactical_resolution" &&
+      this.world.ball.kind === "pocket_pass" &&
+      this.world.ball.outcome === "caught" &&
+      this.world.ballOwner === "O5"
+    ) {
+      terminal = {
+        reason: "tactical_pocket_caught",
+        label: "D1 chase 过掩护后，O1 读出 pocket 窗并让顺下 O5 合法接球",
+        at: this.world.time,
+      };
+    } else if (
+      this.config.horizon === "tactical_resolution" &&
+      this.world.tacticalCoverage?.driveAdvantage
+    ) {
+      terminal = {
+        reason: "tactical_drive_advantage",
+        label: "O1 读出 D5 的 drop 空隙并形成真实突破优势",
+        at: this.world.time,
+      };
+    } else if (
+      this.config.horizon === "tactical_resolution" &&
+      this.world.tacticalCoverage?.pullupWindow
+    ) {
+      terminal = {
+        reason: "tactical_pullup_window",
+        label: "O1 读出深 drop 并获得真实无碰撞急停窗口",
+        at: this.world.time,
+      };
+    } else if (
+      this.config.horizon === "tactical_resolution" &&
+      this.world.tacticalCoverage?.snakeAdvantage &&
+      !(
+        this.world.ball.inFlight &&
+        this.world.ball.kind === "pocket_pass"
+      ) &&
+      !(
+        this.world.tacticalCoverage.pocketPassReady &&
+        this.world.tacticalCoverage.pocketPassReadySinceTick !== null &&
+        this.world.tick <=
+          this.world.tacticalCoverage.pocketPassReadySinceTick + 2
+      )
+    ) {
+      terminal = {
+        reason: "tactical_snake_advantage",
+        label: "O1 对 chase 防守 snake 回中并形成真实推进优势",
+        at: this.world.time,
+      };
+    } else if (
+      this.config.horizon === "tactical_resolution" &&
+      this.world.tacticalCoverage?.contained
+    ) {
+      terminal = {
+        reason: "tactical_contained",
+        label: "D1 完成 chase 恢复，D5 保持 drop / contain，防守收住回合",
+        at: this.world.time,
+      };
+    } else if (
       this.config.horizon === "reject_slip" &&
       this.world.ball.kind === "slip_pass" &&
       this.world.ball.outcome === "caught" &&
@@ -7561,7 +9892,9 @@ export class PnrSimulation {
       terminal = {
         reason: "pass_denied",
         label:
-          this.world.ball.kind === "kick_out"
+          this.world.ball.kind === "pocket_pass"
+            ? "防守否决 O1 给顺下 O5 的 pocket pass"
+            : this.world.ball.kind === "kick_out"
             ? "防守否决 O5 分回 O1 的外传"
             : this.world.ball.kind === "slip_pass"
               ? "防守否决 O1 给顺下 O5 的分球"
@@ -7608,6 +9941,10 @@ export class PnrSimulation {
       terminal.reason === "seal_catch_advantage" ||
       terminal.reason === "post_catch_finish_window" ||
       terminal.reason === "post_catch_kickout_caught" ||
+      terminal.reason === "tactical_drive_advantage" ||
+      terminal.reason === "tactical_pullup_window" ||
+      terminal.reason === "tactical_snake_advantage" ||
+      terminal.reason === "tactical_pocket_caught" ||
       terminal.reason === "under_drive_advantage" ||
       terminal.reason === "under_pullup_window" ||
       terminal.reason === "reject_slip_caught" ||
@@ -7636,6 +9973,12 @@ export class PnrSimulation {
       d1PostCatchRecoveryDelay: this.config.d1PostCatchRecoveryDelay,
       o1MaxSpeed: this.config.o1MaxSpeed,
       horizon: this.config.horizon,
+      ...(this.config.tacticalVocabularyVersion
+        ? {
+            tacticalVocabularyVersion: this.config.tacticalVocabularyVersion,
+            tacticalCoverage: this.world.tacticalCoverage,
+          }
+        : {}),
       ...(this.config.startMode === "form_pnr"
         ? {
             startMode: this.config.startMode,
@@ -7732,6 +10075,18 @@ export class PnrSimulation {
       const previousSeal = { ...this.world.seal };
       const previousPostCatch = { ...this.world.postCatch };
       const previousUnder = { ...this.world.under };
+      const previousTacticalCoverage = this.world.tacticalCoverage
+        ? {
+            ...this.world.tacticalCoverage,
+            ...(this.world.tacticalCoverage.o1PositionAtScreenClear
+              ? {
+                  o1PositionAtScreenClear: {
+                    ...this.world.tacticalCoverage.o1PositionAtScreenClear,
+                  },
+                }
+              : {}),
+          }
+        : null;
       const previousReject = { ...this.world.reject };
       const previousBall: BallState = {
         ...this.world.ball,
@@ -7783,6 +10138,12 @@ export class PnrSimulation {
       this.world.seal = this.resolveSeal(previousSeal);
       this.world.mismatch = this.resolveMismatch(previousMismatch);
       this.world.under = this.resolveUnder(previousUnder, integration.collisions);
+      if (previousTacticalCoverage) {
+        this.world.tacticalCoverage = this.resolveTacticalCoverage(
+          previousTacticalCoverage,
+          integration.collisions,
+        );
+      }
       this.world.reject = this.resolveReject(previousReject);
       this.integrateBall(passIntent);
       if (
@@ -7811,6 +10172,7 @@ export class PnrSimulation {
         previousSeal,
         previousPostCatch,
         previousUnder,
+        previousTacticalCoverage,
         previousReject,
         previousBall,
         previousBranch,

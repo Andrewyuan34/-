@@ -9,6 +9,8 @@ export type DecisionPhase =
   | "offense_formation"
   | "offense_initial_read"
   | "offense_under_read"
+  | "offense_drop_read"
+  | "offense_chase_read"
   | "offense_mismatch"
   | "offense_post_catch"
   | "defense_formation"
@@ -60,6 +62,8 @@ export const DECISION_PHASE_LABELS: Readonly<Record<DecisionPhase, string>> = Ob
   offense_formation: "进攻 · 形成掩护",
   offense_initial_read: "进攻 · 初始阅读",
   offense_under_read: "进攻 · UNDER 后二级读取",
+  offense_drop_read: "进攻 · DROP 后二级读取",
+  offense_chase_read: "进攻 · CHASE/OVER 后二级读取",
   offense_mismatch: "进攻 · 换防后错位",
   offense_post_catch: "进攻 · O5 接球后",
   defense_formation: "防守 · 跟随形成",
@@ -72,6 +76,8 @@ const OFFENSE_PHASES = new Set<DecisionPhase>([
   "offense_formation",
   "offense_initial_read",
   "offense_under_read",
+  "offense_drop_read",
+  "offense_chase_read",
   "offense_mismatch",
   "offense_post_catch",
 ]);
@@ -113,8 +119,28 @@ const DEFENSE_PLAN_IDS = [
   "TAG_REJECT",
 ] as const satisfies readonly DefensePlanId[];
 
-const OFFENSE_PLAN_SET = new Set<PlanId>(OFFENSE_PLAN_IDS);
-const DEFENSE_PLAN_SET = new Set<PlanId>(DEFENSE_PLAN_IDS);
+const T_OFFENSE_PLAN_IDS = [
+  "ATTACK_DROP_GAP",
+  "TAKE_DROP_PULLUP",
+  "RESET_DROP",
+  "SNAKE_CHASE",
+  "POCKET_PASS",
+  "RESET_CHASE",
+] as const satisfies readonly OffensePlanId[];
+
+const T_DEFENSE_PLAN_IDS = [
+  "DROP_CONTAIN",
+  "CHASE_OVER",
+] as const satisfies readonly DefensePlanId[];
+
+const OFFENSE_PLAN_SET = new Set<PlanId>([
+  ...OFFENSE_PLAN_IDS,
+  ...T_OFFENSE_PLAN_IDS,
+]);
+const DEFENSE_PLAN_SET = new Set<PlanId>([
+  ...DEFENSE_PLAN_IDS,
+  ...T_DEFENSE_PLAN_IDS,
+]);
 
 function planBelongsToTeam(planId: PlanId, team: Team): boolean {
   return (team === "offense" ? OFFENSE_PLAN_SET : DEFENSE_PLAN_SET).has(planId);
