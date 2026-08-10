@@ -6,6 +6,7 @@
 > T00–T01 行为检查点：`e735f4768696bb423937c94ec3dea17a13a5ea94`；修复后已由用户重新验收
 > I00–I01 连续交接基线：`676176c`；已提交并推送
 > I02–I03 行为检查点：`6f7af556823f372b012053b7eaa8ea194be7b5df`；已由用户验收
+> V00 input-only manifest：`sha256:1fef82a37a1d610dcd8e5b91b00a123fd46312c8bb71c46566093cd4c57dd27a`；本地 lock commit，不 push
 > 仓库上下文工具：自动模块/符号地图与 9 类机械架构门已由 `7eb4bd2` 提交并推送
 > P2/P4 基线：`dd6287b97dc3b33b8070a45ccfcb7280a24a1951`
 > F01/F02 冻结核心：`90631359ba5a52eacfdbfc1434d657f8743df45e`
@@ -21,7 +22,7 @@
 
 ## 一句话状态
 
-S01–S08、G01–G08、P00–P03、Formation F00–F03、Autonomous Setup A00–A01、T00–T01 与 I00–I03 均已封存并由用户验收。I00–I01 基线为 `676176c`，I02–I03 行为检查点为 `6f7af55`；当前停在 I 检查点，V 尚未开始。
+S01–S08、G01–G08、P00–P03、Formation F00–F03、Autonomous Setup A00–A01、T00–T01 与 I00–I03 均已封存并由用户验收。V00 已在揭示前锁定 12 个全新有界输入、六个封存策略组合、执行顺序、阈值、OOD/回放/证据规则与回退点；本地 lock commit 之后才允许执行 V01，且不得进入 V02/V03。
 
 ## F 阶段封存事实
 
@@ -63,14 +64,23 @@ S01–S08、G01–G08、P00–P03、Formation F00–F03、Autonomous Setup A00�
 5. **如实保留零差异。** 当前锁定 I 域中，六种策略组合相对默认策略产生真实行为差异的 input 数为 0，实际观察到的 strategy adjustment 也全部为 0；这是已有策略在这些合法候选边界上的真实结果，不是失败。实现没有为制造视觉差异修改基础篮球评分，独立 T 已封存的队友通道与 pocket 多 tick 飞行非空证据继续作为回归基线。
 6. **只读验收入口。** I 面板只从完成后的审计事实选择连续终局、策略携带、真实镜像与安全退出代表回放，并展示合同、策略引用与锁定状态；UI 不回流规划输入。本地浏览器已跑通 I00-C01 right 的 `formation_ready@147 → handoff@148 → tactical_contained@294`、同案 left 镜像同 tick 终止、I00-C03 OM-DE 的 `formation_ready@71 → handoff@72 → tactical_contained@221` 且 Formation/coverage/read 全程保持自队策略引用，以及 I00-C13 OM-DE 的 `formation_aborted@1` 且未进入 T；控制台 warning/error 为 0。用户已完成上述代表回放的人眼验收，I00–I03 以行为提交 `6f7af55` 正式封存。
 
+## V00 锁定合同
+
+1. **起点与回退。** V 只能从 I 封存检查点 `28cf70e8c95710665f7ee2322a2dca8ff57e1951`（行为 `6f7af55`）启动；V00 为仅本地 lock commit，不 push。
+2. **输入与 seed。** 从冻结 `F01-v1` 域使用 `mulberry32-v1`、manifest seed `20260811` 按顺序接受 12 个未出现在既有 F01/F02/F03/A01/I00 canonical 集合或其镜像中的 right-canonical 合法输入；simulation seeds 固定为 `20261001..20261012`。S/G/P/T 的 preset 输入不是同一 Formation 起手语义，不参与该重复键。V01 对每个输入运行真实 left mirror，不预写 side/anchor/result。
+3. **矩阵与执行顺序。** 只复用 P03/I02 的 `OB-DB → OB-DM → OB-DE → OM-DB → OM-DM → OM-DE`。每个 cell 固定构造 `right-primary → right-duplicate → right-defense-first → left-primary → left-duplicate → left-defense-first` 六个 simulation，并逐 tick lockstep 推进；先终止的一项只记录首个 mismatch，其余非终止项继续到各自终局或锁定 watchdog。共 72 cells、144 worlds、432 simulations。
+4. **通过门。** 全部 cell 必须通过确定性、真实镜像、同 simulation 连续阶段/球权、合法状态与动作、策略引用/冻结、planner 顺序与双方信息隔离、角色归属、路线/球权、hard veto、公开事件因果、战术完成或真实安全退出、队友通道/pocket 与无远程 screen；镜像误差上限 `1e-9`，O1/O5 最小身体净空下限 `0.059999m`。
+5. **OOD 与失败纪律。** 只在生成阶段排除参数越界、非法几何、重复或旧输入；一旦锁入 manifest 即视为 in-domain。V01 若发现锁后域失败，记录为 OOD 合同失败并整体失败，不替换；`formation_aborted` / `formation_timeout` 是合法安全退出。其他失败只记候选通用缺陷，禁止在 V01 修代码、调参、改题或挑选重跑。
+6. **回放与证据。** 通过时按最长终局、最窄队友通道、首个形成成功的非默认策略携带、最长终局真实镜像四条固定规则选 replay；失败时前两槽固定替换为首失败及其镜像。完整聚合、所有失败复现键与 cell 摘要写入忽略目录 `outputs/v01-integrated-validation.json`，不提交 V01 结果。
+
 ## 不可扩大范围
 
 - I00–I03 只证明 13 个锁定 A01 输入 × 封存 P03 的六种策略组合及其真实镜像在精确版本元组下的 A→T 连续回合；不等于任意半场站位、通用 A/F/T 集成或全新 held-out 验证。
 - 不增加 ICE、blitz、hedge、switch-back、外弹、二次掩护、拖拽、手动控制或任意角色识别。
 - 不模拟投篮命中率、篮板、犯规、完整比赛、更多人数或 5v5。
 - 不重开 P04，不改写 G08/F03 manifest，不增加 ML/RL 或生产级 UI。
-- V held-out 尚未开始；不得把 I02 写成 P04、新策略阶段或 integrated held-out 证据。
+- V00 只锁定集成 held-out 题目，不是 V01 通过证据；不得把它写成 P04、新策略阶段或已完成的 integrated held-out。
 
 ## 下一停止点
 
-I00–I03 已封存并由用户验收。当前停止在 I 检查点；本任务不进入 V，不改写 A/T/I00 冻结契约。
+V00 在任何 V01 world 揭示前完成本地锁定。下一步只允许从该 lock commit 执行一次锁定 V01、记录通过或失败分类并停下；不得进入 V02 修复或 V03 封存。

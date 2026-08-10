@@ -5,7 +5,7 @@
 > 工作分支：`prototype/pnr-formation-loop`
 > 最近行为提交：`6f7af55`（I02 既有 `2 × 3` P 策略贯穿与 I03 集成审计/代表回放）
 > 已封存检查点：Policy `c4ada7d`；Formation F00/F00-R2 `fb9bea5`、F01/F02 `9063135`、F03 manifest `ba39ef0`、最终审计 `f8163c2`；Autonomous Setup A00–A01 `7ecedea`；T00–T01 `e735f47`；I00–I01 `676176c`、I02–I03 `6f7af55`
-> 当前状态：I00–I03 已由用户验收并封存；V 未开始
+> 当前状态：I00–I03 已由用户验收并封存；V00 已锁定，V01 尚未执行
 > 本文记录总体目标、阶段路线和当下判断；运行方式及代码事实仍以根目录 `README.md` 与自动检查为准。
 > 战术覆盖、场景证人、泛化、组合与策略之间的长期关系，见[《2v2 挡拆战术覆盖与泛化模型》](./2026-08-07-tactical-coverage-and-generalization-model.md)。
 
@@ -23,7 +23,7 @@
 
 Policy 检查点已经完成第一层理想演示：选择一个处于批准输入域内的 2v2 起手和双方策略，点击运行后配置锁定，两支队伍按照各自策略与公开世界自动对局。Formation 阶段开始补第二层能力：从尚未站成掩护的合理起手出发，由双方队级计划先形成站位，再无缝接入同一个挡拆内核。相同输入与策略仍必须完全复现，不能因为增加形成阶段而改写已经批准的 S/G/P 行为。
 
-用户已经批准后续按 `F → A → T → I → V` 逐层收敛；Formation F00–F03、Autonomous Setup A00–A01、T00–T01 与 I00–I03 均已封存并由用户验收。A 仍只在 F01/F02/F03 已证明的合法形成域工作；独立 T 也只证明显式冻结 preset 输入，I02 只把封存 P03 策略接入锁定 A01 集成域，不等于完全无结构的半场任意摆放或新的 held-out 集成验证已经完成。V 尚未开始；拖拽编辑、手动控制、ML/RL、5v5、完整比赛、投篮结果、犯规、转换进攻、旧项目迁移和生产级 UI 仍不在当前路线内。
+用户已经批准后续按 `F → A → T → I → V` 逐层收敛；Formation F00–F03、Autonomous Setup A00–A01、T00–T01 与 I00–I03 均已封存并由用户验收。A 仍只在 F01/F02/F03 已证明的合法形成域工作；独立 T 也只证明显式冻结 preset 输入，I02 只把封存 P03 策略接入锁定 A01 集成域，不等于完全无结构的半场任意摆放。V00 只锁定全新的 bounded integrated held-out 契约，V01 尚未揭示结果；拖拽编辑、手动控制、ML/RL、5v5、完整比赛、投篮结果、犯规、转换进攻、旧项目迁移和生产级 UI 仍不在当前路线内。
 
 ## 2. 不可破坏的架构与篮球边界
 
@@ -328,9 +328,13 @@ I00–I01 基线的 13 个输入及其真实镜像共 26 个世界，每个世�
 
 I02 只复用封存 P03 的两套进攻 × 三套防守，不新增策略值、权重、P04 或 held-out。每个集成回合从 tick 0 到终局始终复用同一个已注册、复制并冻结的 `TeamStrategySelection`；Formation、coverage 与二级读取的 planning record 均携带正确的自队引用，运行后配置锁定。硬可行性、路线、球权和信息边界先于 adjustment；策略不能恢复 veto 候选、指定 coverage/terminal 或读取对方 profile。
 
-I03 在未改写 I00 manifest/hash 的前提下，对 13 inputs × 6 matchups = 78 cells、156 个真实镜像世界各运行 primary、duplicate、defense-first，共 468 次 simulation。同 simulation、单调 tick、next-boundary、交接前无 T、位置/速度/球权连续、确定性、顺序、镜像、双方信息隔离、策略引用/冻结/运行锁、phase ownership、hard veto、队友通道、条件 pocket 飞行/第一触球、安全退出与许可终局全部通过。当前 I 域中策略相对默认产生真实行为差异的 input 数为 0，观察到的 adjustment 也全部为 0；这是合法结果，未为制造可视差异修改基础篮球评分。T 已封存的 pocket 与队友通道非空证据继续作为回归基线。用户已验收连续终局、策略携带、镜像与安全退出代表回放；I02–I03 行为提交为 `6f7af55`，整个 I 阶段正式封存，V 未开始。
+I03 在未改写 I00 manifest/hash 的前提下，对 13 inputs × 6 matchups = 78 cells、156 个真实镜像世界各运行 primary、duplicate、defense-first，共 468 次 simulation。同 simulation、单调 tick、next-boundary、交接前无 T、位置/速度/球权连续、确定性、顺序、镜像、双方信息隔离、策略引用/冻结/运行锁、phase ownership、hard veto、队友通道、条件 pocket 飞行/第一触球、安全退出与许可终局全部通过。当前 I 域中策略相对默认产生真实行为差异的 input 数为 0，观察到的 adjustment 也全部为 0；这是合法结果，未为制造可视差异修改基础篮球评分。T 已封存的 pocket 与队友通道非空证据继续作为回归基线。用户已验收连续终局、策略携带、镜像与安全退出代表回放；I02–I03 行为提交为 `6f7af55`，整个 I 阶段正式封存。
 
 为避免“终局摘要相同”掩盖中途副作用，I03 另以逐 tick state/plan 与新增 planning/event 事实比较策略行为；零 adjustment 却改变轨迹会直接失败。默认 I01 的 26 个世界全轨迹摘要锁定为 `sha256:01803c9f2a1a09a83543c6edd6ae124444fda822975e66605548f1f36a5ef868`，对应 `676176c`。最终 I 聚焦 12/12、仓库总门 98/98、9 类架构契约、context check、lint、build 与 `git diff --check` 通过；本地浏览器跑通默认 right/left 同 tick 镜像终局、OM-DE 从 Formation 到 coverage/read 的策略携带及 `formation_aborted@1` 安全退出，控制台 warning/error 为 0。
+
+#### V00 锁定证据
+
+V00 在任何 V01 simulation 运行前锁定 `locked-integrated-validation-contract@1` / `locked-integrated-validation-inputs@1`。manifest 使用生成 seed `20260811`，从冻结 F01 域接受 12 个未进入既有 F/A/I canonical 集合或其镜像的 input-only 起手，simulation seeds 为 `20261001..20261012`；复用封存 P03/I02 的 `2 × 3` 策略顺序，并锁定 right/真实 left mirror、primary/duplicate/defense-first、六 simulation 逐 tick lockstep、许可终局、阈值、OOD、失败复现、四条代表 replay、证据 schema、完整门禁及 rollback `28cf70e8c95710665f7ee2322a2dca8ff57e1951`。canonical manifest 为 `sha256:1fef82a37a1d610dcd8e5b91b00a123fd46312c8bb71c46566093cd4c57dd27a`；V01 仅能一次性完整消费 72 cells、144 worlds、432 simulations，证据文件不得覆盖。此处只形成 V00 本地锁，不代表 V01 已通过，也不进入 V02/V03。
 
 ### F 之后的批准主线：A → T → I → V
 
@@ -450,4 +454,4 @@ F00 在此基础上增加一个新的完成条件：掩护尚未就位时，四�
 
 P04 仍未执行并保持跳过；I02 只复用封存 P03，不借机重新开启策略校准或 held-out，也不改变 Policy 已完成的结论。
 
-A00–A01、T00–T01 与 I00–I03 均已完成、由用户验收并封存；I 行为检查点为 `676176c`、`6f7af55`。当前停止在 I 检查点，V 尚未开始。
+A00–A01、T00–T01 与 I00–I03 均已完成、由用户验收并封存；I 行为检查点为 `676176c`、`6f7af55`。V00 已在 I checkpoint 的直接子提交中锁定 manifest/执行/判定/证据合同，V01 尚未执行；当前停止点是按锁定合同执行一次 V01，不进入 V02/V03。

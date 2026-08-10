@@ -42,12 +42,124 @@ import { P03_POLICY_MATCHUPS } from "../lib/pnr-p03-policy-matrix.ts";
 import {
   I02_STRATEGY_MATRIX,
   I02_STRATEGY_MATRIX_VERSION,
+  integrationBallStatePassed,
+  integrationLocalScreenCausalityPassed,
+  integrationWorldStatePassed,
   makeI01IntegrationConfig,
   scanI03Integration,
 } from "../lib/pnr-integration-audit.ts";
 
 const I01_676176C_TRACE_HASH =
   "sha256:01803c9f2a1a09a83543c6edd6ae124444fda822975e66605548f1f36a5ef868";
+
+test("integration ball-state legality accepts local defender interceptions and explicit misses", () => {
+  const defenderInterception = {
+    world: {
+      ballOwner: "D1",
+      ball: {
+        pos: { x: 2.45, y: 3 },
+        inFlight: false,
+        from: "O1",
+        intendedReceiver: "O5",
+        target: null,
+        launchedAt: 1,
+        kind: "pocket_pass",
+        outcome: "deflected",
+        radius: 0.12,
+      },
+      players: {
+        D1: { pos: { x: 2, y: 3 }, radius: 0.32 },
+      },
+    },
+  };
+  assert.equal(integrationBallStatePassed(defenderInterception), true);
+  assert.equal(integrationBallStatePassed({
+    world: {
+      ...defenderInterception.world,
+      ballOwner: null,
+      ball: { ...defenderInterception.world.ball, outcome: "missed" },
+    },
+  }), true);
+  assert.equal(integrationBallStatePassed({
+    world: {
+      ...defenderInterception.world,
+      ballOwner: null,
+      ball: { ...defenderInterception.world.ball, outcome: "held" },
+    },
+  }), false);
+  assert.equal(integrationBallStatePassed({
+    world: {
+      ...defenderInterception.world,
+      ballOwner: "D1",
+      ball: {
+        ...defenderInterception.world.ball,
+        inFlight: true,
+        target: { x: 4, y: 3 },
+        outcome: "live",
+      },
+    },
+  }), false);
+  assert.equal(integrationBallStatePassed({
+    world: {
+      ...defenderInterception.world,
+      ballOwner: null,
+      ball: {
+        ...defenderInterception.world.ball,
+        inFlight: true,
+        target: { x: 4, y: 3 },
+        outcome: "live",
+      },
+    },
+  }), true);
+  assert.equal(integrationBallStatePassed({
+    world: {
+      ...defenderInterception.world,
+      ball: { ...defenderInterception.world.ball, outcome: "live" },
+    },
+  }), false);
+  assert.equal(integrationBallStatePassed({
+    world: {
+      ...defenderInterception.world,
+      ballOwner: "O5",
+      players: {
+        ...defenderInterception.world.players,
+        O5: { pos: { x: 2, y: 3 }, radius: 0.32 },
+      },
+      ball: { ...defenderInterception.world.ball, outcome: "deflected" },
+    },
+  }), false);
+});
+
+test("integration world and screen helpers reject illegal geometry and remote screen effects", () => {
+  const players = Object.fromEntries(["O1", "O5", "D1", "D5"].map((id, index) => [id, {
+    pos: { x: 2 + index, y: 2 + index },
+    vel: { x: 0, y: 0 },
+    radius: 0.32,
+  }]));
+  const legalWorld = {
+    ball: { pos: { x: 2, y: 2 }, vel: { x: 0, y: 0 } },
+    players,
+  };
+  assert.equal(integrationWorldStatePassed({ world: legalWorld }), true);
+  assert.equal(integrationWorldStatePassed({
+    world: {
+      ...legalWorld,
+      players: {
+        ...players,
+        D5: { ...players.D5, pos: { x: -0.1, y: players.D5.pos.y } },
+      },
+    },
+  }), false);
+
+  const facts = { contact: false, routeExposure: false, impeded: true, screenEffective: false };
+  assert.equal(integrationLocalScreenCausalityPassed({ world: { facts } }, false), false);
+  assert.equal(integrationLocalScreenCausalityPassed({
+    world: { facts: { ...facts, contact: true } },
+  }, false), true);
+  assert.equal(integrationLocalScreenCausalityPassed({
+    world: { facts: { ...facts, impeded: false, screenEffective: true } },
+  }, true), true);
+});
 
 let cachedI03Audit;
 
@@ -416,11 +528,16 @@ test("I01 audits every input and mirror through duplicate and defense-first same
   assert.equal(audit.strategyPhaseCoveragePassed, true);
   assert.equal(audit.strategyLocked, true);
   assert.equal(audit.hardVetoPriorityPassed, true);
+  assert.equal(audit.roleOwnershipPassed, true);
   assert.equal(audit.routesLegal, true);
+  assert.equal(audit.ballStatePassed, true);
+  assert.equal(audit.worldStatePassed, true);
+  assert.equal(audit.localScreenCausalityPassed, true);
   assert.equal(audit.teammateChannelPassed, true);
   assert.equal(audit.pocketIntegrityPassed, true);
   assert.equal(audit.allowedTerminalsPassed, true);
   assert.equal(audit.safeExitPassed, true);
+  assert.equal(audit.tacticalResolutionPassed, true);
   assert.equal(audit.zeroStrategyAdjustment, true);
   assert.equal(audit.firstFailure, null);
   assert.equal(audit.passed, true);
@@ -448,12 +565,17 @@ test("I01 audits every input and mirror through duplicate and defense-first same
     assert.equal(row.strategyPhaseCoveragePassed, true, row.id);
     assert.equal(row.strategyLocked, true, row.id);
     assert.equal(row.hardVetoPriorityPassed, true, row.id);
+    assert.equal(row.roleOwnershipPassed, true, row.id);
     assert.equal(row.routesLegal, true, row.id);
+    assert.equal(row.ballStatePassed, true, row.id);
+    assert.equal(row.worldStatePassed, true, row.id);
+    assert.equal(row.localScreenCausalityPassed, true, row.id);
     assert.equal(row.teammateChannelPassed, true, row.id);
     assert.equal(row.pocketIntegrityPassed, true, row.id);
     assert.ok(row.minimumTeammateBodyGap >= 0.06 - 1e-6, row.id);
     assert.equal(row.allowedTerminalsPassed, true, row.id);
     assert.equal(row.safeExitPassed, true, row.id);
+    assert.equal(row.tacticalResolutionPassed, true, row.id);
     assert.equal(row.zeroStrategyAdjustment, true, row.id);
 
     assert.equal(row.right.mirrored, false, row.id);
@@ -547,10 +669,15 @@ test("I02-I03 audit every locked I input through the sealed 2x3 strategy matrix 
   assert.equal(matrix.strategyPhaseCoveragePassed, true);
   assert.equal(matrix.strategyLocked, true);
   assert.equal(matrix.hardVetoPriorityPassed, true);
+  assert.equal(matrix.roleOwnershipPassed, true);
   assert.equal(matrix.routesLegal, true);
+  assert.equal(matrix.ballStatePassed, true);
+  assert.equal(matrix.worldStatePassed, true);
+  assert.equal(matrix.localScreenCausalityPassed, true);
   assert.equal(matrix.teammateChannelPassed, true);
   assert.equal(matrix.pocketIntegrityPassed, true);
   assert.equal(matrix.safeExitPassed, true);
+  assert.equal(matrix.tacticalResolutionPassed, true);
   assert.equal(matrix.allowedTerminalsPassed, true);
   assert.equal(matrix.defaultBaselineUnchanged, true);
   assert.equal(matrix.strategyEffectCausalityPassed, true);
@@ -566,7 +693,12 @@ test("I02-I03 audit every locked I input through the sealed 2x3 strategy matrix 
     assert.equal(row.audit.strategyPhaseCoveragePassed, true, row.id);
     assert.equal(row.audit.strategyLocked, true, row.id);
     assert.equal(row.audit.hardVetoPriorityPassed, true, row.id);
+    assert.equal(row.audit.roleOwnershipPassed, true, row.id);
     assert.equal(row.audit.routesLegal, true, row.id);
+    assert.equal(row.audit.ballStatePassed, true, row.id);
+    assert.equal(row.audit.worldStatePassed, true, row.id);
+    assert.equal(row.audit.localScreenCausalityPassed, true, row.id);
+    assert.equal(row.audit.tacticalResolutionPassed, true, row.id);
     assert.equal(row.audit.teammateChannelPassed, true, row.id);
     assert.equal(row.audit.pocketIntegrityPassed, true, row.id);
     assert.ok(row.behaviorSignature.length > 0, row.id);

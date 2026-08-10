@@ -30,6 +30,7 @@
 - Autonomous Setup A00–A01 已完成并由用户验收；自动选边、固定 canonical anchor、安全退出、只读回放与自动门行为提交为 `7ecedea`。
 - Minimum Tactical Vocabulary T00–T01 已完成并由用户验收；队级时空通道修复、加严审计与只读回放行为提交为 `e735f47`。
 - Integrated Possession I00–I03 已完成并由用户验收；I00–I01 连续交接基线为 `676176c`，I02–I03 策略贯穿、集成审计与代表回放行为提交为 `6f7af55`。
+- Locked Integrated Validation V00 已在揭示前以本地 commit 锁定 12 个相对既有 F/A/I canonical 集合全新的输入、显式 seeds、既有 `2 × 3` 策略、六 simulation lockstep 顺序、通过/OOD/回放/证据合同与回退点；manifest hash 见 `docs/CURRENT.md`。V01 尚未执行，不得写成已通过。
 - G08 manifest 与冻结输入不得改写；失败时报告最早失败轨迹，不能按 case ID 调参。
 - P00 默认策略 adjustment 必须保持 0；策略只能重排硬可行候选，不能恢复 veto 候选。
 - 既有 170 个批准输入、G08/F03 manifest、真实左右镜像和核心不变量是 Autonomous Setup 改动的回归基线。
@@ -45,7 +46,8 @@
 - I00 已先验锁定 13 个 A01 输入、A/T 版本与 hash、P00 默认零调整策略、许可终局、自动门和回退点 `7eb4bd2`；I01 只允许同一 simulation/world 在公开 `formation_ready` 下一边界激活 T；I02 从 tick 0 到终局复用同一个已注册 TeamStrategySelection，只覆盖封存 P03 的两套进攻 × 三套防守，不新增策略值或改写 I00 manifest。
 - I03 只在锁定 I 输入及真实镜像上审计上述六种既有策略组合；策略必须服从硬可行性、球队信息所有权、路线和球权，不能恢复 veto 候选、指定 coverage/terminal 或读取对方 profile。当前 I 域没有产生真实策略差异或非零 adjustment 是合法审计事实，不得为制造差异改基础篮球评分。
 - A/T/I 仍只证明 F01/F02/F03 合法 Formation 域、冻结 preset T 输入及锁定 A01 集成输入；不得外推到任意位置、角色识别、拖拽、手动控制、ICE/blitz/hedge/switch-back、投篮结果、更多人数、5v5、ML/RL 或生产化。
-- 当前停止在已封存的 I00–I03 检查点；V held-out 尚未开始，本任务不得进入 V。
+- V00 只从 `28cf70e8c95710665f7ee2322a2dca8ff57e1951` 启动并形成直接子 lock commit；V01 只能在该干净 lock tree 上通过 `npm run validate:v01` 完整消费锁定 72 cells / 144 worlds / 432 simulations，结果写入忽略目录 `outputs/v01-integrated-validation.json`。
+- 当前停止点是 V00 已锁、V01 尚未揭示；下一步只允许执行和分类 V01。失败不得在本任务修代码、调参、改 seed/阈值/样本或挑选重跑；无论通过或失败都不得进入 V02/V03，也不得 push。
 
 实时细节和工作树状态以 [`docs/CURRENT.md`](./docs/CURRENT.md) 为准。
 

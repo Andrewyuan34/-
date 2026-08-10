@@ -301,6 +301,7 @@ export function phaseTagsForFile(file) {
   if (/pnr-f\d|formation|Formation/.test(basename)) tags.push("F");
   if (/pnr-a\d|autonomous|Autonomous/.test(basename)) tags.push("A");
   if (/tactical|Tactical/.test(basename)) tags.push("T");
+  if (/pnr-v\d|validation|Validation/.test(basename)) tags.push("V");
   if (file.startsWith("components/") || file.startsWith("app/")) tags.push("UI");
   if (file.startsWith("tests/")) tags.push("Test");
   return tags.length > 0 ? tags : ["Shared"];

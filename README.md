@@ -2,7 +2,7 @@
 
 这是一个独立、确定性、可观看且可解释的 2v2 挡拆算法实验台。它不是预录轨迹：两支球队分别产生队级计划，中立世界以固定时间步解析运动、身体几何、球权、传球和事件。
 
-当前稳定检查点已经覆盖 S01–S08 战术证人、G01–G08 受限域泛化、P00–P03 的两套进攻策略 × 三套防守策略、Formation F00–F03、Autonomous Setup A00–A01、T00–T01，以及已由用户验收的 Integrated Possession I00–I03。I00–I01 连续交接基线为 `676176c`，I02–I03 行为提交为 `6f7af55`。实时状态见 [`docs/CURRENT.md`](./docs/CURRENT.md)。
+当前稳定检查点已经覆盖 S01–S08 战术证人、G01–G08 受限域泛化、P00–P03 的两套进攻策略 × 三套防守策略、Formation F00–F03、Autonomous Setup A00–A01、T00–T01，以及已由用户验收的 Integrated Possession I00–I03。I00–I01 连续交接基线为 `676176c`，I02–I03 行为提交为 `6f7af55`；V00 的集成 held-out 合同只在本地锁定，V01 结果不属于稳定检查点。实时状态见 [`docs/CURRENT.md`](./docs/CURRENT.md)。
 
 ## 新 agent 从哪里开始
 
@@ -34,6 +34,8 @@ npm run build
 ```
 
 `npm test` 与聚焦测试默认使用紧凑 dot reporter，并自动发现各阶段的 `tests/*.test.mjs`。开发中先运行 `npm run test:focus -- "<name pattern>"`；只有失败时才用 `npm run test:focus:detail -- "<name pattern>"` 展开对应失败。`npm run test:detail` 可展开整套测试。源文件变化后先运行 `npm run context:map` 更新派生地图；`npm run check` 会依次验证地图与架构边界、测试、lint 和 build。
+
+V01 只能在 V00 lock commit 后、工作树无 tracked 改动时运行一次锁定入口：`npm run validate:v01`。命令只消费已锁定 manifest，并把聚合证据写到被忽略的 `outputs/v01-integrated-validation.json`；不得用它改 seed、阈值或筛掉失败 cell。
 
 ## 架构
 
@@ -87,6 +89,7 @@ rg -n "<symbol-or-file>" docs/generated/SYMBOLS.md
 - `lib/pnr-a01-autonomous-setup-manifest.ts`、`pnr-a01-autonomous-setup-audit.ts`：A01 固定 side × anchor、真实形成/安全退出审计与代表回放选择。
 - `lib/pnr-tactical-manifest.ts`、`pnr-tactical-audit.ts`：T00–T01 input-only 清单，以及 drop/chase/read 的三次运行、镜像、路线、队友通道、pocket 飞行、因果与信息边界门。
 - `lib/pnr-integration-manifest.ts`、`pnr-integration-audit.ts`：I00 先验 input-only/hash 契约、I01 Formation → minimum-t 同世界交接，以及 I02–I03 既有 `2 × 3` P 策略贯穿、连续性、三执行与真实镜像审计。
+- `lib/pnr-v00-validation-manifest.ts`、`pnr-v01-validation-audit.ts`：V00 揭示前锁定的有界随机 input-only 合同，以及 V01 对新输入 × 封存 `2 × 3` 策略的全量三执行、镜像、连续性、角色/球权、因果与失败分类审计。
 - `components/PnrLab.tsx`：可丢弃观察壳的状态与回放编排；保持唯一默认页面入口，不承载球队决策。
 - `components/pnr-lab/`：Canvas 绘制、共享展示与 G/P/F/A/T/I 审计面板；所有面板只读展示审计与回放，不回流球队规划输入。
 
@@ -106,6 +109,8 @@ rg -n "<symbol-or-file>" docs/generated/SYMBOLS.md
 - `tests/pnr-formation-autonomous.test.mjs`：F00–F03 与 A00–A01 的确定性、镜像、信息边界、形成与安全退出门。
 - `tests/pnr-tactical.test.mjs`：T00–T01 显式版本、冻结 manifest、真实 drop/chase/read、队友通道、pocket 多 tick 飞行接球、路线与全审计门。
 - `tests/pnr-integration.test.mjs`：I00 先验契约、I01 精确 opt-in、旧输入隔离、同对象交接，以及 I02–I03 策略引用/冻结/运行锁、阶段归属、硬 veto、确定性/顺序/镜像、队友通道、条件 pocket、信息边界与合法终局门。
+- `tests/pnr-validation.test.mjs`：只验证 V00 manifest/hash、策略/顺序、OOD、代表 replay 与证据合同；不会在 lock commit 前执行 V01 held-out。
+- `scripts/run-v01-validation.mjs`：锁提交后唯一 V01 执行入口，写出紧凑聚合证据并在任一锁定 cell 失败时返回非零。
 - `app/`：页面入口和全局样式。
 - `worker/`、`build/`：本地运行与构建适配，不承载篮球决策。
 
@@ -124,7 +129,7 @@ rg -n "<symbol-or-file>" docs/generated/SYMBOLS.md
 
 - 半场任意位置都能自动组织挡拆。
 - A00–A01 只证明已批准 Formation 域、固定 O1/O5 与 D1/D5 职责；不能外推到任意半场位置或任意角色识别。
-- 既有 `2 × 3` 策略已通过全新 integrated held-out；I00–I03 只使用锁定 I 输入，V 尚未开始。
+- 既有 `2 × 3` 策略已通过全新 integrated held-out；I00–I03 只使用锁定 I 输入，V00 仅锁题且 V01 尚未执行/通过。
 - ICE、blitz、hedge、switch-back、外弹、二次掩护等战术原语已经实现。
 - 完整 `2 × 3` 策略矩阵通过了全新策略 held-out 起手；P04 被明确跳过。
 - 已处理投篮、犯规、篮板、完整比赛、第三名协防人或 5v5。

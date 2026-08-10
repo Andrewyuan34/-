@@ -1,5 +1,6 @@
 import {
   AUTONOMOUS_FORMATION_DOMAIN_VERSION,
+  COURT,
   FIXED_DT,
   FORMATION_TACTICAL_INTEGRATION_VERSION,
   MINIMUM_TACTICAL_VOCABULARY_VERSION,
@@ -125,7 +126,11 @@ export interface I01SideAudit {
   strategyPhaseCoveragePassed: boolean;
   strategyLocked: boolean;
   hardVetoPriorityPassed: boolean;
+  roleOwnershipPassed: boolean;
   routesLegal: boolean;
+  ballStatePassed: boolean;
+  worldStatePassed: boolean;
+  localScreenCausalityPassed: boolean;
   minimumTeammateBodyGap: number;
   maximumNearZeroTeammateTicks: number;
   maximumCloseDualMovingTicks: number;
@@ -135,6 +140,7 @@ export interface I01SideAudit {
   teammateChannelPassed: boolean;
   pocketIntegrityPassed: boolean;
   safeExitPassed: boolean;
+  tacticalResolutionPassed: boolean;
   allowedTerminal: boolean;
 }
 
@@ -167,11 +173,16 @@ export interface I01IntegrationRow {
   strategyPhaseCoveragePassed: boolean;
   strategyLocked: boolean;
   hardVetoPriorityPassed: boolean;
+  roleOwnershipPassed: boolean;
   routesLegal: boolean;
+  ballStatePassed: boolean;
+  worldStatePassed: boolean;
+  localScreenCausalityPassed: boolean;
   minimumTeammateBodyGap: number;
   teammateChannelPassed: boolean;
   pocketIntegrityPassed: boolean;
   safeExitPassed: boolean;
+  tacticalResolutionPassed: boolean;
   allowedTerminalsPassed: boolean;
   behaviorTraceSignature: string;
   failures: string[];
@@ -213,10 +224,15 @@ export interface I01IntegrationAudit {
   strategyPhaseCoveragePassed: boolean;
   strategyLocked: boolean;
   hardVetoPriorityPassed: boolean;
+  roleOwnershipPassed: boolean;
   routesLegal: boolean;
+  ballStatePassed: boolean;
+  worldStatePassed: boolean;
+  localScreenCausalityPassed: boolean;
   teammateChannelPassed: boolean;
   pocketIntegrityPassed: boolean;
   safeExitPassed: boolean;
+  tacticalResolutionPassed: boolean;
   allowedTerminalsPassed: boolean;
   replays: I01RepresentativeReplay[];
   passed: boolean;
@@ -263,10 +279,15 @@ export interface I02StrategyMatrixAudit {
   strategyPhaseCoveragePassed: boolean;
   strategyLocked: boolean;
   hardVetoPriorityPassed: boolean;
+  roleOwnershipPassed: boolean;
   routesLegal: boolean;
+  ballStatePassed: boolean;
+  worldStatePassed: boolean;
+  localScreenCausalityPassed: boolean;
   teammateChannelPassed: boolean;
   pocketIntegrityPassed: boolean;
   safeExitPassed: boolean;
+  tacticalResolutionPassed: boolean;
   allowedTerminalsPassed: boolean;
   defaultBaselineUnchanged: boolean;
   strategyEffectCausalityPassed: boolean;
@@ -384,7 +405,12 @@ interface RuntimeChecks {
   noTBefore: boolean;
   strategyStable: boolean;
   strategyLocked: boolean;
+  roleOwnership: boolean;
   routesLegal: boolean;
+  ballState: boolean;
+  worldState: boolean;
+  localScreenCausality: boolean;
+  previousScreenEffective: boolean;
   teammate: TeammateCoordinationState;
 }
 
@@ -547,6 +573,98 @@ function planRoutesLegal(plan: TeamPlan): boolean {
     !track || track.segments.every((segment) => segment.proof.legal && segment.proof.courtLegal));
 }
 
+function planOwnershipPassed(plan: TeamPlan): boolean {
+  const playerIds = plan.team === "offense"
+    ? new Set(["O1", "O5"])
+    : new Set(["D1", "D5"]);
+  const expectedOwner = `${plan.team}-planner`;
+  const rolesPassed = Object.entries(plan.roles).every(([id, role]) =>
+    !role || playerIds.has(id) && role.playerId === id && role.owner === expectedOwner);
+  const routesPassed = !plan.route || Object.entries(plan.route.tracks).every(([id, track]) =>
+    !track || playerIds.has(id) && track.playerId === id &&
+      track.segments.every((segment) => playerIds.has(segment.advanceSubject)));
+  const passTargetPassed = plan.team === "defense"
+    ? plan.passTarget === undefined
+    : plan.passTarget === undefined || playerIds.has(plan.passTarget);
+  const privateSetupPassed = plan.team === "offense" || plan.autonomousSetup === undefined;
+  return rolesPassed && routesPassed && passTargetPassed && privateSetupPassed;
+}
+
+function roleOwnershipPassed(simulation: PnrSimulation): boolean {
+  const roles = simulation.getRoles();
+  const completeRoles = roles.length === PLAYER_IDS.length &&
+    new Set(roles.map((role) => role.playerId)).size === PLAYER_IDS.length &&
+    roles.every((role) => role.owner ===
+      (role.playerId.startsWith("O") ? "offense-planner" : "defense-planner"));
+  return completeRoles && simulation.offensePlan.team === "offense" &&
+    simulation.defensePlan.team === "defense" &&
+    planOwnershipPassed(simulation.offensePlan) &&
+    planOwnershipPassed(simulation.defensePlan);
+}
+
+export function integrationBallStatePassed(simulation: PnrSimulation): boolean {
+  const owner = simulation.world.ballOwner;
+  const ball = simulation.world.ball;
+  const passMetadataPassed = ball.launchedAt !== null && Number.isFinite(ball.launchedAt) &&
+    (ball.kind === "kick_out"
+      ? ball.from === "O5" && ball.intendedReceiver === "O1"
+      : (ball.kind === "lob_entry" || ball.kind === "slip_pass" || ball.kind === "pocket_pass") &&
+        ball.from === "O1" && ball.intendedReceiver === "O5");
+  if (ball.inFlight) {
+    return owner === null && ball.target !== null && ball.outcome === "live" && passMetadataPassed;
+  }
+  if (ball.target !== null) return false;
+  if (owner === null) return ball.outcome === "missed" && passMetadataPassed;
+  const player = simulation.world.players[owner];
+  if (!player) return false;
+  const outcomePassed = owner === "D1" || owner === "D5"
+    ? ball.outcome === "deflected" && passMetadataPassed
+    : ball.outcome === "caught"
+      ? ball.intendedReceiver === owner && passMetadataPassed
+      : owner === "O1" && ball.outcome === "live" && ball.from === null &&
+        ball.intendedReceiver === null && ball.kind === null && ball.launchedAt === null;
+  return outcomePassed && Math.hypot(
+    ball.pos.x - player.pos.x,
+    ball.pos.y - player.pos.y,
+  ) <= player.radius + ball.radius + 0.075 + EPSILON;
+}
+
+export function integrationWorldStatePassed(simulation: PnrSimulation): boolean {
+  const world = simulation.world;
+  if (![world.ball.pos.x, world.ball.pos.y, world.ball.vel.x, world.ball.vel.y]
+    .every(Number.isFinite)) return false;
+  if (world.ball.pos.x < -EPSILON || world.ball.pos.x > COURT.width + EPSILON ||
+    world.ball.pos.y < -EPSILON || world.ball.pos.y > COURT.height + EPSILON) return false;
+  for (const id of PLAYER_IDS) {
+    const player = world.players[id];
+    if (![player.pos.x, player.pos.y, player.vel.x, player.vel.y].every(Number.isFinite)) return false;
+    if (player.pos.x < player.radius - EPSILON ||
+      player.pos.x > COURT.width - player.radius + EPSILON ||
+      player.pos.y < player.radius - EPSILON ||
+      player.pos.y > COURT.height - player.radius + EPSILON) return false;
+  }
+  for (let firstIndex = 0; firstIndex < PLAYER_IDS.length; firstIndex += 1) {
+    for (let secondIndex = firstIndex + 1; secondIndex < PLAYER_IDS.length; secondIndex += 1) {
+      const first = world.players[PLAYER_IDS[firstIndex]];
+      const second = world.players[PLAYER_IDS[secondIndex]];
+      const gap = Math.hypot(first.pos.x - second.pos.x, first.pos.y - second.pos.y) -
+        first.radius - second.radius;
+      if (gap < -0.01 - EPSILON) return false;
+    }
+  }
+  return true;
+}
+
+export function integrationLocalScreenCausalityPassed(
+  simulation: PnrSimulation,
+  previousScreenEffective: boolean,
+): boolean {
+  const facts = simulation.world.facts;
+  const localCause = facts.contact || facts.routeExposure;
+  return (!facts.impeded || localCause) &&
+    (!facts.screenEffective || previousScreenEffective || localCause);
+}
+
 function identityFrame(simulation: PnrSimulation): IdentityFrame {
   return {
     simulation,
@@ -639,12 +757,8 @@ function afterStepChecks(
   }
   const ball = simulation.world.ball;
   checks.ballContinuity = checks.ballContinuity &&
-    [ball.pos.x, ball.pos.y, ball.vel.x, ball.vel.y].every(Number.isFinite);
-  if (simulation.world.ballOwner) {
-    const owner = simulation.world.players[simulation.world.ballOwner];
-    checks.ballContinuity = checks.ballContinuity &&
-      Math.hypot(ball.pos.x - owner.pos.x, ball.pos.y - owner.pos.y) <= EPSILON;
-  }
+    [ball.pos.x, ball.pos.y, ball.vel.x, ball.vel.y].every(Number.isFinite) &&
+    integrationBallStatePassed(simulation);
   if (previous.phase === "formation" && simulation.world.formation.phase === "pnr") {
     checks.ballContinuity = checks.ballContinuity &&
       previous.ballOwner === simulation.world.ballOwner &&
@@ -656,8 +770,14 @@ function afterStepChecks(
   }
   checks.strategyStable = checks.strategyStable && strategyStatePassed(simulation, checks.identity);
   checks.strategyLocked = checks.strategyLocked && simulation.strategyLocked;
+  checks.roleOwnership = checks.roleOwnership && roleOwnershipPassed(simulation);
   checks.routesLegal = checks.routesLegal && planRoutesLegal(simulation.offensePlan) &&
     planRoutesLegal(simulation.defensePlan);
+  checks.ballState = checks.ballState && integrationBallStatePassed(simulation);
+  checks.worldState = checks.worldState && integrationWorldStatePassed(simulation);
+  checks.localScreenCausality = checks.localScreenCausality &&
+    integrationLocalScreenCausalityPassed(simulation, checks.previousScreenEffective);
+  checks.previousScreenEffective = simulation.world.facts.screenEffective;
   sampleTeammateCoordination(simulation, checks.teammate);
 }
 
@@ -970,10 +1090,20 @@ function sideAudit(
   const secondaryReadCausal = !formed || Boolean(offenseReadRecords[0] &&
     offenseReadRecords[0].tick > (ready?.tick ?? -1) &&
     eventForRecord(simulation, offenseReadRecords[0], new Set(["drop_committed", "chase_over_committed"])));
+  const formationSafeExit = !ready &&
+    (terminalReason === "formation_aborted" || terminalReason === "formation_timeout") &&
+    simulation.world.formation.phase === "formation" &&
+    simulation.world.tacticalVocabularyVersion === undefined &&
+    simulation.world.tacticalCoverage === undefined && offenseReads.length === 0 &&
+    defenseCoverages.length === 0;
   const safeExit = terminalReason !== "formation_aborted" && terminalReason !== "formation_timeout" ||
-    (!ready && simulation.world.formation.phase === "formation" &&
-      simulation.world.tacticalVocabularyVersion === undefined &&
-      simulation.world.tacticalCoverage === undefined && offenseReads.length === 0 && defenseCoverages.length === 0);
+    formationSafeExit;
+  const tacticalResolution = ready
+    ? terminalReason !== "unresolved" && terminalReason !== "formation_aborted" &&
+      terminalReason !== "formation_timeout" && defenseCoverages.length > 0 &&
+      offenseReads.length > 0 && handoffOffense !== undefined && handoffDefense !== undefined &&
+      (handoffOffense.tick < (simulation.world.terminal ? simulation.world.tick : Number.POSITIVE_INFINITY))
+    : formationSafeExit;
   const teammatePassed = teammateChannelPassed(checks.teammate);
   return {
     mirrored,
@@ -1002,7 +1132,11 @@ function sideAudit(
     strategyPhaseCoveragePassed: strategyPhaseCoveragePassed(simulation, expectedStrategies),
     strategyLocked: checks.strategyStable && checks.strategyLocked,
     hardVetoPriorityPassed: hardVetoPriorityPassed(simulation),
+    roleOwnershipPassed: checks.roleOwnership,
     routesLegal: checks.routesLegal,
+    ballStatePassed: checks.ballState,
+    worldStatePassed: checks.worldState,
+    localScreenCausalityPassed: checks.localScreenCausality,
     minimumTeammateBodyGap: checks.teammate.minimumBodyGap,
     maximumNearZeroTeammateTicks: checks.teammate.maximumNearZeroTicks,
     maximumCloseDualMovingTicks: checks.teammate.maximumCloseDualMovingTicks,
@@ -1014,21 +1148,22 @@ function sideAudit(
     teammateChannelPassed: teammatePassed,
     pocketIntegrityPassed: pocketIntegrityPassed(simulation, checks.teammate),
     safeExitPassed: safeExit,
+    tacticalResolutionPassed: tacticalResolution,
     allowedTerminal: terminalReason !== "unresolved" &&
       (I00_ALLOWED_TERMINALS as readonly string[]).includes(terminalReason),
   };
 }
 
-interface AuditRowResult {
+export interface IntegratedInputAuditResult {
   row: I01IntegrationRow;
   initialOffenseSignature: string;
   initialDefenseSignature: string;
 }
 
-function auditRow(
+export function auditIntegratedInput(
   input: I00IntegrationInput,
   expectedStrategies: TeamStrategySelection = I00_STRATEGY_CONTRACT,
-): AuditRowResult {
+): IntegratedInputAuditResult {
   const makeConfig = (
     mirrored = false,
     plannerEvaluationOrder: "offense-first" | "defense-first" = "offense-first",
@@ -1056,7 +1191,12 @@ function auditRow(
       noTBefore: !tacticalReadPresent(simulation),
       strategyStable: strategyStatePassed(simulation, identity),
       strategyLocked: true,
+      roleOwnership: roleOwnershipPassed(simulation),
       routesLegal: planRoutesLegal(simulation.offensePlan) && planRoutesLegal(simulation.defensePlan),
+      ballState: integrationBallStatePassed(simulation),
+      worldState: integrationWorldStatePassed(simulation),
+      localScreenCausality: integrationLocalScreenCausalityPassed(simulation, false),
+      previousScreenEffective: simulation.world.facts.screenEffective,
       teammate,
     };
   });
@@ -1082,12 +1222,17 @@ function auditRow(
     }
     if (simulations.every((simulation) => simulation.world.terminal)) break;
     if (simulations.some((simulation) => simulation.world.terminal)) {
-      failures.push(`TERMINAL_TICK_MISMATCH@${tick}`);
-      break;
+      if (!failures.some((failure) => failure.startsWith("TERMINAL_TICK_MISMATCH@"))) {
+        failures.push(`TERMINAL_TICK_MISMATCH@${tick}`);
+      }
     }
+    if (tick === MAXIMUM_TICKS) break;
     const before = simulations.map(stepFrame);
-    simulations.forEach((simulation) => simulation.step());
-    simulations.forEach((simulation, index) => afterStepChecks(simulation, before[index], runtime[index]));
+    simulations.forEach((simulation, index) => {
+      if (simulation.world.terminal) return;
+      simulation.step();
+      afterStepChecks(simulation, before[index], runtime[index]);
+    });
   }
   const rightSummary = sideAudit(right, false, runtime[0], expectedStrategies);
   const leftSummary = sideAudit(left, true, runtime[3], expectedStrategies);
@@ -1116,7 +1261,11 @@ function auditRow(
     strategyPhaseCoveragePassed(simulation, expectedStrategies));
   const strategyLock = runtime.every((check) => check.strategyStable && check.strategyLocked);
   const hardVetoPriority = simulations.every(hardVetoPriorityPassed);
+  const roleOwnership = runtime.every((check) => check.roleOwnership);
   const routesLegal = runtime.every((check) => check.routesLegal);
+  const ballState = runtime.every((check) => check.ballState);
+  const worldState = runtime.every((check) => check.worldState);
+  const localScreenCausality = runtime.every((check) => check.localScreenCausality);
   const teammateChannel = runtime.every((check) => teammateChannelPassed(check.teammate));
   const pocketIntegrity = simulations.every((simulation, index) =>
     pocketIntegrityPassed(simulation, runtime[index].teammate));
@@ -1124,6 +1273,7 @@ function auditRow(
     ...runtime.map((check) => check.teammate.minimumBodyGap),
   );
   const safeExit = sides.every((side) => side.safeExitPassed);
+  const tacticalResolution = sides.every((side) => side.tacticalResolutionPassed);
   const allowed = sides.every((side) => side.allowedTerminal);
   if (!deterministic) failures.push("NONDETERMINISTIC");
   if (!orderStable) failures.push("DEFENSE_FIRST_DIVERGED");
@@ -1141,10 +1291,15 @@ function auditRow(
   if (!strategyPhaseCoverage) failures.push("STRATEGY_PHASE_COVERAGE");
   if (!strategyLock) failures.push("STRATEGY_LOCK");
   if (!hardVetoPriority) failures.push("HARD_VETO_PRIORITY");
+  if (!roleOwnership) failures.push("ROLE_OWNERSHIP");
   if (!routesLegal) failures.push("ROUTE_PROOF");
+  if (!ballState) failures.push("BALL_STATE");
+  if (!worldState) failures.push("WORLD_STATE");
+  if (!localScreenCausality) failures.push("REMOTE_SCREEN");
   if (!teammateChannel) failures.push("TEAMMATE_CHANNEL");
   if (!pocketIntegrity) failures.push("POCKET_INTEGRITY");
   if (!safeExit) failures.push("FORMATION_SAFE_EXIT");
+  if (!tacticalResolution) failures.push("TACTICAL_RESOLUTION");
   if (!allowed) failures.push("TERMINAL_NOT_ALLOWED");
   const row: I01IntegrationRow = {
     id: input.id,
@@ -1175,11 +1330,16 @@ function auditRow(
     strategyPhaseCoveragePassed: strategyPhaseCoverage,
     strategyLocked: strategyLock,
     hardVetoPriorityPassed: hardVetoPriority,
+    roleOwnershipPassed: roleOwnership,
     routesLegal,
+    ballStatePassed: ballState,
+    worldStatePassed: worldState,
+    localScreenCausalityPassed: localScreenCausality,
     minimumTeammateBodyGap,
     teammateChannelPassed: teammateChannel,
     pocketIntegrityPassed: pocketIntegrity,
     safeExitPassed: safeExit,
+    tacticalResolutionPassed: tacticalResolution,
     allowedTerminalsPassed: allowed,
     behaviorTraceSignature:
       `${behaviorTraceSignature(rightBehaviorTrace)}|${behaviorTraceSignature(leftBehaviorTrace)}`,
@@ -1208,7 +1368,7 @@ function representativeReplays(rows: I01IntegrationRow[]): I01RepresentativeRepl
 }
 
 export function scanI01Integration(): I01IntegrationAudit {
-  const rows = I00_INTEGRATION_INPUTS.map((input) => auditRow(input).row);
+  const rows = I00_INTEGRATION_INPUTS.map((input) => auditIntegratedInput(input).row);
   const replays = representativeReplays(rows);
   const firstFailureRow = rows.find((row) => !row.passed);
   const firstFailure = firstFailureRow
@@ -1240,10 +1400,15 @@ export function scanI01Integration(): I01IntegrationAudit {
     strategyPhaseCoveragePassed: rows.every((row) => row.strategyPhaseCoveragePassed),
     strategyLocked: rows.every((row) => row.strategyLocked),
     hardVetoPriorityPassed: rows.every((row) => row.hardVetoPriorityPassed),
+    roleOwnershipPassed: rows.every((row) => row.roleOwnershipPassed),
     routesLegal: rows.every((row) => row.routesLegal),
+    ballStatePassed: rows.every((row) => row.ballStatePassed),
+    worldStatePassed: rows.every((row) => row.worldStatePassed),
+    localScreenCausalityPassed: rows.every((row) => row.localScreenCausalityPassed),
     teammateChannelPassed: rows.every((row) => row.teammateChannelPassed),
     pocketIntegrityPassed: rows.every((row) => row.pocketIntegrityPassed),
     safeExitPassed: rows.every((row) => row.safeExitPassed),
+    tacticalResolutionPassed: rows.every((row) => row.tacticalResolutionPassed),
     allowedTerminalsPassed: rows.every((row) => row.allowedTerminalsPassed),
     replays,
   };
@@ -1280,7 +1445,7 @@ export function scanI02StrategyIntegration(
 ): I02StrategyMatrixAudit {
   const rawRows = I00_INTEGRATION_INPUTS.flatMap((input) =>
     I02_STRATEGY_MATRIX.map((matchup): I02StrategyAuditRow => {
-      const result = auditRow(input, matchup.strategies);
+      const result = auditIntegratedInput(input, matchup.strategies);
       return {
         id: `${input.id}/${matchup.id}`,
         inputId: input.id,
@@ -1364,10 +1529,15 @@ export function scanI02StrategyIntegration(
     strategyPhaseCoveragePassed: everyAudit((row) => row.strategyPhaseCoveragePassed),
     strategyLocked: everyAudit((row) => row.strategyLocked),
     hardVetoPriorityPassed: everyAudit((row) => row.hardVetoPriorityPassed),
+    roleOwnershipPassed: everyAudit((row) => row.roleOwnershipPassed),
     routesLegal: everyAudit((row) => row.routesLegal),
+    ballStatePassed: everyAudit((row) => row.ballStatePassed),
+    worldStatePassed: everyAudit((row) => row.worldStatePassed),
+    localScreenCausalityPassed: everyAudit((row) => row.localScreenCausalityPassed),
     teammateChannelPassed: everyAudit((row) => row.teammateChannelPassed),
     pocketIntegrityPassed: everyAudit((row) => row.pocketIntegrityPassed),
     safeExitPassed: everyAudit((row) => row.safeExitPassed),
+    tacticalResolutionPassed: everyAudit((row) => row.tacticalResolutionPassed),
     allowedTerminalsPassed: everyAudit((row) => row.allowedTerminalsPassed),
     defaultBaselineUnchanged,
     strategyEffectCausalityPassed,

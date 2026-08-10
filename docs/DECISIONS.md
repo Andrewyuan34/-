@@ -30,6 +30,7 @@
 | D015 | 生效 | A 使用 explicit/auto 输入边界并联合比较 side × anchor | 保持旧行为零变化，防止隐藏输入泄漏和先锁死无合法 anchor 的一侧 |
 | D019 | 生效 | I00 先锁集成契约，I01 只在同一世界的公开 next-boundary 串联 A 与 T | 防止重建回合、隐藏结果或通用 watchdog 伪装成阶段集成 |
 | D020 | 生效 | I02 复用封存 P 策略贯穿同一回合，I03 只审计锁定 I 输入 | 防止重建策略、强造差异或把既有输入组合冒充 V held-out |
+| D021 | 生效 | V00 先锁全新集成 held-out，V01 只完整揭示并分类 | 防止看结果改 seed、阈值、样本、OOD 或代表回放 |
 
 ## D001：三层架构与信息所有权
 
@@ -238,6 +239,16 @@
 **后果：** I02–I03 只扩大已锁定 I 输入上的连续回合组合覆盖，不重开 P04，也不构成新的 held-out。当前域内六种策略相对默认策略产生真实行为差异的 input 数为 0，实际观察到的 adjustment 也全部为 0；这是合法审计事实，不能视为失败或用调参掩盖。反过来，零 adjustment 若改变逐 tick 世界、计划或事件轨迹必须直接失败，不能只比较终局摘要。I00–I03 已在自动门、只读回放和用户人眼验收完成后封存；V 仍需独立授权与先验合同。
 
 **证据：** `lib/pnr-integration-audit.ts` 与 `tests/pnr-integration.test.mjs` 覆盖 13 inputs × 6 matchups = 78 cells、156 个真实镜像世界，每个世界运行 primary、duplicate、defense-first，共 468 次 simulation；策略引用/冻结/运行锁、phase ownership、hard veto、逐 tick 策略效果因果、同世界连续性、确定性、顺序、镜像、信息隔离、队友通道、条件 pocket、安全退出与许可终局均进入自动门。默认 I01 全轨迹另以 hash 绑定 `676176c`；用户已验收四条代表回放，I02–I03 行为提交为 `6f7af55`。
+
+## D021：V00 先锁集成 held-out，V01 只揭示并分类
+
+**决定：** V00 从 I 封存提交 `28cf70e8c95710665f7ee2322a2dca8ff57e1951` 出发，在任何 V01 world 运行前，以独立本地 commit 锁定 input-only manifest、生成 seed、simulation seeds、P03/I02 既有 `2 × 3` 策略顺序、right/真实 left mirror 与 primary/duplicate/defense-first 执行顺序、全部通过门、OOD、代表 replay、证据 schema 和 rollback。V01 只能完整消费该合同；失败只分类为候选通用缺陷或 OOD 合同失败，不能在同一任务修复或改题。
+
+**原因：** I02–I03 只证明既有 13 个 A01 输入上的连续策略贯穿，不能当作全新 integrated held-out。若先运行再选择 seed、阈值、样本或代表回放，或者把 formation abort/timeout 事后改判域外，就无法区分真实泛化失败与结果导向筛选。复用 I 的逐 tick 审计并在 V00 补齐角色、球权和无远程 screen 门，可以扩展证据而不复制 planner/kernel 权威。
+
+**后果：** V00 使用 `mulberry32-v1` seed `20260811` 从冻结 `F01-v1` 域依序接受 12 个未出现在既有 F01/F02/F03/A01/I00 canonical 集合或其镜像中的 right-canonical 输入，simulation seeds 为 `20261001..20261012`；S/G/P/T preset 因起手语义不同不进入重复键。六个 matchup、真实镜像与三执行形成 72 cells、144 worlds、432 simulations。每个 cell 的 right/left × primary/duplicate/defense-first 六个 simulation 按固定 flattened 顺序构造并逐 tick lockstep 推进；某项提前终止时记录首 mismatch，其余项仍继续到终局或锁定 watchdog。锁入输入一律为 in-domain；锁后域检查失败使 V01 失败且不得替换。合法 formation abort/timeout 仍是安全退出。所有 cell 必须通过确定性、镜像、连续阶段/球权、合法动作、策略携带、planner 顺序、信息边界、角色/路线/球权、hard veto、公开因果、战术完成/安全退出、队友通道/pocket 与局部 screen 因果；V01 结果不提交、不 push，完成后停在 V02 或 V03 入口等待用户决定。
+
+**证据：** `lib/pnr-v00-validation-manifest.ts` 及其 canonical SHA-256、`lib/pnr-v01-validation-audit.ts`、`tests/pnr-validation.test.mjs`、`scripts/run-v01-validation.mjs` 与 `docs/CURRENT.md`。完整 V01 聚合证据写入被忽略的 `outputs/v01-integrated-validation.json`，避免把全量运行日志或 DOM snapshot 写进任务消息。
 
 ## 何时追加新决策
 

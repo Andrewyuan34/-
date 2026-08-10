@@ -13,6 +13,7 @@
     "test:detail": "node --experimental-strip-types --test --test-reporter=spec",
     "test:focus": "node --experimental-strip-types --test --test-reporter=dot --test-name-pattern",
     "test:focus:detail": "node --experimental-strip-types --test --test-reporter=spec --test-name-pattern",
+    "validate:v01": "node --experimental-strip-types scripts/run-v01-validation.mjs",
     "architecture:check": "node scripts/check-architecture.mjs",
     "context:map": "node scripts/generate-code-map.mjs",
     "context:check": "node scripts/generate-code-map.mjs --check && npm run architecture:check",
