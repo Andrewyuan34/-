@@ -39,7 +39,7 @@
 - `lib/pnr-formation-domain.ts`、`pnr-formation-audit.ts` 与冻结 F01/F02/F03 输入入口
 - `lib/pnr-core.ts` 中 SimulationConfig、planner observation、Formation 候选/计划、路径、readiness、事件与终止相关函数
 - `lib/pnr-strategy.ts` 中硬 veto、base score、零 adjustment 与球队信息所有权入口
-- `tests/pnr-core.test.mjs` 中 F00–F03、170 输入、镜像和核心不变量回归入口
+- `tests/pnr-formation-autonomous.test.mjs` 中 F00–F03/A00–A01 的直接回归入口；只有对应旧门失败时，才按测试名转读 `tests/pnr-policy.test.mjs` 的 170 输入账本或 `tests/pnr-core-s.test.mjs` 的核心不变量
 - `DECISIONS.md` 的 D001–D003、D005–D006、D011–D015
 - 进度账本中“F 之后的批准主线”与“当前判断与下一停止点”
 

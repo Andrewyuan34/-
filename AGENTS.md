@@ -47,7 +47,7 @@
 ## 修改、验证与文档纪律
 
 - 一轮只解决一个可观看的篮球问题；失败先保留最小反例，不堆场景或补丁。
-- 默认用 `rg`、符号名和窄行段定位代码与测试；不得为接手或单点改动整份读取 `pnr-core.ts`、测试单体、长文档或 DOM snapshot。先看 `git diff --stat`，再按文件/符号检查 diff。
+- 默认用 `rg`、符号名和窄行段定位代码与测试；不得为接手或单点改动整份读取 `pnr-core.ts`、无关阶段测试文件、长文档或 DOM snapshot。先看 `git diff --stat`，再按文件/符号检查 diff。
 - 开发中先用 `npm run test:focus -- "<name pattern>"`；成功输出保持 dot 级别，失败才用 `npm run test:focus:detail -- "<name pattern>"` 展开对应测试。不要把成功日志、完整 DOM 或重复快照复制进任务消息。
 - 行为改动同步维护紧凑的因果/不变量测试。完成前运行 `npm test`、`npm run lint` 和 `npm run build`。
 - 只暂存本任务明确拥有的路径；不使用 `git add .` 或 `git add -A`。

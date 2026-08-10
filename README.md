@@ -32,7 +32,7 @@ npm run lint
 npm run build
 ```
 
-`npm test` 与聚焦测试默认使用紧凑 dot reporter。开发中先运行 `npm run test:focus -- "<name pattern>"`；只有失败时才用 `npm run test:focus:detail -- "<name pattern>"` 展开对应失败。`npm run test:detail` 可展开整套测试；`npm run check` 运行测试与构建，但不能替代单独的 lint。
+`npm test` 与聚焦测试默认使用紧凑 dot reporter，并自动发现各阶段的 `tests/*.test.mjs`。开发中先运行 `npm run test:focus -- "<name pattern>"`；只有失败时才用 `npm run test:focus:detail -- "<name pattern>"` 展开对应失败。`npm run test:detail` 可展开整套测试；`npm run check` 运行测试与构建，但不能替代单独的 lint。
 
 ## 架构
 
@@ -88,7 +88,11 @@ npm run build
 
 ### 验证
 
-- `tests/pnr-core.test.mjs`：核心不变量、S/G/P 回归、F00–F03 路径，以及 A00–A01 确定性、镜像、信息边界、形成与安全退出门。
+- `tests/helpers/pnr-test-harness.mjs`：跨阶段共用的确定性配置、批准输入集合与旧轨迹摘要；阶段私有 helper 不放入这里。
+- `tests/pnr-core-s.test.mjs`：核心不变量与 S01–S08 回归。
+- `tests/pnr-generalization.test.mjs`：G01–G08 泛化、镜像与 held-out 审计。
+- `tests/pnr-policy.test.mjs`：P00–P03 策略与 policy 回归。
+- `tests/pnr-formation-autonomous.test.mjs`：F00–F03 与 A00–A01 的确定性、镜像、信息边界、形成与安全退出门；T 阶段用例落入独立的 `tests/pnr-tactical.test.mjs`。
 - `app/`：页面入口和全局样式。
 - `worker/`、`build/`：本地运行与构建适配，不承载篮球决策。
 
