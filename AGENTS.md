@@ -38,12 +38,13 @@
 
 ## 当前范围与停止点
 
-- A00–A01 与 T00–T01 已封存并由用户验收；仓库上下文工具已由 `7eb4bd2` 独立提交推送。I00–I01 当前工作树实现已通过自动门与本地可视检查，仍待用户人眼验收，未封存、未提交。
+- A00–A01 与 T00–T01 已封存并由用户验收；仓库上下文工具已由 `7eb4bd2` 独立提交推送。I00–I01 基线已由 `676176c` 提交推送；I02–I03 当前工作树实现与自动门已完成，仍待用户人眼验收，整个 I 阶段尚未封存，I02–I03 尚未提交。
 - `explicit | auto`、缺省 `explicit`、进攻私有 side/anchor/waypoint、公开 commit 后防守响应以及中立世界不评分选点，都是已封存契约。
-- 独立 T 只在显式 `preset_pnr + explicit + minimum-t@1` 下启用；唯一 Formation 例外是精确 `formation-minimum-t@1 + auto + form_pnr + F01-v1 + tactical_resolution` 的 I01 opt-in。持球通道优先、RESET 无继续 roll、pocket 健康释放与真实多 tick 飞行均为硬门。
-- I00 已先验锁定 13 个 A01 输入、A/T 版本与 hash、P00 默认零调整策略、许可终局、自动门和回退点 `7eb4bd2`；I01 只允许同一 simulation/world 在公开 `formation_ready` 下一边界激活 T，不得重建或重置 tick/位置/速度/球权。
-- A/T/I01 仍只证明 F01/F02/F03 合法 Formation 域、冻结 preset T 输入及锁定 A01 集成输入的镜像；不得外推到任意位置、角色识别、拖拽、手动控制、ICE/blitz/hedge/switch-back、投篮结果、更多人数、5v5、ML/RL 或生产化。
-- 当前停止在 I01 用户人眼验收；不得开始 I02 非默认策略整合或 V held-out，不得提交/推送直到用户明确批准。
+- 独立 T 只在显式 `preset_pnr + explicit + minimum-t@1` 下启用；唯一 Formation 例外是精确 `formation-minimum-t@1 + auto + form_pnr + F01-v1 + tactical_resolution` 的 I opt-in。持球通道优先、RESET 无继续 roll、pocket 健康释放与真实多 tick 飞行均为硬门。
+- I00 已先验锁定 13 个 A01 输入、A/T 版本与 hash、P00 默认零调整策略、许可终局、自动门和回退点 `7eb4bd2`；I01 只允许同一 simulation/world 在公开 `formation_ready` 下一边界激活 T；I02 从 tick 0 到终局复用同一个已注册 TeamStrategySelection，只覆盖封存 P03 的两套进攻 × 三套防守，不新增策略值或改写 I00 manifest。
+- I03 只在锁定 I 输入及真实镜像上审计上述六种既有策略组合；策略必须服从硬可行性、球队信息所有权、路线和球权，不能恢复 veto 候选、指定 coverage/terminal 或读取对方 profile。当前 I 域没有产生真实策略差异或非零 adjustment 是合法审计事实，不得为制造差异改基础篮球评分。
+- A/T/I 仍只证明 F01/F02/F03 合法 Formation 域、冻结 preset T 输入及锁定 A01 集成输入；不得外推到任意位置、角色识别、拖拽、手动控制、ICE/blitz/hedge/switch-back、投篮结果、更多人数、5v5、ML/RL 或生产化。
+- 当前停止在 I00–I03 用户人眼验收；不得进入 V held-out，不得提交/推送 I02–I03，直到用户明确批准。
 
 实时细节和工作树状态以 [`docs/CURRENT.md`](./docs/CURRENT.md) 为准。
 

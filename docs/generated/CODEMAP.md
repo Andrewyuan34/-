@@ -6,9 +6,9 @@
 ## Repository summary
 
 - Source modules: 55
-- Top-level declarations: 1144
-- Runtime dependency edges: 201
-- Type-only dependency edges: 21
+- Top-level declarations: 1196
+- Runtime dependency edges: 205
+- Type-only dependency edges: 22
 
 ## Responsibility areas
 
@@ -29,8 +29,9 @@
 
 | Module | Lines | Size | Area | Phase | Top-level | Exports |
 | --- | ---: | ---: | --- | --- | ---: | ---: |
-| `lib/pnr-core.ts` | 10285 | 358.8 KiB | simulation-kernel | Core | 249 | 123 |
+| `lib/pnr-core.ts` | 10280 | 358.4 KiB | simulation-kernel | Core | 249 | 123 |
 | `components/PnrLab.tsx` | 1697 | 67.4 KiB | observation-ui | UI | 23 | 1 |
+| `lib/pnr-integration-audit.ts` | 1497 | 61.9 KiB | audit | Shared | 81 | 22 |
 | `components/pnr-lab/GProbePanels.tsx` | 1410 | 57.3 KiB | observation-ui | G, UI | 12 | 7 |
 | `tests/pnr-generalization.test.mjs` | 1218 | 46.6 KiB | verification | G, Test | 3 | 0 |
 | `tests/pnr-core-s.test.mjs` | 1180 | 51.3 KiB | verification | Test | 1 | 0 |
@@ -46,9 +47,8 @@
 | `lib/pnr-g07-mirroring.ts` | 721 | 24.4 KiB | audit | G | 30 | 11 |
 | `lib/pnr-f00-formation.ts` | 690 | 25.2 KiB | audit | F | 34 | 11 |
 | `lib/pnr-g03-generalization.ts` | 661 | 21.9 KiB | audit | G | 34 | 20 |
-| `lib/pnr-integration-audit.ts` | 642 | 27.5 KiB | audit | Shared | 33 | 9 |
 | `components/pnr-lab/PolicyProbePanels.tsx` | 631 | 24.8 KiB | observation-ui | P, UI | 5 | 5 |
-| `components/pnr-lab/court.ts` | 579 | 21.2 KiB | observation-ui | UI | 5 | 1 |
+| `tests/pnr-integration.test.mjs` | 587 | 22.8 KiB | verification | Test | 10 | 0 |
 
 ## Module index
 
@@ -87,7 +87,7 @@
 | `lib/pnr-g08-heldout-audit.ts` | audit | G | `lib/pnr-core.ts`<br>`lib/pnr-g08-heldout-manifest.ts`<br>`lib/pnr-strategy.ts` | — |
 | `lib/pnr-g08-heldout-manifest.ts` | frozen-input | G | `lib/pnr-core.ts`<br>`lib/pnr-scenarios.ts` | — |
 | `lib/pnr-generalization.ts` | audit | G | `lib/pnr-core.ts`<br>`lib/pnr-scenarios.ts`<br>`lib/pnr-strategy.ts` | — |
-| `lib/pnr-integration-audit.ts` | audit | Shared | `lib/pnr-core.ts`<br>`lib/pnr-integration-manifest.ts` | — |
+| `lib/pnr-integration-audit.ts` | audit | Shared | `lib/pnr-core.ts`<br>`lib/pnr-integration-manifest.ts`<br>`lib/pnr-p02-defense-strategy.ts`<br>`lib/pnr-p03-policy-matrix.ts`<br>`lib/pnr-tactical-audit.ts` | `lib/pnr-strategy.ts` |
 | `lib/pnr-integration-manifest.ts` | frozen-input | Shared | `lib/pnr-a01-autonomous-setup-manifest.ts`<br>`lib/pnr-core.ts`<br>`lib/pnr-formation-domain.ts`<br>`lib/pnr-strategy.ts`<br>`lib/pnr-tactical-manifest.ts` | — |
 | `lib/pnr-p01-offense-strategy.ts` | audit | P | `lib/pnr-core.ts`<br>`lib/pnr-generalization.ts`<br>`lib/pnr-scenarios.ts`<br>`lib/pnr-strategy.ts` | — |
 | `lib/pnr-p02-defense-strategy.ts` | audit | P | `lib/pnr-core.ts`<br>`lib/pnr-g03-generalization.ts`<br>`lib/pnr-generalization.ts`<br>`lib/pnr-p01-offense-strategy.ts`<br>`lib/pnr-strategy.ts` | — |
@@ -105,7 +105,7 @@
 | `tests/pnr-core-s.test.mjs` | verification | Test | `lib/pnr-core.ts`<br>`lib/pnr-f00-formation.ts`<br>`lib/pnr-scenarios.ts`<br>`lib/pnr-under-r2.ts`<br>`tests/helpers/pnr-test-harness.mjs` | — |
 | `tests/pnr-formation-autonomous.test.mjs` | verification | F, A, Test | `lib/pnr-a00-autonomous-side-audit.ts`<br>`lib/pnr-a00-autonomous-side-manifest.ts`<br>`lib/pnr-a01-autonomous-setup-audit.ts`<br>`lib/pnr-a01-autonomous-setup-manifest.ts`<br>`lib/pnr-core.ts`<br>`lib/pnr-f00-formation.ts`<br>`lib/pnr-f02-formation-samples.ts`<br>`lib/pnr-f03-heldout-audit.ts`<br>`lib/pnr-f03-heldout-manifest.ts`<br>`lib/pnr-formation-audit.ts`<br>`lib/pnr-formation-domain.ts`<br>`lib/pnr-formation-generalization-results.ts`<br>`lib/pnr-scenarios.ts`<br>`lib/pnr-under-r2.ts` | — |
 | `tests/pnr-generalization.test.mjs` | verification | G, Test | `lib/pnr-core.ts`<br>`lib/pnr-g02-generalization.ts`<br>`lib/pnr-g03-generalization.ts`<br>`lib/pnr-g05-spatial-generalization.ts`<br>`lib/pnr-g06-combinations.ts`<br>`lib/pnr-g07-mirroring.ts`<br>`lib/pnr-g08-heldout-audit.ts`<br>`lib/pnr-g08-heldout-manifest.ts`<br>`lib/pnr-generalization.ts`<br>`lib/pnr-scenarios.ts`<br>`tests/helpers/pnr-test-harness.mjs` | — |
-| `tests/pnr-integration.test.mjs` | verification | Test | `lib/pnr-a01-autonomous-setup-manifest.ts`<br>`lib/pnr-core.ts`<br>`lib/pnr-formation-domain.ts`<br>`lib/pnr-integration-audit.ts`<br>`lib/pnr-integration-manifest.ts`<br>`lib/pnr-strategy.ts`<br>`lib/pnr-tactical-audit.ts`<br>`lib/pnr-tactical-manifest.ts` | — |
+| `tests/pnr-integration.test.mjs` | verification | Test | `lib/pnr-a01-autonomous-setup-manifest.ts`<br>`lib/pnr-core.ts`<br>`lib/pnr-formation-domain.ts`<br>`lib/pnr-integration-audit.ts`<br>`lib/pnr-integration-manifest.ts`<br>`lib/pnr-p03-policy-matrix.ts`<br>`lib/pnr-strategy.ts`<br>`lib/pnr-tactical-audit.ts`<br>`lib/pnr-tactical-manifest.ts` | — |
 | `tests/pnr-policy.test.mjs` | verification | P, Test | `lib/pnr-core.ts`<br>`lib/pnr-g08-heldout-manifest.ts`<br>`lib/pnr-p01-offense-strategy.ts`<br>`lib/pnr-p02-defense-strategy.ts`<br>`lib/pnr-p03-policy-matrix.ts`<br>`lib/pnr-scenarios.ts`<br>`lib/pnr-strategy.ts`<br>`tests/helpers/pnr-test-harness.mjs` | — |
 | `tests/pnr-tactical.test.mjs` | verification | T, Test | `lib/pnr-core.ts`<br>`lib/pnr-tactical-audit.ts`<br>`lib/pnr-tactical-manifest.ts` | — |
 | `worker/index.ts` | runtime-entry | Shared | — | — |
@@ -114,15 +114,15 @@
 
 | Symbol | Kind | Module | Lines | Span | Exported |
 | --- | --- | --- | ---: | ---: | --- |
-| `PnrSimulation` | class | `lib/pnr-core.ts` | 2656 | 7629–10284 | yes |
+| `PnrSimulation` | class | `lib/pnr-core.ts` | 2651 | 7629–10279 | yes |
 | `PnrLab` | function | `components/PnrLab.tsx` | 1345 | 352–1696 | yes |
 | `makeOffensePlan` | function | `lib/pnr-core.ts` | 579 | 5917–6495 | no |
 | `drawCourt` | function | `components/pnr-lab/court.ts` | 536 | 43–578 | yes |
 | `evaluateOffenseCandidates` | function | `lib/pnr-core.ts` | 465 | 3752–4216 | no |
 | `analyzeArchitecture` | function | `scripts/repository-architecture.mjs` | 388 | 629–1016 | yes |
 | `makeDefensePlan` | function | `lib/pnr-core.ts` | 356 | 6497–6852 | no |
+| `IntegrationHandoffPanel` | function | `components/pnr-lab/IntegrationHandoffPanel.tsx` | 319 | 64–382 | yes |
 | `defenseRollout` | function | `lib/pnr-core.ts` | 302 | 4218–4519 | no |
-| `IntegrationHandoffPanel` | function | `components/pnr-lab/IntegrationHandoffPanel.tsx` | 292 | 64–355 | yes |
 | `offenseRollout` | function | `lib/pnr-core.ts` | 284 | 3410–3693 | no |
 | `runF00` | function | `lib/pnr-f00-formation.ts` | 277 | 230–506 | no |
 | `evaluateDefenseCandidates` | function | `lib/pnr-core.ts` | 270 | 4521–4790 | no |
@@ -150,10 +150,10 @@
 | `scanG05SpatialBoundary` | function | `lib/pnr-g05-spatial-generalization.ts` | 178 | 596–773 | yes |
 | `G07ProbePanel` | function | `components/pnr-lab/GProbePanels.tsx` | 169 | 983–1151 | yes |
 | `evaluateUnderReadGeometry` | function | `lib/pnr-core.ts` | 169 | 1761–1929 | yes |
+| `auditRow` | function | `lib/pnr-integration-audit.ts` | 163 | 1028–1190 | no |
 | `scanG06Combinations` | function | `lib/pnr-g06-combinations.ts` | 159 | 609–767 | yes |
 | `auditFormationPair` | function | `lib/pnr-formation-audit.ts` | 157 | 898–1054 | yes |
 | `autonomousFormationCandidate` | function | `lib/pnr-core.ts` | 154 | 3238–3391 | no |
-| `G06ProbePanel` | function | `components/pnr-lab/GProbePanels.tsx` | 153 | 829–981 | yes |
 
 ## Detailed symbol lookup
 

@@ -29,6 +29,7 @@
 | D014 | 完成 | F01–F03 作为带三道内部停止门的合并增量 | 同一输入域逐层扩大，同时保持 manifest 预锁定与失败可归因 |
 | D015 | 生效 | A 使用 explicit/auto 输入边界并联合比较 side × anchor | 保持旧行为零变化，防止隐藏输入泄漏和先锁死无合法 anchor 的一侧 |
 | D019 | 生效 | I00 先锁集成契约，I01 只在同一世界的公开 next-boundary 串联 A 与 T | 防止重建回合、隐藏结果或通用 watchdog 伪装成阶段集成 |
+| D020 | 生效 | I02 复用封存 P 策略贯穿同一回合，I03 只审计锁定 I 输入 | 防止重建策略、强造差异或把既有输入组合冒充 V held-out |
 
 ## D001：三层架构与信息所有权
 
@@ -227,6 +228,16 @@
 **后果：** 无 integration version 的 A、显式 preset T 及所有旧输入保持原路径；I handoff 前的 planner 只能处于 Formation phase，看不到 T vocabulary 或 coverage。成功形成后，防守先建立 drop/chase 原对位覆盖，进攻只能在中立世界发布真实 coverage event 的下一边界做二级读取；合法收住必须来自公开队级几何与有限承诺，不能由 max-time watchdog 代替。I01 只使用 P00 默认策略且所有 adjustment 为 0；策略串联属于 I02，新的 held-out 组合属于 V，本增量自动门与只读回放完成后必须停下等待用户人眼验收。
 
 **证据：** I00 回退点为 `7eb4bd2`；静态合同、全域三执行审计、同对象连续性、镜像、信息边界、A/T 冻结回归与代表回放见 `lib/pnr-integration-manifest.ts`、`lib/pnr-integration-audit.ts`、`tests/pnr-integration.test.mjs` 和 `docs/CURRENT.md`。
+
+## D020：I02 复用既有 P 策略，I03 如实审计锁定输入
+
+**决定：** I02 不建立新的策略系统、策略值或校准权重，只复用封存 P03 的两套进攻 × 三套防守 `TeamStrategySelection`。每个集成回合从 tick 0 到终局保持同一个已注册、复制并冻结的选择；Formation、coverage 与二级读取的 planning record 必须携带正确的自队 strategy 引用，运行后配置锁定。策略 adjustment 只在硬可行候选之间生效，不能恢复 veto 候选、指定 coverage/terminal 或读取对方 profile。I03 不改写 I00 input-only manifest，只对 13 个锁定 I 输入 × 六个既有 matchup 及其真实镜像做有界审计，再从完成后的事实中选择少量只读回放。
+
+**原因：** P00–P03 已经证明策略注册和局部候选重排，但没有证明同一选择会从 Formation 开始贯穿到连续 T 终局。若交接时重建策略、只在某一阶段注入引用，或为了让 UI 出现差异而调整基础篮球评分，就无法区分真实策略作用与测试造景；若新增输入再运行，则会越过 I 直接混入 V held-out。
+
+**后果：** I02–I03 只扩大已锁定 I 输入上的连续回合组合覆盖，不重开 P04，也不构成新的 held-out。当前域内六种策略相对默认策略产生真实行为差异的 input 数为 0，实际观察到的 adjustment 也全部为 0；这是合法审计事实，不能视为失败或用调参掩盖。反过来，零 adjustment 若改变逐 tick 世界、计划或事件轨迹必须直接失败，不能只比较终局摘要。整个 I 阶段只有在自动门、只读回放和用户人眼验收完成后才能封存；此前禁止进入 V。
+
+**证据：** `lib/pnr-integration-audit.ts` 与 `tests/pnr-integration.test.mjs` 覆盖 13 inputs × 6 matchups = 78 cells、156 个真实镜像世界，每个世界运行 primary、duplicate、defense-first，共 468 次 simulation；策略引用/冻结/运行锁、phase ownership、hard veto、逐 tick 策略效果因果、同世界连续性、确定性、顺序、镜像、信息隔离、队友通道、条件 pocket、安全退出与许可终局均进入自动门。默认 I01 全轨迹另以 hash 绑定 `676176c`；只读代表回放与当前验收状态见 `components/pnr-lab/IntegrationHandoffPanel.tsx` 和 `docs/CURRENT.md`。
 
 ## 何时追加新决策
 

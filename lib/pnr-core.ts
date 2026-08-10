@@ -7739,17 +7739,6 @@ export class PnrSimulation {
     const strategies = copyTeamStrategySelection(
       config.strategies ?? DEFAULT_TEAM_STRATEGY_SELECTION,
     );
-    if (
-      integratedTacticalOptIn &&
-      (strategies.offense.id !== DEFAULT_TEAM_STRATEGY_SELECTION.offense.id ||
-        strategies.offense.version !== DEFAULT_TEAM_STRATEGY_SELECTION.offense.version ||
-        strategies.defense.id !== DEFAULT_TEAM_STRATEGY_SELECTION.defense.id ||
-        strategies.defense.version !== DEFAULT_TEAM_STRATEGY_SELECTION.defense.version)
-    ) {
-      throw new Error(
-        `integrationVersion="${FORMATION_TACTICAL_INTEGRATION_VERSION}" requires the P00 default zero-adjustment strategies; strategy integration belongs to I02`,
-      );
-    }
     this.offenseStrategyProfile = resolveRegisteredTeamStrategy(
       strategies.offense,
       "offense",
@@ -7781,6 +7770,12 @@ export class PnrSimulation {
       ...(integrationVersion ? { integrationVersion } : {}),
       strategies,
     };
+    Object.defineProperty(this.config, "strategies", {
+      value: strategies,
+      writable: false,
+      enumerable: true,
+      configurable: false,
+    });
     this.world = initialWorld({
       initialPositions: this.config.initialPositions,
       screenSide,

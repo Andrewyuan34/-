@@ -78,7 +78,7 @@
 | `CAUSAL_EVENTS` | const | 23–39 | no |
 | `routePhase` | function | 41–58 | no |
 | `passLabel` | function | 60–62 | no |
-| `IntegrationHandoffPanel` | function | 64–355 | yes |
+| `IntegrationHandoffPanel` | function | 64–382 | yes |
 
 ### `components/pnr-lab/PolicyProbePanels.tsx`
 
@@ -135,7 +135,7 @@
 | `A00_AUTONOMOUS_SIDE_AUDIT` | const | 147–147 | no |
 | `A01_AUTONOMOUS_SETUP_AUDIT` | const | 148–148 | no |
 | `TACTICAL_VOCABULARY_AUDIT` | const | 149–149 | no |
-| `I01_INTEGRATION_AUDIT` | const | 150–150 | no |
+| `I03_INTEGRATION_AUDIT` | const | 150–150 | no |
 | `cloneAutonomousSetup` | function | 152–182 | no |
 | `cloneCandidate` | function | 184–193 | no |
 | `clonePlanningRecord` | function | 195–201 | no |
@@ -474,7 +474,7 @@
 | `stableHash` | function | 7585–7593 | no |
 | `privateRouteDeterminismFrame` | function | 7595–7623 | no |
 | `clonePlayer` | function | 7625–7627 | no |
-| `PnrSimulation` | class | 7629–10284 | yes |
+| `PnrSimulation` | class | 7629–10279 | yes |
 
 ### `lib/pnr-f00-formation.ts`
 
@@ -980,39 +980,87 @@
 
 | Symbol | Kind | Lines | Exported |
 | --- | --- | ---: | --- |
-| `TACTICAL_OFFENSE_READS` | const | 32–39 | no |
-| `TACTICAL_DEFENSE_COVERAGES` | const | 40–40 | no |
-| `TACTICAL_EVENTS` | const | 41–51 | no |
-| `MAXIMUM_TICKS` | const | 52–52 | no |
-| `EPSILON` | const | 53–53 | no |
-| `I01Resolution` | type | 55–55 | yes |
-| `I01SideAudit` | interface | 57–81 | yes |
-| `I01IntegrationRow` | interface | 83–112 | yes |
-| `I01RepresentativeReplay` | interface | 114–121 | yes |
-| `I01IntegrationAudit` | interface | 123–150 | yes |
-| `copyPositions` | function | 152–154 | no |
-| `makeI01IntegrationConfig` | function | 156–178 | yes |
-| `createI01IntegrationReplay` | function | 180–187 | yes |
-| `IdentityFrame` | interface | 189–195 | no |
-| `StepFrame` | interface | 197–204 | no |
-| `RuntimeChecks` | interface | 206–213 | no |
-| `identityFrame` | function | 215–223 | no |
-| `stepFrame` | function | 225–244 | no |
-| `identityPassed` | function | 246–252 | no |
-| `tacticalReadPresent` | function | 254–265 | no |
-| `afterStepChecks` | function | 267–306 | no |
-| `deterministicFrame` | function | 308–332 | no |
-| `vectorError` | function | 334–336 | no |
-| `comparePlanMirror` | function | 338–373 | no |
-| `mirrorError` | function | 375–388 | no |
-| `mirrorSemantics` | function | 390–402 | no |
-| `informationBoundaryPassed` | function | 404–415 | no |
-| `eventForRecord` | function | 417–424 | no |
-| `sideAudit` | function | 426–481 | no |
-| `auditRow` | function | 483–579 | no |
-| `representativeReplays` | function | 581–597 | no |
-| `scanI01Integration` | function | 599–633 | yes |
-| `makeI01RepresentativeReplayConfig` | function | 635–641 | yes |
+| `TACTICAL_OFFENSE_READS` | const | 49–56 | no |
+| `TACTICAL_DEFENSE_COVERAGES` | const | 57–57 | no |
+| `TACTICAL_EVENTS` | const | 58–68 | no |
+| `MAXIMUM_TICKS` | const | 69–69 | no |
+| `EPSILON` | const | 70–70 | no |
+| `TACTICAL_NEAR_ZERO_TEAMMATE_GAP` | const | 71–71 | no |
+| `TACTICAL_CLOSE_TEAMMATE_GAP` | const | 72–72 | no |
+| `TACTICAL_CLOSE_MOVING_SPEED` | const | 73–73 | no |
+| `TACTICAL_MAX_NEAR_ZERO_TEAMMATE_TICKS` | const | 74–74 | no |
+| `TACTICAL_MAX_CLOSE_DUAL_MOVING_TICKS` | const | 75–75 | no |
+| `TACTICAL_RESET_MAX_CLOSE_TURN_RADIANS` | const | 76–76 | no |
+| `TACTICAL_CHASE_MAX_CLOSE_TURN_RADIANS` | const | 77–77 | no |
+| `RESET_READS` | const | 78–78 | no |
+| `RESET_ROUTE_READS` | const | 79–79 | no |
+| `COORDINATED_CHASE_READS` | const | 80–80 | no |
+| `RESET_ROLL_PHASE` | const | 81–81 | no |
+| `I02_STRATEGY_MATRIX_VERSION` | const | 83–83 | yes |
+| `I02StrategyMatchup` | interface | 85–88 | yes |
+| `I02_STRATEGY_MATRIX` | const | 90–98 | yes |
+| `I01Resolution` | type | 100–100 | yes |
+| `I01SideAudit` | interface | 102–139 | yes |
+| `I01IntegrationRow` | interface | 141–179 | yes |
+| `I01RepresentativeReplay` | interface | 181–188 | yes |
+| `I01IntegrationAudit` | interface | 190–224 | yes |
+| `I02StrategyAuditRow` | interface | 226–238 | yes |
+| `I02StrategyMatrixAudit` | interface | 240–277 | yes |
+| `I03RepresentativeReplay` | interface | 279–288 | yes |
+| `I03IntegrationAudit` | interface | 290–299 | yes |
+| `copyPositions` | function | 301–303 | no |
+| `makeI01IntegrationConfig` | function | 305–327 | yes |
+| `getI02StrategyMatchup` | function | 329–333 | yes |
+| `makeI02IntegrationConfig` | function | 335–345 | yes |
+| `createI01IntegrationReplay` | function | 347–354 | yes |
+| `IdentityFrame` | interface | 356–367 | no |
+| `StepFrame` | interface | 369–376 | no |
+| `RuntimeChecks` | interface | 378–389 | no |
+| `BehaviorTraceState` | interface | 391–397 | no |
+| `TeammateCoordinationSemantic` | type | 399–399 | no |
+| `TeammateCoordinationState` | interface | 401–414 | no |
+| `teammateBodyGap` | function | 416–420 | no |
+| `coordinationSemantic` | function | 422–426 | no |
+| `angleDelta` | function | 428–433 | no |
+| `eventTick` | function | 435–437 | no |
+| `newTeammateCoordinationState` | function | 439–456 | no |
+| `sampleTeammateCoordination` | function | 458–518 | no |
+| `teammateChannelPassed` | function | 520–527 | no |
+| `pocketIntegrityPassed` | function | 529–543 | no |
+| `planRoutesLegal` | function | 545–548 | no |
+| `identityFrame` | function | 550–563 | no |
+| `stepFrame` | function | 565–584 | no |
+| `identityPassed` | function | 586–592 | no |
+| `strategyStatePassed` | function | 594–603 | no |
+| `tacticalReadPresent` | function | 605–616 | no |
+| `afterStepChecks` | function | 618–662 | no |
+| `deterministicFrame` | function | 664–701 | no |
+| `newBehaviorTraceState` | function | 703–711 | no |
+| `sampleBehaviorTrace` | function | 713–749 | no |
+| `behaviorTraceSignature` | function | 751–755 | no |
+| `vectorError` | function | 757–759 | no |
+| `comparePlanMirror` | function | 761–796 | no |
+| `mirrorError` | function | 798–811 | no |
+| `mirrorSemantics` | function | 813–837 | no |
+| `informationBoundaryPassed` | function | 839–850 | no |
+| `eventForRecord` | function | 852–859 | no |
+| `sameStrategyReference` | function | 861–866 | no |
+| `strategyReferencesPassed` | function | 868–882 | no |
+| `strategyPhaseCoveragePassed` | function | 884–902 | no |
+| `hardVetoPriorityPassed` | function | 904–919 | no |
+| `initialPlanningSignature` | function | 921–942 | no |
+| `sideAudit` | function | 944–1020 | no |
+| `AuditRowResult` | interface | 1022–1026 | no |
+| `auditRow` | function | 1028–1190 | no |
+| `representativeReplays` | function | 1192–1208 | no |
+| `scanI01Integration` | function | 1210–1251 | yes |
+| `makeI01RepresentativeReplayConfig` | function | 1253–1259 | yes |
+| `opponentStrategyIsolationPassed` | function | 1261–1276 | no |
+| `scanI02StrategyIntegration` | function | 1278–1383 | yes |
+| `i03RepresentativeReplays` | function | 1385–1457 | no |
+| `scanI03Integration` | function | 1459–1483 | yes |
+| `makeI03RepresentativeReplayConfig` | function | 1485–1492 | yes |
+| `createI03IntegrationReplay` | function | 1494–1496 | yes |
 
 ### `lib/pnr-integration-manifest.ts`
 
@@ -1388,12 +1436,16 @@
 
 | Symbol | Kind | Lines | Exported |
 | --- | --- | ---: | --- |
-| `cachedIntegrationAudit` | let | 40–40 | no |
-| `integrationAudit` | function | 42–45 | no |
-| `copyPositions` | function | 47–51 | no |
-| `makeIntegratedConfig` | function | 53–69 | no |
-| `TACTICAL_PLAN_IDS` | const | 71–80 | no |
-| `hasTacticalCandidate` | function | 82–84 | no |
+| `I01_676176C_TRACE_HASH` | const | 49–50 | no |
+| `cachedI03Audit` | let | 52–52 | no |
+| `i03Audit` | function | 54–57 | no |
+| `integrationAudit` | function | 59–61 | no |
+| `copyPositions` | function | 63–67 | no |
+| `makeIntegratedConfig` | function | 69–85 | no |
+| `integrationTraceDigest` | function | 87–109 | no |
+| `defaultIntegrationGroupDigest` | function | 111–122 | no |
+| `TACTICAL_PLAN_IDS` | const | 124–133 | no |
+| `hasTacticalCandidate` | function | 135–137 | no |
 
 ### `tests/pnr-policy.test.mjs`
 

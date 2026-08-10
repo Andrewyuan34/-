@@ -1,8 +1,8 @@
 import { PLAYER_IDS, type TeamPlan } from "@/lib/pnr-core";
 import {
-  makeI01RepresentativeReplayConfig,
-  type I01IntegrationAudit,
-  type I01RepresentativeReplay,
+  makeI03RepresentativeReplayConfig,
+  type I03IntegrationAudit,
+  type I03RepresentativeReplay,
 } from "@/lib/pnr-integration-audit";
 import {
   I00_CONTRACT_VERSION,
@@ -13,9 +13,9 @@ import {
 } from "@/lib/pnr-integration-manifest";
 import type { UiSnapshot } from "./types";
 
-const REPLAY_LABELS: Record<I01RepresentativeReplay["id"], string> = {
+const REPLAY_LABELS: Record<I03RepresentativeReplay["id"], string> = {
   "formed-handoff": "形成后连续交接",
-  "chase-read": "CHASE 后进攻读取",
+  "strategy-carry": "既有策略全程携带",
   "mirrored-handoff": "同一路径真实镜像",
   "safe-exit": "Formation 安全退出",
 };
@@ -68,20 +68,22 @@ export function IntegrationHandoffPanel({
   onReplaySelect,
   snapshot,
 }: {
-  activeReplayId: I01RepresentativeReplay["id"];
-  audit: I01IntegrationAudit;
+  activeReplayId: I03RepresentativeReplay["id"];
+  audit: I03IntegrationAudit;
   locked: boolean;
-  onReplaySelect: (replayId: I01RepresentativeReplay["id"]) => void;
+  onReplaySelect: (replayId: I03RepresentativeReplay["id"]) => void;
   snapshot: UiSnapshot;
 }) {
   const replay =
     audit.replays.find((candidate) => candidate.id === activeReplayId) ??
     audit.replays[0];
   if (!replay) return null;
-  const row = audit.rows.find((candidate) => candidate.id === replay.inputId);
-  if (!row) throw new Error(`Missing I01 audit row: ${replay.inputId}`);
-  const sideAudit = replay.mirrored ? row.left : row.right;
-  const config = makeI01RepresentativeReplayConfig(replay);
+  const matrix = audit.i02;
+  const row = matrix.rows.find((candidate) =>
+    candidate.inputId === replay.inputId && candidate.matchupId === replay.matchupId);
+  if (!row) throw new Error(`Missing I03 audit row: ${replay.inputId}/${replay.matchupId}`);
+  const sideAudit = replay.mirrored ? row.audit.left : row.audit.right;
+  const config = makeI03RepresentativeReplayConfig(replay);
   const initialFormationRecord = snapshot.formationPlanning;
   const initialChoice = initialFormationRecord?.candidates.find(
     (candidate) => candidate.label === initialFormationRecord.chosenLabel,
@@ -114,29 +116,34 @@ export function IntegrationHandoffPanel({
           sideAudit.offenseReads.join("/") || "offense read pending",
           `${sideAudit.terminalReason}@${sideAudit.terminalTick}`,
         ].join(" → ");
+  const recentStrategyRecords = snapshot.planning.length > 0
+    ? snapshot.planning.map((record) =>
+        `${record.team}:${record.strategy.id}@${record.strategy.version}/${record.decisionPhase}@${record.tick}`,
+      ).join(" · ")
+    : "等待首个球队规划记录";
 
   return (
     <section
       className="g01-probe g08-probe formation-generalization"
-      aria-label="I00 到 I01 自动 Formation 连续交接最小战术词汇审计"
+      aria-label="I00 到 I03 自动 Formation 连续交接与既有策略整合审计"
     >
       <div className="g01-probe__head">
         <div>
           <span className="eyebrow">
-            I00–I01 · AUTO FORMATION → SAME-WORLD HANDOFF → MINIMUM-T@1
+            I00–I03 · AUTO FORMATION → SAME-WORLD HANDOFF → MINIMUM-T@1
           </span>
-          <h2>Formation → T 连续交接</h2>
+          <h2>Formation → T · 既有策略连续回合</h2>
           <p>
             同一个 simulation、世界、固定时钟和球权从 formation_ready
             的下一规划边界进入 drop / chase
-            与进攻二级读取；面板只读展示，不向任一球队提供
-            side、anchor、计划或结果。
+            与进攻二级读取；同一个已注册策略选择从 tick 0 携带到终局。
+            面板只读展示，不向任一球队提供 side、anchor、计划或结果。
           </p>
         </div>
         <span
           className={"g01-status " + (audit.passed ? "is-pass" : "is-fail")}
         >
-          {audit.passed ? "I00–I01 AUDIT PASS" : "I00–I01 AUDIT FAIL"}
+          {audit.passed ? "I00–I03 AUDIT PASS" : "I00–I03 AUDIT FAIL"}
         </span>
       </div>
 
@@ -144,8 +151,8 @@ export function IntegrationHandoffPanel({
         <div>
           <span>INPUT-ONLY CONTRACT</span>
           <strong>
-            {audit.inputCount} inputs / {audit.worldCount} worlds · each ×
-            {audit.executionsPerWorld}
+            {matrix.inputCount} inputs × {matrix.matchupCount} matchups · {matrix.worldCount} worlds ×
+            {matrix.executionsPerWorld}
           </strong>
           <small>
             {I00_CONTRACT_VERSION} · {I00_INPUT_MANIFEST_VERSION}
@@ -155,23 +162,23 @@ export function IntegrationHandoffPanel({
           <span>SAME-WORLD CONTINUITY</span>
           <strong>
             {passLabel(
-              audit.sameSimulationWorldIdentity && audit.monotonicTickTime,
+              matrix.sameSimulationWorldIdentity && matrix.monotonicTickTime,
             )}
           </strong>
           <small>
-            position / velocity {passLabel(audit.playerContinuity)} · ball{" "}
-            {passLabel(audit.ballContinuity)} · public causality{" "}
-            {passLabel(audit.publicEventCausalityPassed)}
+            position / velocity {passLabel(matrix.playerContinuity)} · ball{" "}
+            {passLabel(matrix.ballContinuity)} · public causality{" "}
+            {passLabel(matrix.publicEventCausalityPassed)}
           </small>
         </div>
         <div>
           <span>ORDER / INFORMATION</span>
           <strong>
-            {passLabel(audit.deterministic && audit.evaluationOrderStable)}
+            {passLabel(matrix.deterministic && matrix.defenseFirstEquivalent)}
           </strong>
           <small>
-            defense-first {passLabel(audit.defenseFirstEquivalent)} · no
-            early T {passLabel(audit.noTacticalReadBeforeHandoff)}
+            defense-first {passLabel(matrix.defenseFirstEquivalent)} · no
+            early T {passLabel(matrix.noTacticalReadBeforeHandoff)}
           </small>
         </div>
         <div>
@@ -180,7 +187,7 @@ export function IntegrationHandoffPanel({
             {REPLAY_LABELS[replay.id]} · {replay.side?.toUpperCase() ?? "NO SIDE"}
           </strong>
           <small>
-            {replay.inputId} · {replay.terminalReason} ·{" "}
+            {replay.inputId} · {replay.matchupId} · {replay.terminalReason} ·{" "}
             {locked ? "LOCKED" : "READY"}
           </small>
         </div>
@@ -188,7 +195,7 @@ export function IntegrationHandoffPanel({
 
       <div
         className="g01-replays formation-replays"
-        aria-label="I01 四个审计后代表回放"
+        aria-label="I03 四个审计后代表回放"
       >
         {audit.replays.map((candidate) => (
           <button
@@ -201,7 +208,7 @@ export function IntegrationHandoffPanel({
           >
             <span>{REPLAY_LABELS[candidate.id]}</span>
             <strong>
-              {candidate.inputId} · {candidate.side?.toUpperCase() ?? "NO SIDE"} ·{" "}
+              {candidate.inputId} · {candidate.matchupId} · {candidate.side?.toUpperCase() ?? "NO SIDE"} ·{" "}
               {candidate.terminalReason}
             </strong>
             <small>{candidate.note}</small>
@@ -213,8 +220,8 @@ export function IntegrationHandoffPanel({
         <div>
           <span>I00 INPUT-ONLY HASH</span>
           <strong>
-            {audit.inputCount} locked inputs · hash{" "}
-            {audit.inputHash === I00_MANIFEST_HASH ? "MATCH" : "FAIL"}
+            {matrix.inputCount} locked inputs · hash{" "}
+            {matrix.inputHash === I00_MANIFEST_HASH ? "MATCH" : "FAIL"}
           </strong>
           <small className="formation-hash" title={I00_MANIFEST_HASH}>
             {I00_MANIFEST_HASH}
@@ -225,14 +232,14 @@ export function IntegrationHandoffPanel({
           <strong>{I00_RUNTIME_CONTRACT.integrationVersion}</strong>
           <small>
             {I00_UPSTREAM_CONTRACT.formationDomainVersion} →{" "}
-            {I00_UPSTREAM_CONTRACT.tacticalVocabularyVersion}
+            {I00_UPSTREAM_CONTRACT.tacticalVocabularyVersion} · {matrix.version}
           </small>
         </div>
         <div>
           <span>INPUT BOUNDARY</span>
-          <strong>auto · form_pnr · tactical_resolution</strong>
+          <strong>{replay.strategies.offense.id} × {replay.strategies.defense.id}</strong>
           <small>
-            caller side{" "}
+            auto · form_pnr · tactical_resolution · caller side{" "}
             {Object.hasOwn(config, "screenSide") ? "PRESENT / FAIL" : "absent"}{" "}
             · caller anchor absent · expected result absent
           </small>
@@ -295,6 +302,7 @@ export function IntegrationHandoffPanel({
             O route {routePhase(snapshot.offensePlan)} · D route{" "}
             {routePhase(snapshot.defensePlan)}
           </small>
+          <em>recent team-owned strategy refs · {recentStrategyRecords}</em>
         </div>
       </div>
 
@@ -312,33 +320,52 @@ export function IntegrationHandoffPanel({
         <div>
           <span>CONTINUITY / ORDER GATES</span>
           <strong>
-            world {passLabel(audit.sameSimulationWorldIdentity)} · tick/time{" "}
-            {passLabel(audit.monotonicTickTime)}
+            world {passLabel(matrix.sameSimulationWorldIdentity)} · tick/time{" "}
+            {passLabel(matrix.monotonicTickTime)}
           </strong>
           <small>
-            players {passLabel(audit.playerContinuity)} · ball{" "}
-            {passLabel(audit.ballContinuity)} · defense-first{" "}
-            {passLabel(audit.defenseFirstEquivalent)}
+            players {passLabel(matrix.playerContinuity)} · ball{" "}
+            {passLabel(matrix.ballContinuity)} · defense-first{" "}
+            {passLabel(matrix.defenseFirstEquivalent)}
           </small>
           <em>
-            determinism {passLabel(audit.deterministic)} · evaluation order{" "}
-            {passLabel(audit.evaluationOrderStable)}
+            determinism {passLabel(matrix.deterministic)} · ready boundary{" "}
+            {passLabel(matrix.formationReadyNextBoundary)}
           </em>
         </div>
         <div>
-          <span>MIRROR / INFO / ZERO</span>
+          <span>MIRROR / INFO / POLICY</span>
           <strong>
-            mirror {passLabel(audit.mirrored)} · information{" "}
-            {passLabel(audit.informationBoundaryPassed)}
+            mirror {passLabel(matrix.mirrored)} · information{" "}
+            {passLabel(matrix.informationBoundaryPassed)}
           </strong>
           <small>
-            no T before ready {passLabel(audit.noTacticalReadBeforeHandoff)} ·
-            strategy adjustment{" "}
-            {audit.zeroStrategyAdjustment ? "0 / PASS" : "FAIL"}
+            refs {passLabel(matrix.strategyReferencesPassed)} · phase carry{" "}
+            {passLabel(matrix.strategyPhaseCoveragePassed)} · locked{" "}
+            {passLabel(matrix.strategyLocked)}
           </small>
           <em>
-            safe exit {passLabel(audit.safeExitPassed)} · allowed terminals{" "}
-            {passLabel(audit.allowedTerminalsPassed)}
+            hard veto {passLabel(matrix.hardVetoPriorityPassed)} · effect causality{" "}
+            {passLabel(matrix.strategyEffectCausalityPassed)} · default unchanged{" "}
+            {passLabel(matrix.defaultBaselineUnchanged)} · observed differences{" "}
+            {matrix.observedBehaviorDifferenceInputs} (legal) · adjustment{" "}
+            {matrix.allObservedAdjustmentsZero ? "0 observed" : "nonzero"}
+          </em>
+        </div>
+        <div>
+          <span>TEAMMATE / POCKET / EXIT</span>
+          <strong>
+            channels {passLabel(matrix.teammateChannelPassed)} · pocket{" "}
+            {passLabel(matrix.pocketIntegrityPassed)}
+          </strong>
+          <small>
+            sealed T teammate {passLabel(audit.inheritedTacticalTeammateCoordinationPassed)} ·
+            real pocket flight {passLabel(audit.inheritedTacticalPocketFlightPassed)}
+          </small>
+          <em>
+            safe exit {passLabel(matrix.safeExitPassed)} · allowed terminals{" "}
+            {passLabel(matrix.allowedTerminalsPassed)} · opponent isolation{" "}
+            {passLabel(matrix.opponentStrategyIsolationPassed)}
           </em>
         </div>
       </div>
